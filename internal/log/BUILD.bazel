@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "log",
+    srcs = [
+        "build_log.go",
+        "deps_log.go",
+    ],
+    importpath = "github.com/buildbuddy-io/gin/internal/log",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/graph"],
+)

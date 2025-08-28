@@ -33,6 +33,8 @@ type Config struct {
 	DryRun          bool
 	Verbose         bool
 	FailuresAllowed int
+	RemoteEndpoint  string
+	RemoteInstance  string
 }
 
 // Builder orchestrates the build process
@@ -67,7 +69,7 @@ func New(s *state.State, config *Config) *Builder {
 	if config.DryRun {
 		commandRunner = NewDryCommandRunner(config.Verbose)
 	} else {
-		commandRunner = NewRealCommandRunner(config.Parallelism, config.Verbose, false)
+		commandRunner = NewRealCommandRunner(config.Parallelism, config.Verbose, false, config.RemoteEndpoint, config.RemoteInstance)
 		if runner, ok := commandRunner.(*RealCommandRunner); ok {
 			runner.SetKeepGoing(config.KeepGoing > 1, config.KeepGoing)
 		}

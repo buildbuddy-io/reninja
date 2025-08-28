@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "lexer",
+    srcs = ["lexer.go"],
+    importpath = "github.com/buildbuddy-io/gin/internal/lexer",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/graph"],
+)

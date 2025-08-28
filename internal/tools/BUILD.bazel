@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "tools",
+    srcs = [
+        "compdb.go",
+        "graph.go",
+        "query.go",
+    ],
+    importpath = "github.com/buildbuddy-io/gin/internal/tools",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/graph",
+        "//internal/state",
+    ],
+)

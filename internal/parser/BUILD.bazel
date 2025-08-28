@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "parser",
+    srcs = [
+        "debug.go",
+        "parser.go",
+    ],
+    importpath = "github.com/buildbuddy-io/gin/internal/parser",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/graph",
+        "//internal/lexer",
+        "//internal/state",
+    ],
+)

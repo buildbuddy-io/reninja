@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "graph",
+    srcs = [
+        "edge.go",
+        "eval_env.go",
+        "node.go",
+        "rule.go",
+    ],
+    importpath = "github.com/buildbuddy-io/gin/internal/graph",
+    visibility = ["//:__subpackages__"],
+)

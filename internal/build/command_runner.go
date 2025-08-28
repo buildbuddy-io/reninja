@@ -16,6 +16,7 @@ package build
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/remote"
 )
 
 // CommandRunner interface for executing build commands
@@ -58,6 +60,7 @@ type RealCommandRunner struct {
 	failedCount   int
 	maxFailures   int
 	commandShells []string // Shell to use for commands
+	remoteExecutor *remote.Executor
 }
 
 type runningCommand struct {
@@ -70,9 +73,9 @@ type runningCommand struct {
 }
 
 // NewRealCommandRunner creates a new RealCommandRunner
-func NewRealCommandRunner(maxParallel int, verbose, dryRun bool) *RealCommandRunner {
+func NewRealCommandRunner(maxParallel int, verbose, dryRun bool, remoteEndpoint, remoteInstance string) *RealCommandRunner {
 	shells := getCommandShells()
-	return &RealCommandRunner{
+	runner := &RealCommandRunner{
 		runningCmds:   make(map[*graph.Edge]*runningCommand),
 		maxParallel:   maxParallel,
 		verbose:       verbose,
@@ -80,6 +83,13 @@ func NewRealCommandRunner(maxParallel int, verbose, dryRun bool) *RealCommandRun
 		commandShells: shells,
 		maxFailures:   1,
 	}
+	
+	// Set up remote execution if configured
+	if remoteEndpoint != "" {
+		runner.remoteExecutor = remote.NewExecutor(remoteEndpoint, remoteInstance)
+	}
+	
+	return runner
 }
 
 // getCommandShells returns the shell command to use for the current platform
@@ -120,6 +130,11 @@ func (r *RealCommandRunner) StartCommand(edge *graph.Edge) bool {
 			fmt.Println(command)
 		}
 		return true
+	}
+	
+	// Check if this should be executed remotely
+	if r.remoteExecutor != nil && r.remoteExecutor.CanExecuteRemotely(edge) {
+		return r.startRemoteCommand(edge)
 	}
 	
 	// Check if this should use the console pool
@@ -277,6 +292,62 @@ func (r *RealCommandRunner) WaitForCommand(result *Result) *graph.Edge {
 	
 	r.mu.Unlock()
 	return edge
+}
+
+// startRemoteCommand starts a command for remote execution
+func (r *RealCommandRunner) startRemoteCommand(edge *graph.Edge) bool {
+	command := edge.EvaluateCommand(false)
+	
+	// Always show that this is being executed remotely in verbose mode
+	if r.verbose {
+		fmt.Printf("[REMOTE] %s\n", command)
+	}
+	
+	// Lock before modifying runningCmds
+	r.mu.Lock()
+	if len(r.runningCmds) >= r.maxParallel {
+		r.mu.Unlock()
+		return false
+	}
+	
+	// Create placeholder running command
+	running := &runningCommand{
+		cmd:       nil, // No local process for remote execution
+		edge:      edge,
+		startTime: time.Now(),
+		done:      make(chan bool, 1),
+	}
+	
+	// Add to running commands BEFORE starting
+	r.runningCmds[edge] = running
+	r.mu.Unlock()
+	
+	// Execute remotely in goroutine
+	go func() {
+		ctx := context.Background()
+		result, err := r.remoteExecutor.ExecuteRemotely(ctx, edge)
+		
+		if err != nil {
+			running.exitCode = 1
+			running.output.WriteString(fmt.Sprintf("Remote execution failed: %v\n", err))
+		} else {
+			running.exitCode = int(result.ExitCode)
+			if result.StdoutDigest != nil {
+				// Download stdout if available
+				stdout, _ := r.remoteExecutor.Client().DownloadBlob(ctx, *result.StdoutDigest)
+				running.output.Write(stdout)
+			}
+			if result.StderrDigest != nil {
+				// Download stderr if available
+				stderr, _ := r.remoteExecutor.Client().DownloadBlob(ctx, *result.StderrDigest)
+				running.output.Write(stderr)
+			}
+		}
+		
+		running.done <- true
+	}()
+	
+	return true
 }
 
 // GetActiveEdges returns all currently running edges

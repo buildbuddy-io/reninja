@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "remote",
+    srcs = [
+        "client.go",
+        "executor.go",
+        "grpc_client.go",
+        "remote_client.go",
+        "utils.go",
+    ],
+    importpath = "github.com/buildbuddy-io/gin/internal/remote",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/graph",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:execution",
+        "@com_github_bazelbuild_remote_apis_sdks//go/pkg/client",
+        "@com_github_bazelbuild_remote_apis_sdks//go/pkg/digest",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_protobuf//proto",
+        "@org_golang_google_protobuf//types/known/durationpb",
+    ],
+)

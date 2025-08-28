@@ -46,6 +46,8 @@ type Options struct {
 	targets            []string
 	toolMode           string
 	phonyCycleShouldErr bool
+	remoteEndpoint     string
+	remoteInstance     string
 }
 
 func main() {
@@ -105,10 +107,12 @@ func main() {
 
 	// Create build configuration
 	config := &build.Config{
-		Parallelism: opts.parallelism,
-		KeepGoing:   opts.keepGoing,
-		DryRun:      opts.dryRun,
-		Verbose:     opts.verbose,
+		Parallelism:    opts.parallelism,
+		KeepGoing:      opts.keepGoing,
+		DryRun:         opts.dryRun,
+		Verbose:        opts.verbose,
+		RemoteEndpoint: opts.remoteEndpoint,
+		RemoteInstance: opts.remoteInstance,
 	}
 
 	// Build targets
@@ -129,12 +133,28 @@ func parseOptions() *Options {
 	flag.IntVar(&opts.parallelism, "j", runtime.NumCPU(), "run N jobs in parallel")
 	flag.IntVar(&opts.keepGoing, "k", 1, "keep going until N jobs fail")
 	flag.BoolVar(&opts.dryRun, "n", false, "dry run (don't run commands)")
-	flag.BoolVar(&opts.verbose, "v", false, "show all command lines")
+	
+	// Check if 'v' flag already exists (might be defined by glog)
+	if flag.Lookup("v") == nil {
+		flag.BoolVar(&opts.verbose, "v", false, "show all command lines")
+	} else {
+		// If it exists, try to read its value
+		if vFlag := flag.Lookup("v"); vFlag != nil {
+			if vVal, ok := vFlag.Value.(flag.Getter); ok {
+				if v, ok := vVal.Get().(bool); ok {
+					opts.verbose = v
+				}
+			}
+		}
+	}
+	
 	flag.BoolVar(&opts.showVersion, "version", false, "print ninja version")
 	flag.BoolVar(&opts.showHelp, "h", false, "show help")
 	flag.StringVar(&opts.debugMode, "d", "", "enable debugging (use -d list for options)")
 	flag.StringVar(&opts.toolMode, "t", "", "run a tool (use -t list for options)")
 	flag.BoolVar(&opts.phonyCycleShouldErr, "w", false, "phony cycles are errors")
+	flag.StringVar(&opts.remoteEndpoint, "remote", "", "remote execution endpoint (e.g., grpc://localhost:8980)")
+	flag.StringVar(&opts.remoteInstance, "remote-instance", "", "remote execution instance name")
 
 	// Custom usage message
 	flag.Usage = showHelp
@@ -163,6 +183,12 @@ options:
   -d MODE     enable debugging (use -d list for options)
   -t TOOL     run a tool (use -t list for options)
   -w FLAG     adjust warnings (use -w list for options)
+  
+  -remote ENDPOINT      remote execution endpoint
+                        grpc://host[:port]  - insecure (default port 80)
+                        grpcs://host[:port] - secure TLS (default port 443)
+                        host[:port]         - defaults to grpcs://
+  -remote-instance NAME remote execution instance name
   
   -version    print gin version
   -h          show this help

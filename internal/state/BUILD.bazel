@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "state",
+    srcs = ["state.go"],
+    importpath = "github.com/buildbuddy-io/gin/internal/state",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/graph"],
+)

@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "ninja_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/buildbuddy-io/gin/cmd/ninja",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/build",
+        "//internal/clean",
+        "//internal/parser",
+        "//internal/state",
+        "//internal/tools",
+    ],
+)
+
+go_binary(
+    name = "ninja",
+    embed = [":ninja_lib"],
+    visibility = ["//visibility:public"],
+)
