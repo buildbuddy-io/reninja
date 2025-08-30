@@ -99,11 +99,11 @@ func getCommandShells() []string {
 func (r *RealCommandRunner) CanRunMore() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	if r.failedCount >= r.maxFailures && !r.keepGoing {
 		return false
 	}
-	
+
 	return len(r.runningCmds) < r.maxParallel
 }
 
@@ -114,24 +114,24 @@ func (r *RealCommandRunner) StartCommand(edge *graph.Edge) bool {
 		// No command to run
 		return false
 	}
-	
+
 	if r.dryRun {
 		if r.verbose {
 			fmt.Println(command)
 		}
 		return true
 	}
-	
+
 	// Check if this should use the console pool
 	useConsole := edge.Pool() != nil && edge.Pool().Name() == "console"
-	
+
 	// Create the command
 	shellCmd := append(r.commandShells, command)
 	cmd := exec.Command(shellCmd[0], shellCmd[1:]...)
-	
+
 	// Set up the command environment
 	cmd.Env = os.Environ()
-	
+
 	// Create running command
 	running := &runningCommand{
 		cmd:       cmd,
@@ -139,7 +139,7 @@ func (r *RealCommandRunner) StartCommand(edge *graph.Edge) bool {
 		startTime: time.Now(),
 		done:      make(chan bool, 1),
 	}
-	
+
 	// Set up output capture or direct output for console pool
 	if useConsole {
 		cmd.Stdout = os.Stdout
@@ -149,22 +149,22 @@ func (r *RealCommandRunner) StartCommand(edge *graph.Edge) bool {
 		cmd.Stdout = &running.output
 		cmd.Stderr = &running.output
 	}
-	
+
 	if r.verbose || useConsole {
 		fmt.Println(command)
 	}
-	
+
 	// Lock before modifying runningCmds
 	r.mu.Lock()
 	if len(r.runningCmds) >= r.maxParallel {
 		r.mu.Unlock()
 		return false
 	}
-	
+
 	// Add to running commands BEFORE starting
 	r.runningCmds[edge] = running
 	r.mu.Unlock()
-	
+
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		// Remove from running commands on failure
@@ -172,14 +172,14 @@ func (r *RealCommandRunner) StartCommand(edge *graph.Edge) bool {
 		delete(r.runningCmds, edge)
 		r.failedCount++
 		r.mu.Unlock()
-		
+
 		if r.verbose {
 			fmt.Fprintf(os.Stderr, "FAILED: %s\n", command)
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 		}
 		return false
 	}
-	
+
 	// Start goroutine to wait for command completion
 	go func() {
 		err := cmd.Wait()
@@ -193,19 +193,19 @@ func (r *RealCommandRunner) StartCommand(edge *graph.Edge) bool {
 		}
 		running.done <- true
 	}()
-	
+
 	return true
 }
 
 // WaitForCommand waits for any command to complete
 func (r *RealCommandRunner) WaitForCommand(result *Result) *graph.Edge {
 	r.mu.Lock()
-	
+
 	if len(r.runningCmds) == 0 {
 		r.mu.Unlock()
 		return nil
 	}
-	
+
 	// Create a slice of done channels to wait on
 	cases := make([]chan bool, 0, len(r.runningCmds))
 	edges := make([]*graph.Edge, 0, len(r.runningCmds))
@@ -214,24 +214,26 @@ func (r *RealCommandRunner) WaitForCommand(result *Result) *graph.Edge {
 		edges = append(edges, edge)
 	}
 	r.mu.Unlock()
-	
+
 	// Wait for any command to complete
-	for i, done := range cases {
+	i := 0
+	for {
+		done := cases[i]
 		select {
 		case <-done:
 			edge := edges[i]
-			
+
 			r.mu.Lock()
 			running := r.runningCmds[edge]
 			delete(r.runningCmds, edge)
-			
+
 			result.Edge = edge
 			result.ExitCode = running.exitCode
 			result.Output = running.output.String()
 			result.StartTime = running.startTime
 			result.EndTime = time.Now()
 			result.Success = running.exitCode == 0
-			
+
 			if !result.Success {
 				r.failedCount++
 				if !r.keepGoing && r.verbose {
@@ -241,49 +243,25 @@ func (r *RealCommandRunner) WaitForCommand(result *Result) *graph.Edge {
 					}
 				}
 			}
-			
+
 			r.mu.Unlock()
 			return edge
-			
+
 		default:
-			continue
-		}
-	}
-	
-	// If nothing ready yet, wait on the first one
-	<-cases[0]
-	edge := edges[0]
-	
-	r.mu.Lock()
-	running := r.runningCmds[edge]
-	delete(r.runningCmds, edge)
-	
-	result.Edge = edge
-	result.ExitCode = running.exitCode
-	result.Output = running.output.String()
-	result.StartTime = running.startTime
-	result.EndTime = time.Now()
-	result.Success = running.exitCode == 0
-	
-	if !result.Success {
-		r.failedCount++
-		if !r.keepGoing && r.verbose {
-			fmt.Fprintf(os.Stderr, "FAILED: %s\n", edge.EvaluateCommand(false))
-			if result.Output != "" {
-				fmt.Fprint(os.Stderr, result.Output)
+			i += 1
+			if i == len(cases) {
+				time.Sleep(time.Millisecond)
+				i = 0
 			}
 		}
 	}
-	
-	r.mu.Unlock()
-	return edge
 }
 
 // GetActiveEdges returns all currently running edges
 func (r *RealCommandRunner) GetActiveEdges() []*graph.Edge {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	edges := make([]*graph.Edge, 0, len(r.runningCmds))
 	for edge := range r.runningCmds {
 		edges = append(edges, edge)
@@ -295,7 +273,7 @@ func (r *RealCommandRunner) GetActiveEdges() []*graph.Edge {
 func (r *RealCommandRunner) Abort() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	for _, running := range r.runningCmds {
 		if running.cmd.Process != nil {
 			running.cmd.Process.Kill()
@@ -379,11 +357,11 @@ func (m *MockCommandRunner) CanRunMore() bool {
 func (m *MockCommandRunner) StartCommand(edge *graph.Edge) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if len(m.runningEdges) >= m.maxParallel {
 		return false
 	}
-	
+
 	command := edge.EvaluateCommand(false)
 	m.commands = append(m.commands, command)
 	m.runningEdges[edge] = true
@@ -394,10 +372,10 @@ func (m *MockCommandRunner) StartCommand(edge *graph.Edge) bool {
 func (m *MockCommandRunner) WaitForCommand(result *Result) *graph.Edge {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	for edge := range m.runningEdges {
 		delete(m.runningEdges, edge)
-		
+
 		command := edge.EvaluateCommand(false)
 		result.Edge = edge
 		result.Success = !m.shouldFail[command]
@@ -408,10 +386,10 @@ func (m *MockCommandRunner) WaitForCommand(result *Result) *graph.Edge {
 		}
 		result.StartTime = time.Now()
 		result.EndTime = time.Now()
-		
+
 		return edge
 	}
-	
+
 	return nil
 }
 
@@ -419,7 +397,7 @@ func (m *MockCommandRunner) WaitForCommand(result *Result) *graph.Edge {
 func (m *MockCommandRunner) GetActiveEdges() []*graph.Edge {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	edges := make([]*graph.Edge, 0, len(m.runningEdges))
 	for edge := range m.runningEdges {
 		edges = append(edges, edge)
@@ -452,7 +430,7 @@ func (m *MockCommandRunner) SetShouldFail(command string, output string) {
 // makeDirectories creates all directories needed for outputs
 func makeDirectories(outputs []*graph.Node) error {
 	dirs := make(map[string]bool)
-	
+
 	for _, output := range outputs {
 		dir := strings.TrimSuffix(output.Path(), "/")
 		if idx := strings.LastIndex(dir, "/"); idx > 0 {
@@ -460,12 +438,12 @@ func makeDirectories(outputs []*graph.Node) error {
 			dirs[dir] = true
 		}
 	}
-	
+
 	for dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-	
+
 	return nil
 }
