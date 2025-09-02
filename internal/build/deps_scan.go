@@ -65,7 +65,7 @@ func (d *DependencyScan) recomputeDirtyInternal(node *graph.Node, visited map[*g
 			}
 		}
 	}
-	
+
 	// If the node has no in-edge, it's a source file
 	edge := node.InEdge()
 	if edge == nil {
@@ -75,18 +75,18 @@ func (d *DependencyScan) recomputeDirtyInternal(node *graph.Node, visited map[*g
 		}
 		return nil
 	}
-	
+
 	// Check all inputs recursively
 	for _, input := range edge.Inputs() {
 		if err := d.recomputeDirtyInternal(input, visited); err != nil {
 			return err
 		}
 	}
-	
+
 	// Now determine if this edge needs to be rebuilt
 	dirty := d.recomputeOutputDirty(edge, node)
 	node.SetDirty(dirty)
-	
+
 	// If any output is dirty, mark the edge as needing to build
 	if dirty {
 		edge.SetOutputsReady(false)
@@ -97,7 +97,7 @@ func (d *DependencyScan) recomputeDirtyInternal(node *graph.Node, visited map[*g
 	} else {
 		edge.SetOutputsReady(true)
 	}
-	
+
 	return nil
 }
 
@@ -107,17 +107,17 @@ func (d *DependencyScan) recomputeOutputDirty(edge *graph.Edge, output *graph.No
 	if edge.IsPhony() {
 		return true
 	}
-	
+
 	// Stat the output if needed
 	if !output.StatusKnown() {
 		output.StatIfNecessary(d.diskInterface)
 	}
-	
+
 	// Missing outputs are dirty
 	if !output.Exists() {
 		return true
 	}
-	
+
 	// Check if any input is newer than the output
 	outputMtime := output.Mtime()
 	for _, input := range edge.Inputs() {
@@ -125,24 +125,24 @@ func (d *DependencyScan) recomputeOutputDirty(edge *graph.Edge, output *graph.No
 		if !input.StatusKnown() {
 			input.StatIfNecessary(d.diskInterface)
 		}
-		
+
 		// Check if input is dirty
 		if input.Dirty() {
 			return true
 		}
-		
+
 		// Check if input is newer than output
 		if input.Exists() && input.Mtime() > outputMtime {
 			return true
 		}
-		
+
 		// Check if input is missing (and not generated)
 		if !input.Exists() && !input.GeneratedByDepLoader() && input.InEdge() == nil {
 			// Missing source file
 			return true
 		}
 	}
-	
+
 	// Check if the command changed using build log
 	if d.buildLog != nil {
 		logEntry := d.buildLog.GetEntry(output.Path())
@@ -150,12 +150,12 @@ func (d *DependencyScan) recomputeOutputDirty(edge *graph.Edge, output *graph.No
 			// Calculate current command hash
 			currentCommand := edge.EvaluateCommand(false)
 			currentHash := hashCommand(currentCommand)
-			
+
 			// If command changed, rebuild
 			if logEntry.CommandHash != currentHash {
 				return true
 			}
-			
+
 			// If output mtime doesn't match log, rebuild
 			if logEntry.RestatMtime != output.Mtime() && logEntry.RestatMtime != 0 {
 				return true
@@ -165,7 +165,7 @@ func (d *DependencyScan) recomputeOutputDirty(edge *graph.Edge, output *graph.No
 			return true
 		}
 	}
-	
+
 	// Check dependencies from deps log
 	if d.depsLog != nil {
 		depsRecord := d.depsLog.GetDeps(output)
@@ -181,7 +181,7 @@ func (d *DependencyScan) recomputeOutputDirty(edge *graph.Edge, output *graph.No
 			}
 		}
 	}
-	
+
 	return false
 }
 
@@ -192,7 +192,7 @@ func hashCommand(command string) uint64 {
 		offset64 = 14695981039346656037
 		prime64  = 1099511628211
 	)
-	
+
 	hash := uint64(offset64)
 	for i := 0; i < len(command); i++ {
 		hash ^= uint64(command[i])
@@ -214,14 +214,14 @@ func (d *DependencyScan) EdgeFinished(edge *graph.Edge, success bool) {
 	if !success {
 		return
 	}
-	
+
 	// Update output mtimes
 	for _, output := range edge.Outputs() {
 		if mtime, err := d.diskInterface.Stat(output.Path()); err == nil {
 			output.SetMtime(mtime)
 		}
 	}
-	
+
 	// TODO: Update build log
 	// TODO: Update deps log if we loaded deps from depfile
 }
@@ -259,28 +259,28 @@ func (p *Plan) addSubTarget(node *graph.Node) error {
 		// Source file or generated file with no rule
 		return nil
 	}
-	
+
 	want := p.wantEdges[edge]
 	if want != WantNothing {
 		// Already in plan
 		return nil
 	}
-	
+
 	// Mark edge as wanted
 	p.wantEdges[edge] = WantToStart
-	
+
 	// Add dependencies first
 	for _, input := range edge.Inputs() {
 		if err := p.addSubTarget(input); err != nil {
 			return err
 		}
 	}
-	
+
 	// Check if this edge is ready to build
 	if p.edgeReady(edge) {
 		p.scheduleEdge(edge)
 	}
-	
+
 	return nil
 }
 
@@ -311,7 +311,7 @@ func (p *Plan) scheduleEdge(edge *graph.Edge) {
 			return
 		}
 	}
-	
+
 	p.readyQueue = append(p.readyQueue, edge)
 	// Don't change the want state here - it's still WantToStart until actually executed
 }
@@ -321,7 +321,7 @@ func (p *Plan) PopReadyEdge() *graph.Edge {
 	for len(p.readyQueue) > 0 {
 		edge := p.readyQueue[0]
 		p.readyQueue = p.readyQueue[1:]
-		
+
 		// Double-check the edge is still wanted
 		if want := p.wantEdges[edge]; want == WantToStart {
 			// Check if it's actually dirty
@@ -332,14 +332,14 @@ func (p *Plan) PopReadyEdge() *graph.Edge {
 					break
 				}
 			}
-			
+
 			if !dirty {
 				// Not actually dirty, mark as done
 				delete(p.wantEdges, edge)
 				p.checkNewlyReady(edge)
 				continue
 			}
-			
+
 			// Try to acquire pool resources if needed
 			pool := edge.Pool()
 			if pool != nil && pool.Depth() != 0 {
@@ -349,7 +349,7 @@ func (p *Plan) PopReadyEdge() *graph.Edge {
 					continue
 				}
 			}
-			
+
 			// Mark as running
 			p.wantEdges[edge] = WantToFinish
 			return edge
@@ -364,7 +364,7 @@ func (p *Plan) EdgeFinished(edge *graph.Edge) {
 	pool := edge.Pool()
 	if pool != nil && pool.Depth() != 0 {
 		pool.Release()
-		
+
 		// Check if any delayed edges can now run
 		for pool.HasDelayedEdges() && pool.Available() {
 			delayedEdge := pool.PopDelayedEdge()
@@ -374,7 +374,7 @@ func (p *Plan) EdgeFinished(edge *graph.Edge) {
 			}
 		}
 	}
-	
+
 	delete(p.wantEdges, edge)
 	p.checkNewlyReady(edge)
 }

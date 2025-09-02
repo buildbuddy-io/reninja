@@ -28,7 +28,7 @@ import (
 const (
 	// DepsLogVersion is the current deps log format version
 	DepsLogVersion = 4
-	
+
 	// DepsLogSignature for binary format
 	DepsLogSignature = 0x6e696e44 // "ninD"
 )
@@ -61,15 +61,15 @@ func NewDepsLog() *DepsLog {
 func (d *DepsLog) OpenForWrite(path string, buildDir string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	d.logFile = path
-	
+
 	// Load existing log if it exists
 	if err := d.load(buildDir); err != nil {
 		// If loading fails, start fresh
 		d.records = make(map[*graph.Node]*DepsRecord)
 	}
-	
+
 	return nil
 }
 
@@ -77,24 +77,24 @@ func (d *DepsLog) OpenForWrite(path string, buildDir string) error {
 func (d *DepsLog) RecordDeps(output *graph.Node, mtime graph.TimeStamp, deps []*graph.Node) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	// Check if we already have this exact record
 	if existing, ok := d.records[output]; ok {
 		if existing.Mtime == mtime && d.depsEqual(existing.Dependencies, deps) {
 			return true // No change needed
 		}
 	}
-	
+
 	record := &DepsRecord{
 		Output:       output,
 		Dependencies: make([]*graph.Node, len(deps)),
 		Mtime:        mtime,
 	}
 	copy(record.Dependencies, deps)
-	
+
 	d.records[output] = record
 	d.dirty = true
-	
+
 	return true
 }
 
@@ -102,7 +102,7 @@ func (d *DepsLog) RecordDeps(output *graph.Node, mtime graph.TimeStamp, deps []*
 func (d *DepsLog) GetDeps(node *graph.Node) *DepsRecord {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	
+
 	return d.records[node]
 }
 
@@ -110,33 +110,33 @@ func (d *DepsLog) GetDeps(node *graph.Node) *DepsRecord {
 func (d *DepsLog) Save() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	if !d.dirty || d.logFile == "" {
 		return nil
 	}
-	
+
 	// Write to temp file first for atomic update
 	tempFile := d.logFile + ".tmp"
 	file, err := os.Create(tempFile)
 	if err != nil {
 		return err
 	}
-	
+
 	writer := bufio.NewWriter(file)
-	
+
 	// Write header (signature and version)
 	if err := binary.Write(writer, binary.LittleEndian, uint32(DepsLogSignature)); err != nil {
 		file.Close()
 		os.Remove(tempFile)
 		return err
 	}
-	
+
 	if err := binary.Write(writer, binary.LittleEndian, uint32(DepsLogVersion)); err != nil {
 		file.Close()
 		os.Remove(tempFile)
 		return err
 	}
-	
+
 	// Write records
 	for _, record := range d.records {
 		// Write output path
@@ -146,21 +146,21 @@ func (d *DepsLog) Save() error {
 			os.Remove(tempFile)
 			return err
 		}
-		
+
 		// Write mtime
 		if err := binary.Write(writer, binary.LittleEndian, int64(record.Mtime)); err != nil {
 			file.Close()
 			os.Remove(tempFile)
 			return err
 		}
-		
+
 		// Write dependency count
 		if err := binary.Write(writer, binary.LittleEndian, uint32(len(record.Dependencies))); err != nil {
 			file.Close()
 			os.Remove(tempFile)
 			return err
 		}
-		
+
 		// Write dependencies
 		for _, dep := range record.Dependencies {
 			if err := d.writeString(writer, dep.Path()); err != nil {
@@ -170,24 +170,24 @@ func (d *DepsLog) Save() error {
 			}
 		}
 	}
-	
+
 	if err := writer.Flush(); err != nil {
 		file.Close()
 		os.Remove(tempFile)
 		return err
 	}
-	
+
 	if err := file.Close(); err != nil {
 		os.Remove(tempFile)
 		return err
 	}
-	
+
 	// Atomic rename
 	if err := os.Rename(tempFile, d.logFile); err != nil {
 		os.Remove(tempFile)
 		return err
 	}
-	
+
 	d.dirty = false
 	return nil
 }
@@ -197,7 +197,7 @@ func (d *DepsLog) load(buildDir string) error {
 	if d.logFile == "" {
 		return nil
 	}
-	
+
 	file, err := os.Open(d.logFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -206,9 +206,9 @@ func (d *DepsLog) load(buildDir string) error {
 		return err
 	}
 	defer file.Close()
-	
+
 	reader := bufio.NewReader(file)
-	
+
 	// Read header
 	var signature, version uint32
 	if err := binary.Read(reader, binary.LittleEndian, &signature); err != nil {
@@ -217,19 +217,19 @@ func (d *DepsLog) load(buildDir string) error {
 		}
 		return fmt.Errorf("failed to read signature: %w", err)
 	}
-	
+
 	if signature != DepsLogSignature {
 		return fmt.Errorf("invalid deps log signature: %x", signature)
 	}
-	
+
 	if err := binary.Read(reader, binary.LittleEndian, &version); err != nil {
 		return fmt.Errorf("failed to read version: %w", err)
 	}
-	
+
 	if version != DepsLogVersion {
 		return fmt.Errorf("unsupported deps log version: %d", version)
 	}
-	
+
 	// Read records
 	for {
 		// Read output path
@@ -240,22 +240,22 @@ func (d *DepsLog) load(buildDir string) error {
 			}
 			return err
 		}
-		
+
 		// Get or create node
 		outputNode := d.getOrCreateNode(outputPath)
-		
+
 		// Read mtime
 		var mtime int64
 		if err := binary.Read(reader, binary.LittleEndian, &mtime); err != nil {
 			return err
 		}
-		
+
 		// Read dependency count
 		var depCount uint32
 		if err := binary.Read(reader, binary.LittleEndian, &depCount); err != nil {
 			return err
 		}
-		
+
 		// Read dependencies
 		deps := make([]*graph.Node, depCount)
 		for i := uint32(0); i < depCount; i++ {
@@ -265,7 +265,7 @@ func (d *DepsLog) load(buildDir string) error {
 			}
 			deps[i] = d.getOrCreateNode(depPath)
 		}
-		
+
 		// Store record
 		d.records[outputNode] = &DepsRecord{
 			Output:       outputNode,
@@ -273,7 +273,7 @@ func (d *DepsLog) load(buildDir string) error {
 			Mtime:        graph.TimeStamp(mtime),
 		}
 	}
-	
+
 	return nil
 }
 
@@ -292,16 +292,16 @@ func (d *DepsLog) readString(r io.Reader) (string, error) {
 	if err := binary.Read(r, binary.LittleEndian, &length); err != nil {
 		return "", err
 	}
-	
+
 	if length > 1024*1024 { // Sanity check: 1MB max path
 		return "", fmt.Errorf("path too long: %d bytes", length)
 	}
-	
+
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return "", err
 	}
-	
+
 	return string(buf), nil
 }
 
@@ -310,7 +310,7 @@ func (d *DepsLog) getOrCreateNode(path string) *graph.Node {
 	if node, ok := d.nodeMap[path]; ok {
 		return node
 	}
-	
+
 	// Create a minimal node for tracking
 	// We use NewNode which takes the path and slashBits (0 for Unix)
 	node := graph.NewNode(path, 0)
@@ -323,13 +323,13 @@ func (d *DepsLog) depsEqual(a, b []*graph.Node) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	
+
 	for i := range a {
 		if a[i].Path() != b[i].Path() {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -337,7 +337,7 @@ func (d *DepsLog) depsEqual(a, b []*graph.Node) bool {
 func (d *DepsLog) Clear() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	d.records = make(map[*graph.Node]*DepsRecord)
 	d.nodeMap = make(map[string]*graph.Node)
 	d.dirty = true
@@ -367,15 +367,15 @@ type DepsStats struct {
 func (d *DepsLog) GetStats() *DepsStats {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	
+
 	stats := &DepsStats{
 		TotalRecords: len(d.records),
 	}
-	
+
 	for _, record := range d.records {
 		stats.TotalDeps += len(record.Dependencies)
 	}
-	
+
 	return stats
 }
 
@@ -383,7 +383,7 @@ func (d *DepsLog) GetStats() *DepsStats {
 func (d *DepsLog) PruneMissing() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	removed := 0
 	for node, record := range d.records {
 		// Check if output still exists
@@ -393,7 +393,7 @@ func (d *DepsLog) PruneMissing() int {
 			d.dirty = true
 			continue
 		}
-		
+
 		// Check if any dependencies are missing
 		validDeps := make([]*graph.Node, 0, len(record.Dependencies))
 		for _, dep := range record.Dependencies {
@@ -401,12 +401,12 @@ func (d *DepsLog) PruneMissing() int {
 				validDeps = append(validDeps, dep)
 			}
 		}
-		
+
 		if len(validDeps) != len(record.Dependencies) {
 			record.Dependencies = validDeps
 			d.dirty = true
 		}
 	}
-	
+
 	return removed
 }

@@ -61,12 +61,12 @@ func New() *State {
 
 	// Add built-in pools
 	s.AddPool(graph.NewPool("console", 1))
-	
+
 	// Add phony rule
 	phonyRule := graph.NewRule("phony")
 	phonyRule.SetPhony(true)
 	s.AddRule(phonyRule)
-	
+
 	return s
 }
 
@@ -76,7 +76,7 @@ func (s *State) GetNode(path string) *graph.Node {
 	defer s.mu.Unlock()
 
 	canonPath, slashBits := graph.CanonicalizePath(path)
-	
+
 	if node, ok := s.paths[canonPath]; ok {
 		return node
 	}
@@ -99,7 +99,7 @@ func (s *State) LookupNode(path string) *graph.Node {
 func (s *State) Paths() map[string]*graph.Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	// Return a copy to prevent concurrent modification
 	paths := make(map[string]*graph.Node, len(s.paths))
 	for k, v := range s.paths {
@@ -139,7 +139,7 @@ func (s *State) AddEdge(edge *graph.Edge) {
 func (s *State) Edges() []*graph.Edge {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	// Return a copy to prevent concurrent modification
 	edges := make([]*graph.Edge, len(s.edges))
 	copy(edges, s.edges)
@@ -171,7 +171,7 @@ func (s *State) LookupPool(name string) *graph.Pool {
 func (s *State) Pools() map[string]*graph.Pool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	// Return a copy to prevent concurrent modification
 	pools := make(map[string]*graph.Pool, len(s.pools))
 	for k, v := range s.pools {
@@ -206,7 +206,7 @@ func (s *State) LookupRule(name string) *graph.Rule {
 func (s *State) Rules() map[string]*graph.Rule {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	// Return a copy to prevent concurrent modification
 	rules := make(map[string]*graph.Rule, len(s.rules))
 	for k, v := range s.rules {
@@ -275,7 +275,7 @@ func (s *State) Reset() {
 
 	// Re-add built-in pools and rules
 	s.pools["console"] = graph.NewPool("console", 1)
-	
+
 	phonyRule := graph.NewRule("phony")
 	phonyRule.SetPhony(true)
 	s.rules["phony"] = phonyRule

@@ -64,3 +64,40 @@ func TestEmpty(t *testing.T) {
 	s := state.New()
 	AssertParse(t, "", s)
 }
+
+func TestRuleAttributes(t *testing.T) {
+	// Check that all of the allowed rule attributes are parsed ok.
+	s := state.New()
+	AssertParse(t, `rule cat
+  command = a
+  depfile = a
+  deps = a
+  description = a
+  generator = a
+  restat = a
+  rspfile = a
+  rspfile_content = a
+`, s)
+}
+
+func TestIgnoreIndentedComments(t *testing.T) {
+	s := state.New()
+	AssertParse(t, `  #indented comment
+rule cat
+  command = cat $in > $out
+  #generator = 1
+  restat = 1 # comment
+  #comment
+build result: cat in_1.cc in-2.O
+  #comment`, s)
+
+	rule, ok := s.Bindings().LookupRule("cat")
+	require.True(t, ok)
+	require.NotNil(t, rule)
+	assert.Equal(t, "cat", rule.Name())
+
+	edge := s.GetNode("result").InEdge()
+	require.NotNil(t, edge)
+	assert.True(t, edge.GetBindingBool("restat"))
+	assert.False(t, edge.GetBindingBool("generator"))
+}

@@ -83,7 +83,7 @@ func (d *RealDiskInterface) Stat(path string) (graph.TimeStamp, error) {
 
 	// Convert to milliseconds since epoch
 	mtime := graph.TimeStamp(info.ModTime().UnixMilli())
-	
+
 	// Cache the result
 	d.statCache[path] = statCacheEntry{
 		mtime:  mtime,
@@ -209,10 +209,10 @@ func IsNotExist(err error) bool {
 func NormalizePath(path string) string {
 	// Convert forward slashes to native separator
 	path = filepath.FromSlash(path)
-	
+
 	// Clean up the path
 	path = filepath.Clean(path)
-	
+
 	return path
 }
 
@@ -422,7 +422,7 @@ func WriteFileAtomic(path string, contents []byte) error {
 		return err
 	}
 	tempPath := temp.Name()
-	
+
 	// Clean up temp file on error
 	defer func() {
 		if temp != nil {

@@ -39,7 +39,7 @@ func (q *QueryTool) Run(targets []string) error {
 		fmt.Fprintf(os.Stderr, "ninja: error: query requires a target\n")
 		return fmt.Errorf("no target specified")
 	}
-	
+
 	for _, target := range targets {
 		if err := q.queryTarget(target); err != nil {
 			fmt.Fprintf(os.Stderr, "ninja: error: %v\n", err)
@@ -49,7 +49,7 @@ func (q *QueryTool) Run(targets []string) error {
 			fmt.Println() // Separate multiple targets
 		}
 	}
-	
+
 	return nil
 }
 
@@ -59,22 +59,22 @@ func (q *QueryTool) queryTarget(target string) error {
 	if node == nil {
 		return fmt.Errorf("unknown target '%s'", target)
 	}
-	
+
 	fmt.Printf("%s:\n", node.Path())
-	
+
 	edge := node.InEdge()
 	if edge == nil {
 		fmt.Println("  source file")
 		return nil
 	}
-	
+
 	// Show rule
 	if edge.Rule() != nil {
 		fmt.Printf("  rule: %s\n", edge.Rule().Name())
 	} else if edge.IsPhony() {
 		fmt.Println("  phony edge")
 	}
-	
+
 	// Show inputs
 	if len(edge.Inputs()) > 0 {
 		fmt.Println("  inputs:")
@@ -86,7 +86,7 @@ func (q *QueryTool) queryTarget(target string) error {
 			fmt.Printf("    %s%s\n", input.Path(), status)
 		}
 	}
-	
+
 	// Show implicit dependencies
 	if len(edge.ImplicitInputs()) > 0 {
 		fmt.Println("  implicit inputs:")
@@ -94,7 +94,7 @@ func (q *QueryTool) queryTarget(target string) error {
 			fmt.Printf("    %s\n", dep.Path())
 		}
 	}
-	
+
 	// Show order-only dependencies
 	if len(edge.OrderOnlyInputs()) > 0 {
 		fmt.Println("  order-only inputs:")
@@ -102,7 +102,7 @@ func (q *QueryTool) queryTarget(target string) error {
 			fmt.Printf("    %s\n", dep.Path())
 		}
 	}
-	
+
 	// Show outputs (for edges with multiple outputs)
 	outputs := edge.Outputs()
 	if len(outputs) > 1 {
@@ -113,21 +113,21 @@ func (q *QueryTool) queryTarget(target string) error {
 			}
 		}
 	}
-	
+
 	// Show command
 	if !edge.IsPhony() {
 		command := edge.EvaluateCommand(false)
 		if command != "" {
 			fmt.Printf("  command: %s\n", command)
 		}
-		
+
 		// Show description if available
 		desc := edge.GetBinding("description")
 		if desc != "" {
 			fmt.Printf("  description: %s\n", desc)
 		}
 	}
-	
+
 	// Show what depends on this target
 	dependents := q.findDependents(node)
 	if len(dependents) > 0 {
@@ -139,14 +139,14 @@ func (q *QueryTool) queryTarget(target string) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
 // findDependents finds all edges that depend on a node
 func (q *QueryTool) findDependents(target *graph.Node) []*graph.Edge {
 	var dependents []*graph.Edge
-	
+
 	for _, edge := range q.state.Edges() {
 		// Check explicit inputs
 		for _, input := range edge.Inputs() {
@@ -155,7 +155,7 @@ func (q *QueryTool) findDependents(target *graph.Node) []*graph.Edge {
 				break
 			}
 		}
-		
+
 		// Check implicit dependencies
 		for _, dep := range edge.ImplicitInputs() {
 			if dep == target {
@@ -163,7 +163,7 @@ func (q *QueryTool) findDependents(target *graph.Node) []*graph.Edge {
 				break
 			}
 		}
-		
+
 		// Check order-only dependencies
 		for _, dep := range edge.OrderOnlyInputs() {
 			if dep == target {
@@ -172,7 +172,7 @@ func (q *QueryTool) findDependents(target *graph.Node) []*graph.Edge {
 			}
 		}
 	}
-	
+
 	return dependents
 }
 
@@ -192,7 +192,7 @@ func (t *TargetsTool) Run(args []string) error {
 	showAll := false
 	showRules := false
 	showDepth := 1
-	
+
 	for _, arg := range args {
 		switch arg {
 		case "all":
@@ -203,7 +203,7 @@ func (t *TargetsTool) Run(args []string) error {
 			showDepth = 1000 // Show full depth
 		}
 	}
-	
+
 	if showRules {
 		// List all rules
 		rules := t.state.Rules()
@@ -214,10 +214,10 @@ func (t *TargetsTool) Run(args []string) error {
 		}
 		return nil
 	}
-	
+
 	// List targets
 	targets := make(map[string]bool)
-	
+
 	if showAll {
 		// Show all nodes with edges
 		for _, edge := range t.state.Edges() {
@@ -245,12 +245,12 @@ func (t *TargetsTool) Run(args []string) error {
 			}
 		}
 	}
-	
+
 	// Sort and print targets
 	for target := range targets {
 		fmt.Println(strings.TrimPrefix(target, "./"))
 	}
-	
+
 	return nil
 }
 
@@ -276,9 +276,9 @@ func (t *TargetsTool) collectTargets(node *graph.Node, targets map[string]bool, 
 	if depth <= 0 {
 		return
 	}
-	
+
 	targets[node.Path()] = true
-	
+
 	edge := node.InEdge()
 	if edge != nil {
 		for _, input := range edge.Inputs() {
@@ -300,7 +300,7 @@ func NewCommandsTool(s *state.State) *CommandsTool {
 // Run lists all commands
 func (c *CommandsTool) Run(targets []string) error {
 	var edges []*graph.Edge
-	
+
 	if len(targets) > 0 {
 		// Show commands for specific targets
 		for _, target := range targets {
@@ -309,7 +309,7 @@ func (c *CommandsTool) Run(targets []string) error {
 				fmt.Fprintf(os.Stderr, "warning: unknown target '%s'\n", target)
 				continue
 			}
-			
+
 			if edge := node.InEdge(); edge != nil && !edge.IsPhony() {
 				edges = append(edges, edge)
 			}
@@ -322,7 +322,7 @@ func (c *CommandsTool) Run(targets []string) error {
 			}
 		}
 	}
-	
+
 	// Print commands
 	for _, edge := range edges {
 		command := edge.EvaluateCommand(false)
@@ -330,6 +330,6 @@ func (c *CommandsTool) Run(targets []string) error {
 			fmt.Println(command)
 		}
 	}
-	
+
 	return nil
 }

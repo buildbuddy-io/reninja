@@ -24,6 +24,9 @@ type EvalString struct {
 	// Parsed representation: alternating literals and variable names
 	// Even indices are literals, odd indices are variable names
 	parsed []string
+	// If we hold only a single text token with no variables, keep it here
+	// for optimization (mirrors C++ implementation)
+	singleToken string
 }
 
 // NewEvalString creates a new EvalString from a raw string
@@ -33,17 +36,56 @@ func NewEvalString(raw string) EvalString {
 	return es
 }
 
+// AddText adds literal text to the EvalString
+func (es *EvalString) AddText(text string) {
+	if len(es.parsed) == 0 && es.singleToken == "" {
+		// First token and it's text - use single token optimization
+		es.singleToken = text
+	} else if len(es.parsed) == 0 && es.singleToken != "" {
+		// We have a single token but need to add more - convert to parsed format
+		es.parsed = append(es.parsed, es.singleToken, "")
+		es.singleToken = ""
+		// Now add the new text
+		es.parsed[0] = es.parsed[0] + text
+	} else if len(es.parsed) > 0 && len(es.parsed)%2 == 1 {
+		// We have an odd number of elements, so the last one is a literal
+		// Append to it
+		es.parsed[len(es.parsed)-1] = es.parsed[len(es.parsed)-1] + text
+	} else {
+		// Need to add a new literal
+		es.parsed = append(es.parsed, text, "")
+	}
+}
+
+// AddSpecial adds a variable reference to the EvalString
+func (es *EvalString) AddSpecial(varName string) {
+	if es.singleToken != "" {
+		// Convert single token to parsed format
+		es.parsed = append(es.parsed, es.singleToken, varName)
+		es.singleToken = ""
+	} else if len(es.parsed) == 0 {
+		// First element, need to add empty literal first
+		es.parsed = append(es.parsed, "", varName)
+	} else if len(es.parsed)%2 == 1 {
+		// Odd number of elements, last is a literal, add variable
+		es.parsed = append(es.parsed, varName)
+	} else {
+		// Even number of elements, last is a variable, need to add empty literal first
+		es.parsed = append(es.parsed, "", varName)
+	}
+}
+
 // Parse parses a string with variable references
 func (es *EvalString) Parse(raw string) {
 	es.parsed = nil
 	if raw == "" {
 		return
 	}
-	
+
 	// Build parsed array with alternating literals and variables
 	// Even indices are literals, odd indices are variable names
 	var current strings.Builder
-	
+
 	i := 0
 	for i < len(raw) {
 		if raw[i] == '$' {
@@ -59,14 +101,14 @@ func (es *EvalString) Parse(raw string) {
 					// Add current literal
 					es.parsed = append(es.parsed, current.String())
 					current.Reset()
-					
+
 					// Find closing brace
 					j := i + 2
 					for j < len(raw) && raw[j] != '}' {
 						j++
 					}
 					if j < len(raw) {
-						varName := raw[i+2:j]
+						varName := raw[i+2 : j]
 						es.parsed = append(es.parsed, varName) // Add variable name
 						i = j + 1
 					} else {
@@ -80,29 +122,29 @@ func (es *EvalString) Parse(raw string) {
 					// Add current literal
 					es.parsed = append(es.parsed, current.String())
 					current.Reset()
-					
+
 					// Find end of variable name
 					j := i + 1
 					for j < len(raw) && isVarNameChar(raw[j]) {
 						j++
 					}
-					varName := raw[i+1:j]
+					varName := raw[i+1 : j]
 					es.parsed = append(es.parsed, varName) // Add variable name
 					i = j
 					continue
 				}
 			}
 		}
-		
+
 		current.WriteByte(raw[i])
 		i++
 	}
-	
+
 	// Add any remaining literal
 	if current.Len() > 0 || len(es.parsed)%2 == 1 {
 		es.parsed = append(es.parsed, current.String())
 	}
-	
+
 	// Ensure we always end with a literal (even if empty)
 	if len(es.parsed)%2 == 0 {
 		es.parsed = append(es.parsed, "")
@@ -118,63 +160,60 @@ func isVarNameChar(c byte) bool {
 
 // Evaluate expands variables using the given environment
 func (es *EvalString) Evaluate(env *BindingEnv) string {
+	if es.singleToken != "" {
+		return es.singleToken
+	}
+
 	if len(es.parsed) == 0 {
 		return ""
 	}
-	
+
 	var result strings.Builder
 	for i := 0; i < len(es.parsed); i += 2 {
 		// Even indices are literals
 		result.WriteString(es.parsed[i])
-		
+
 		// Odd indices are variable names
 		if i+1 < len(es.parsed) && es.parsed[i+1] != "" {
 			varValue := env.LookupVariable(es.parsed[i+1])
 			result.WriteString(varValue)
 		}
 	}
-	
+
 	return result.String()
 }
 
 // Serialize returns the original string representation
 func (es *EvalString) Serialize() string {
+	if es.singleToken != "" {
+		return "[" + es.singleToken + "]"
+	}
+
 	if len(es.parsed) == 0 {
 		return ""
 	}
-	
+
 	var result strings.Builder
 	for i := 0; i < len(es.parsed); i += 2 {
 		// Even indices are literals
 		literal := es.parsed[i]
+
 		// Escape dollar signs in literals
-		literal = strings.ReplaceAll(literal, "$", "$$")
-		result.WriteString(literal)
-		
+		if literal != "" {
+			result.WriteString("[")
+			result.WriteString(literal)
+			result.WriteString("]")
+		}
+
 		// Odd indices are variable names
 		if i+1 < len(es.parsed) && es.parsed[i+1] != "" {
+			result.WriteString("[")
 			result.WriteByte('$')
 			varName := es.parsed[i+1]
-			
-			// Use ${} syntax if variable name contains special chars
-			needsBraces := false
-			for _, c := range varName {
-				if !isVarNameChar(byte(c)) {
-					needsBraces = true
-					break
-				}
-			}
-			
-			if needsBraces {
-				result.WriteString("{")
-				result.WriteString(varName)
-				result.WriteString("}")
-			} else {
-				result.WriteString(varName)
-			}
+			result.WriteString(varName)
+			result.WriteString("]")
 		}
 	}
-	
 	return result.String()
 }
 
@@ -215,18 +254,22 @@ func (env *BindingEnv) LookupVariable(key string) string {
 	case "in_newline":
 		return env.getBuiltinInNewline()
 	}
-	
+
 	// Check local bindings
 	if value, ok := env.Bindings[key]; ok {
 		return value
 	}
-	
+
 	// Check parent scope
 	if env.parent != nil {
 		return env.parent.LookupVariable(key)
 	}
-	
+
 	return ""
+}
+
+func (env *BindingEnv) GetRules() map[string]*Rule {
+	return env.rules
 }
 
 // LookupRule looks up a rule by name
@@ -234,11 +277,11 @@ func (env *BindingEnv) LookupRule(name string) (*Rule, bool) {
 	if rule, ok := env.rules[name]; ok {
 		return rule, true
 	}
-	
+
 	if env.parent != nil {
 		return env.parent.LookupRule(name)
 	}
-	
+
 	return nil, false
 }
 
@@ -278,20 +321,20 @@ func (env *BindingEnv) getBuiltinInNewline() string {
 // EdgeEnv creates a new environment for edge evaluation that includes rule bindings
 func EdgeEnv(parent *BindingEnv, edge *Edge) *BindingEnv {
 	env := NewBindingEnv(parent)
-	
+
 	// Add edge-specific built-in variables
 	var inputs []string
 	for _, input := range edge.ExplicitInputs() {
 		inputs = append(inputs, input.Path())
 	}
 	env.AddBinding("in", strings.Join(inputs, " "))
-	
+
 	var outputs []string
 	for _, output := range edge.ExplicitOutputs() {
 		outputs = append(outputs, output.Path())
 	}
 	env.AddBinding("out", strings.Join(outputs, " "))
-	
+
 	// Add all rule bindings to the environment
 	// This makes them available for variable expansion
 	if edge.Rule() != nil {
@@ -305,7 +348,7 @@ func EdgeEnv(parent *BindingEnv, edge *Edge) *BindingEnv {
 			}
 		}
 	}
-	
+
 	return env
 }
 

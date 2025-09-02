@@ -184,12 +184,12 @@ func (p *ManifestParser) parseBuild() error {
 		if p.scanner.PeekToken(lexer.NEWLINE) || p.scanner.IsEOF() {
 			break
 		}
-		
+
 		if p.scanner.PeekToken(lexer.PIPE) || p.scanner.PeekToken(lexer.PIPE2) || p.scanner.PeekToken(lexer.PIPEAT) {
 			// Will be handled below
 			break
 		}
-		
+
 		path, err := p.scanner.ReadPath()
 		if err != nil {
 			return err
@@ -204,7 +204,7 @@ func (p *ManifestParser) parseBuild() error {
 		node := p.state.GetNode(evaluated)
 		edge.AddInput(node)
 	}
-	
+
 	// Check for implicit deps (|) or order-only deps (||)
 	if p.scanner.PeekToken(lexer.PIPE) {
 		p.scanner.NextToken()
@@ -248,7 +248,7 @@ func (p *ManifestParser) parseBuild() error {
 			poolName = poolBinding.Evaluate(edgeEnv)
 		}
 	}
-	
+
 	if poolName != "" {
 		pool := p.state.LookupPool(poolName)
 		if pool == nil {
@@ -353,7 +353,7 @@ func (p *ManifestParser) parseRule() error {
 	if err := p.parseRuleBindings(rule); err != nil {
 		return err
 	}
-	
+
 	// Validate rspfile and rspfile_content are both specified or neither
 	_, hasRspfile := rule.GetBinding("rspfile")
 	_, hasRspfileContent := rule.GetBinding("rspfile_content")
@@ -533,10 +533,10 @@ func (p *ManifestParser) parseInclude() error {
 
 	// Parse included file with same environment
 	subParser := &ManifestParser{
-		state: p.state,
+		state:   p.state,
 		scanner: lexer.NewScanner(),
-		env: p.env, // Share environment
-		quiet: p.quiet,
+		env:     p.env, // Share environment
+		quiet:   p.quiet,
 	}
 
 	return subParser.ParseFile(includeFile)
@@ -567,10 +567,10 @@ func (p *ManifestParser) parseSubninja() error {
 
 	// Parse subninja file with new environment scope
 	subParser := &ManifestParser{
-		state: p.state,
+		state:   p.state,
 		scanner: lexer.NewScanner(),
-		env: graph.NewBindingEnv(p.env), // New scope
-		quiet: p.quiet,
+		env:     graph.NewBindingEnv(p.env), // New scope
+		quiet:   p.quiet,
 	}
 
 	return subParser.ParseFile(subninjaFile)

@@ -39,9 +39,9 @@ func (g *GraphTool) Run(targets []string) error {
 	fmt.Println("  rankdir=\"LR\"")
 	fmt.Println("  node [fontsize=10, shape=box, height=0.25]")
 	fmt.Println("  edge [fontsize=10]")
-	
+
 	visited := make(map[*graph.Node]bool)
-	
+
 	if len(targets) > 0 {
 		// Generate graph for specific targets
 		for _, target := range targets {
@@ -66,7 +66,7 @@ func (g *GraphTool) Run(targets []string) error {
 			}
 		}
 	}
-	
+
 	fmt.Println("}")
 	return nil
 }
@@ -77,7 +77,7 @@ func (g *GraphTool) visitNode(node *graph.Node, visited map[*graph.Node]bool) {
 		return
 	}
 	visited[node] = true
-	
+
 	edge := node.InEdge()
 	if edge != nil {
 		g.visitEdge(edge, visited)
@@ -88,52 +88,52 @@ func (g *GraphTool) visitNode(node *graph.Node, visited map[*graph.Node]bool) {
 func (g *GraphTool) visitEdge(edge *graph.Edge, visited map[*graph.Node]bool) {
 	// Create edge ID
 	edgeID := fmt.Sprintf("edge_%p", edge)
-	
+
 	// Output edge node
 	ruleName := "phony"
 	if edge.Rule() != nil {
 		ruleName = edge.Rule().Name()
 	}
-	
+
 	label := ruleName
 	if edge.IsPhony() {
 		fmt.Printf("  \"%s\" [label=\"%s\", shape=ellipse]\n", edgeID, escapeLabel(label))
 	} else {
 		fmt.Printf("  \"%s\" [label=\"%s\"]\n", edgeID, escapeLabel(label))
 	}
-	
+
 	// Connect inputs to edge
 	for _, input := range edge.Inputs() {
 		inputID := getNodeID(input)
 		fmt.Printf("  \"%s\" -> \"%s\"\n", inputID, edgeID)
-		
+
 		// Visit input recursively
 		g.visitNode(input, visited)
 	}
-	
+
 	// Connect edge to outputs
 	for _, output := range edge.Outputs() {
 		outputID := getNodeID(output)
 		fmt.Printf("  \"%s\" -> \"%s\"\n", edgeID, outputID)
-		
+
 		// Mark output as visited
 		visited[output] = true
 	}
-	
+
 	// Handle implicit dependencies
 	for _, implicit := range edge.ImplicitInputs() {
 		implicitID := getNodeID(implicit)
 		fmt.Printf("  \"%s\" -> \"%s\" [style=dotted]\n", implicitID, edgeID)
-		
+
 		// Visit implicit dependency
 		g.visitNode(implicit, visited)
 	}
-	
+
 	// Handle order-only dependencies
 	for _, orderOnly := range edge.OrderOnlyInputs() {
 		orderOnlyID := getNodeID(orderOnly)
 		fmt.Printf("  \"%s\" -> \"%s\" [style=dashed]\n", orderOnlyID, edgeID)
-		
+
 		// Visit order-only dependency
 		g.visitNode(orderOnly, visited)
 	}

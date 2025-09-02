@@ -64,8 +64,8 @@ func (r *Rule) Bindings() map[string]EvalString {
 // Pool represents a resource pool for limiting parallel execution
 type Pool struct {
 	name       string
-	depth      int // Maximum concurrent jobs (0 = infinite)
-	currentUse int // Currently running jobs
+	depth      int     // Maximum concurrent jobs (0 = infinite)
+	currentUse int     // Currently running jobs
 	delayed    []*Edge // Queue of delayed edges
 }
 

@@ -97,10 +97,10 @@ func TokenErrorHint(expected Token) string {
 type Lexer struct {
 	filename  string
 	input     []byte
-	pos       int      // current position in input
-	lastPos   int      // position before last token
-	lastToken Token    // last token read
-	lastError string   // last error message
+	pos       int    // current position in input
+	lastPos   int    // position before last token
+	lastToken Token  // last token read
+	lastError string // last error message
 }
 
 // New creates a new Lexer
@@ -155,7 +155,7 @@ func (l *Lexer) position() (line, col int) {
 // ReadToken reads the next token
 func (l *Lexer) ReadToken() Token {
 	l.lastPos = l.pos
-	
+
 	// Check for indent BEFORE eating whitespace
 	if l.pos < len(l.input) && l.input[l.pos] == ' ' && l.isStartOfLine() {
 		start := l.pos
@@ -167,7 +167,7 @@ func (l *Lexer) ReadToken() Token {
 			return INDENT
 		}
 	}
-	
+
 	l.eatWhitespace()
 
 	if l.pos >= len(l.input) {
@@ -242,7 +242,6 @@ func (l *Lexer) ReadToken() Token {
 		l.lastToken = PIPE
 		return PIPE
 
-
 	default:
 		l.lastError = fmt.Sprintf("unexpected character '%c'", c)
 		l.lastToken = ERROR
@@ -274,7 +273,6 @@ func (l *Lexer) ReadIdent() (string, bool) {
 	for l.pos < len(l.input) && isIdentChar(l.input[l.pos]) {
 		l.pos++
 	}
-
 	return string(l.input[start:l.pos]), true
 }
 
@@ -290,7 +288,8 @@ func (l *Lexer) ReadVarValue() (*graph.EvalString, error) {
 
 // readEvalString reads a $-escaped string
 func (l *Lexer) readEvalString(isPath bool) (*graph.EvalString, error) {
-	var result strings.Builder
+	es := &graph.EvalString{}
+	var currentText strings.Builder
 	l.eatWhitespace()
 
 	for l.pos < len(l.input) {
@@ -315,11 +314,21 @@ func (l *Lexer) readEvalString(isPath bool) (*graph.EvalString, error) {
 
 			next := l.input[l.pos]
 			switch next {
-			case '$', ' ', ':':
-				// Escaped special character
-				result.WriteByte(next)
+			case '$':
+				// Escaped dollar sign - add as text
+				currentText.WriteByte('$')
 				l.pos++
-			
+
+			case ' ':
+				// Escaped space - add as text
+				currentText.WriteByte(' ')
+				l.pos++
+
+			case ':':
+				// Escaped colon - add as text
+				currentText.WriteByte(':')
+				l.pos++
+
 			case '\n', '\r':
 				// Line continuation - skip the newline and any following whitespace
 				l.pos++
@@ -333,53 +342,71 @@ func (l *Lexer) readEvalString(isPath bool) (*graph.EvalString, error) {
 				}
 
 			case '{':
-				// Variable reference ${name}
-				result.WriteByte('$')
-				result.WriteByte('{')
+				// Variable reference ${name} - can include dots
+				// First add any pending text
+				if currentText.Len() > 0 {
+					es.AddText(currentText.String())
+					currentText.Reset()
+				}
+
 				l.pos++
-				
+				varStart := l.pos
 				foundClose := false
 				for l.pos < len(l.input) {
 					if l.input[l.pos] == '}' {
-						result.WriteByte('}')
+						varName := string(l.input[varStart:l.pos])
+						es.AddSpecial(varName)
 						l.pos++
 						foundClose = true
 						break
 					}
-					result.WriteByte(l.input[l.pos])
+					// For ${}, we allow dots in variable names
+					if !isIdentChar(l.input[l.pos]) {
+						return nil, l.Error(fmt.Sprintf("invalid character in variable name: '%c'", l.input[l.pos]))
+					}
 					l.pos++
 				}
-				
+
 				if !foundClose {
 					return nil, l.Error("unclosed ${")
 				}
 
 			default:
 				if isIdentStart(next) {
-					// Variable reference $name
-					result.WriteByte('$')
-					for l.pos < len(l.input) && isIdentChar(l.input[l.pos]) {
-						result.WriteByte(l.input[l.pos])
+					// Variable reference $name - no dots allowed
+					// First add any pending text
+					if currentText.Len() > 0 {
+						es.AddText(currentText.String())
+						currentText.Reset()
+					}
+
+					varStart := l.pos
+					for l.pos < len(l.input) && isSimpleVarChar(l.input[l.pos]) {
 						l.pos++
 					}
+					varName := string(l.input[varStart:l.pos])
+					es.AddSpecial(varName)
 				} else {
 					return nil, l.Error(fmt.Sprintf("invalid $-escape '%c'", next))
 				}
 			}
 		} else {
-			result.WriteByte(c)
+			currentText.WriteByte(c)
 			l.pos++
 		}
 	}
 
-	// Trim trailing whitespace for non-path values
-	str := result.String()
-	if !isPath {
-		str = strings.TrimRight(str, " \t")
+	// Add any remaining text
+	if currentText.Len() > 0 {
+		str := currentText.String()
+		// Trim trailing whitespace for non-path values
+		if !isPath {
+			str = strings.TrimRight(str, " \t")
+		}
+		es.AddText(str)
 	}
 
-	es := graph.NewEvalString(str)
-	return &es, nil
+	return es, nil
 }
 
 // eatWhitespace skips whitespace except newlines
@@ -405,7 +432,7 @@ func (l *Lexer) isStartOfLine() bool {
 	if l.pos == 0 {
 		return true
 	}
-	
+
 	// Look back for the last newline
 	for i := l.pos - 1; i >= 0; i-- {
 		if l.input[i] == '\n' {
@@ -420,7 +447,7 @@ func (l *Lexer) isStartOfLine() bool {
 			return false
 		}
 	}
-	
+
 	// Beginning of file
 	return true
 }
@@ -437,6 +464,13 @@ func isIdentChar(c byte) bool {
 	return isIdentStart(c) ||
 		(c >= '0' && c <= '9') ||
 		c == '-' || c == '.'
+}
+
+// isSimpleVarChar checks if a character can be part of a simple variable name (no dots)
+func isSimpleVarChar(c byte) bool {
+	return isIdentStart(c) ||
+		(c >= '0' && c <= '9') ||
+		c == '-'
 }
 
 // isSpace checks if a character is whitespace

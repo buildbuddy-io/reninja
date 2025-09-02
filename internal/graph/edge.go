@@ -42,27 +42,27 @@ type Edge struct {
 	env         *BindingEnv
 	mark        VisitMark
 	id          int
-	
+
 	// Critical path weight for build scheduling priority
 	criticalPathWeight int64
-	
+
 	// Build state flags
 	outputsReady         bool
-	depsLoaded          bool
-	depsMissing         bool
+	depsLoaded           bool
+	depsMissing          bool
 	generatedByDepLoader bool
-	commandStartTime    TimeStamp
-	
+	commandStartTime     TimeStamp
+
 	// Job server slot
 	jobSlot interface{} // Will be properly typed when we implement jobserver
-	
+
 	// Historical timing info from ninja log
 	prevElapsedTimeMillis int64
-	
+
 	// Input categorization
 	implicitDeps  int // Number of implicit dependencies
 	orderOnlyDeps int // Number of order-only dependencies
-	
+
 	// Output categorization
 	implicitOuts int // Number of implicit outputs
 }
@@ -318,7 +318,7 @@ func (e *Edge) GetBinding(key string) string {
 			return val
 		}
 	}
-	
+
 	// Then check rule bindings
 	if e.rule != nil {
 		if evalStr, ok := e.rule.GetBinding(key); ok {
@@ -327,7 +327,7 @@ func (e *Edge) GetBinding(key string) string {
 			return evalStr.Evaluate(evalEnv)
 		}
 	}
-	
+
 	return ""
 }
 
@@ -360,7 +360,7 @@ func (e *Edge) getUnescapedBinding(key string) string {
 			return val
 		}
 	}
-	
+
 	// Then check rule bindings and evaluate them
 	if e.rule != nil {
 		if evalStr, ok := e.rule.GetBinding(key); ok {
@@ -369,7 +369,7 @@ func (e *Edge) getUnescapedBinding(key string) string {
 			return evalStr.Evaluate(evalEnv)
 		}
 	}
-	
+
 	return ""
 }
 
@@ -378,19 +378,19 @@ func (e *Edge) EvaluateCommand(inclRspFile bool) string {
 	if e.rule == nil {
 		return ""
 	}
-	
+
 	// Get the command binding from the rule
 	commandEval, ok := e.rule.GetBinding("command")
 	if !ok {
 		return ""
 	}
-	
+
 	// Create evaluation environment with built-in variables
 	evalEnv := EdgeEnv(e.env, e)
-	
+
 	// Evaluate the command with the proper environment
 	expanded := commandEval.Evaluate(evalEnv)
-	
+
 	if inclRspFile {
 		rspfile := e.GetUnescapedRspfile()
 		if rspfile != "" {
@@ -400,7 +400,7 @@ func (e *Edge) EvaluateCommand(inclRspFile bool) string {
 			}
 		}
 	}
-	
+
 	return expanded
 }
 

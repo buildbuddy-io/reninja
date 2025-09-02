@@ -46,7 +46,7 @@ type Builder struct {
 	scan          *DependencyScan
 	buildLog      *log.BuildLog
 	depsLog       *log.DepsLog
-	
+
 	mu           sync.Mutex
 	runningEdges map[*graph.Edge]*RunningEdge
 	failedEdges  []*graph.Edge
@@ -72,17 +72,17 @@ func New(s *state.State, config *Config) *Builder {
 			runner.SetKeepGoing(config.KeepGoing > 1, config.KeepGoing)
 		}
 	}
-	
+
 	diskInterface := disk.NewRealDiskInterface()
-	
+
 	// Initialize logs
 	buildLog := log.NewBuildLog()
 	depsLog := log.NewDepsLog()
-	
+
 	// Open logs for writing
 	buildLog.OpenForWrite(".ninja_log", "")
 	depsLog.OpenForWrite(".ninja_deps", "")
-	
+
 	return &Builder{
 		state:         s,
 		config:        config,
@@ -101,7 +101,7 @@ func New(s *state.State, config *Config) *Builder {
 // Build builds the specified targets
 func (b *Builder) Build(targets []string) error {
 	b.startTime = time.Now()
-	
+
 	// Resolve target nodes
 	var nodes []*graph.Node
 	for _, target := range targets {
@@ -147,7 +147,7 @@ func (b *Builder) Build(targets []string) error {
 			if edge == nil {
 				break
 			}
-			
+
 			// Handle phony edges immediately without running commands
 			if edge.IsPhony() {
 				// Mark as complete immediately
@@ -162,7 +162,7 @@ func (b *Builder) Build(targets []string) error {
 				}
 				continue
 			}
-			
+
 			if !b.startEdge(edge) {
 				failureCount++
 				if failureCount >= b.config.KeepGoing {
@@ -170,12 +170,12 @@ func (b *Builder) Build(targets []string) error {
 				}
 			}
 		}
-		
+
 		// Check if we're done
 		if len(b.runningEdges) == 0 {
 			break
 		}
-		
+
 		// Wait for a command to finish
 		result := &Result{}
 		edge := b.commandRunner.WaitForCommand(result)
@@ -195,7 +195,7 @@ func (b *Builder) Build(targets []string) error {
 			}
 		}
 	}
-	
+
 	// Save logs
 	if err := b.buildLog.Save(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to save build log: %v\n", err)
@@ -208,7 +208,7 @@ func (b *Builder) Build(targets []string) error {
 	elapsed := time.Since(b.startTime)
 	if failureCount > 0 {
 		if !b.config.Verbose {
-			b.status.Error("FAILED: %d/%d targets failed in %.2fs", 
+			b.status.Error("FAILED: %d/%d targets failed in %.2fs",
 				failureCount, b.totalEdges, elapsed.Seconds())
 		}
 		return fmt.Errorf("build stopped: %d targets failed", failureCount)
@@ -217,7 +217,7 @@ func (b *Builder) Build(targets []string) error {
 	if !b.config.Verbose && !b.config.DryRun {
 		b.status.Info("Built %d targets in %.2fs", b.builtEdges, elapsed.Seconds())
 	}
-	
+
 	return nil
 }
 
@@ -249,13 +249,13 @@ func (b *Builder) startEdge(edge *graph.Edge) bool {
 			return false
 		}
 	}
-	
+
 	// Track as running with start time
 	b.runningEdges[edge] = &RunningEdge{
 		edge:      edge,
 		startTime: time.Now().UnixMilli(),
 	}
-	
+
 	// Update status
 	if !b.config.Verbose && !b.config.DryRun {
 		b.status.BuildEdgeStarted(edge, b.builtEdges+len(b.runningEdges), b.totalEdges)
@@ -266,7 +266,7 @@ func (b *Builder) startEdge(edge *graph.Edge) bool {
 		delete(b.runningEdges, edge)
 		return false
 	}
-	
+
 	return true
 }
 
@@ -291,13 +291,13 @@ func (b *Builder) finishEdge(edge *graph.Edge, result *Result) {
 				}
 			}
 		}
-		
+
 		// Record command in build log
 		if b.buildLog != nil && runningEdge != nil {
 			endTime := time.Now().UnixMilli()
 			b.buildLog.RecordCommand(edge, runningEdge.startTime, endTime, restatMtime)
 		}
-		
+
 		// TODO: Handle deps log for dependency types
 	} else {
 		b.failedEdges = append(b.failedEdges, edge)
@@ -305,7 +305,7 @@ func (b *Builder) finishEdge(edge *graph.Edge, result *Result) {
 
 	// Notify plan that edge is done
 	b.plan.EdgeFinished(edge)
-	
+
 	// Update status
 	if !b.config.Verbose && !b.config.DryRun {
 		b.status.BuildEdgeFinished(edge, result.Success, result.Output)
@@ -324,10 +324,10 @@ func (b *Builder) waitForRunningCommands() {
 
 // StatusPrinter handles build status output
 type StatusPrinter struct {
-	mu         sync.Mutex
-	lastLine   string
-	verbose    bool
-	startTime  time.Time
+	mu        sync.Mutex
+	lastLine  string
+	verbose   bool
+	startTime time.Time
 }
 
 // NewStatusPrinter creates a new StatusPrinter
@@ -341,7 +341,7 @@ func NewStatusPrinter() *StatusPrinter {
 func (s *StatusPrinter) Info(format string, args ...interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.clearLine()
 	fmt.Printf(format+"\n", args...)
 }
@@ -350,7 +350,7 @@ func (s *StatusPrinter) Info(format string, args ...interface{}) {
 func (s *StatusPrinter) Error(format string, args ...interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.clearLine()
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
@@ -359,11 +359,11 @@ func (s *StatusPrinter) Error(format string, args ...interface{}) {
 func (s *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, running, total int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	if s.verbose {
 		return
 	}
-	
+
 	// Get first output name for display
 	outputName := ""
 	if len(edge.Outputs()) > 0 {
@@ -372,10 +372,10 @@ func (s *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, running, total int) {
 			outputName = "..." + outputName[len(outputName)-27:]
 		}
 	}
-	
+
 	elapsed := time.Since(s.startTime)
 	status := fmt.Sprintf("[%d/%d] %.1fs | %s", running, total, elapsed.Seconds(), outputName)
-	
+
 	s.printStatus(status)
 }
 
@@ -383,7 +383,7 @@ func (s *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, running, total int) {
 func (s *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, success bool, output string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	if !success && output != "" {
 		s.clearLine()
 		fmt.Fprint(os.Stderr, output)
@@ -393,7 +393,7 @@ func (s *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, success bool, output
 func (s *StatusPrinter) printStatus(status string) {
 	// Clear previous line
 	s.clearLine()
-	
+
 	// Print new status (without newline for updating in place)
 	fmt.Print(status)
 	s.lastLine = status

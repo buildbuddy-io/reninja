@@ -46,14 +46,14 @@ func NewCompDBTool(s *state.State) *CompDBTool {
 func (c *CompDBTool) Run(rules []string) error {
 	// Default rules to consider as compilation commands
 	defaultRules := map[string]bool{
-		"cc":     true,
-		"cxx":    true,
-		"gcc":    true,
-		"g++":    true,
-		"clang":  true,
+		"cc":      true,
+		"cxx":     true,
+		"gcc":     true,
+		"g++":     true,
+		"clang":   true,
 		"clang++": true,
 	}
-	
+
 	// Build set of rules to include
 	includeRules := make(map[string]bool)
 	if len(rules) > 0 {
@@ -65,21 +65,21 @@ func (c *CompDBTool) Run(rules []string) error {
 		// Use default rules
 		includeRules = defaultRules
 	}
-	
+
 	// Collect compilation commands
 	var entries []CompilationDatabase
 	cwd, _ := os.Getwd()
-	
+
 	for _, edge := range c.state.Edges() {
 		if edge.IsPhony() {
 			continue
 		}
-		
+
 		rule := edge.Rule()
 		if rule == nil {
 			continue
 		}
-		
+
 		// Check if this rule should be included
 		if !includeRules[rule.Name()] {
 			// Also check if the command looks like a compilation
@@ -88,13 +88,13 @@ func (c *CompDBTool) Run(rules []string) error {
 				continue
 			}
 		}
-		
+
 		// Get the command
 		command := edge.EvaluateCommand(false)
 		if command == "" {
 			continue
 		}
-		
+
 		// Find source files (inputs with recognized extensions)
 		for _, input := range edge.Inputs() {
 			if isSourceFile(input.Path()) {
@@ -103,18 +103,18 @@ func (c *CompDBTool) Run(rules []string) error {
 					Command:   command,
 					File:      input.Path(),
 				}
-				
+
 				// Add output if there's a single output
 				outputs := edge.Outputs()
 				if len(outputs) == 1 {
 					entry.Output = outputs[0].Path()
 				}
-				
+
 				entries = append(entries, entry)
 			}
 		}
 	}
-	
+
 	// Output JSON
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -127,18 +127,18 @@ func looksLikeCompileCommand(command string) bool {
 		"gcc", "g++", "clang", "clang++", "cc", "c++",
 		"cl.exe", "cl", "icc", "icpc",
 	}
-	
+
 	cmdLower := strings.ToLower(command)
 	for _, compiler := range compilers {
 		if strings.Contains(cmdLower, compiler) {
 			// Make sure it's not just linking
-			if strings.Contains(cmdLower, " -c ") || 
-			   strings.Contains(cmdLower, " /c ") {
+			if strings.Contains(cmdLower, " -c ") ||
+				strings.Contains(cmdLower, " /c ") {
 				return true
 			}
 		}
 	}
-	
+
 	return false
 }
 
@@ -157,7 +157,7 @@ func isSourceFile(path string) bool {
 		".S":   true,
 		".asm": true,
 	}
-	
+
 	return sourceExts[ext]
 }
 
@@ -179,13 +179,13 @@ func (r *RecompactTool) Run(args []string) error {
 	if len(args) > 0 {
 		r.logPath = args[0]
 	}
-	
+
 	fmt.Printf("Recompacting %s...\n", r.logPath)
-	
+
 	// TODO: Implement actual recompaction
 	// For now, just report that it's done
 	fmt.Println("Log recompacted.")
-	
+
 	return nil
 }
 
@@ -194,7 +194,7 @@ type RestatTool struct {
 	logPath string
 }
 
-// NewRestatTool creates a new RestatTool  
+// NewRestatTool creates a new RestatTool
 func NewRestatTool() *RestatTool {
 	return &RestatTool{
 		logPath: ".ninja_log",
@@ -207,12 +207,12 @@ func (r *RestatTool) Run(args []string) error {
 	if len(args) > 0 {
 		r.logPath = args[0]
 	}
-	
+
 	fmt.Printf("Restating %s...\n", r.logPath)
-	
+
 	// TODO: Implement actual restat
 	// For now, just report that it's done
 	fmt.Println("Log restated.")
-	
+
 	return nil
 }

@@ -46,7 +46,7 @@ type Config struct {
 // New creates a new Cleaner
 func New(s *state.State, config *Config) *Cleaner {
 	diskInt := disk.NewRealDiskInterface()
-	
+
 	return &Cleaner{
 		state:         s,
 		diskInterface: diskInt,
@@ -60,10 +60,10 @@ func New(s *state.State, config *Config) *Cleaner {
 // CleanAll removes all built files
 func (c *Cleaner) CleanAll() (int, error) {
 	fmt.Println("Cleaning all built files...")
-	
+
 	cleaned := 0
 	errors := []string{}
-	
+
 	// Clean all edges
 	for _, edge := range c.state.Edges() {
 		if c.shouldCleanEdge(edge) {
@@ -76,17 +76,17 @@ func (c *Cleaner) CleanAll() (int, error) {
 			}
 		}
 	}
-	
+
 	// Clean build log and deps log
 	if !c.generator {
 		c.cleanLog(".ninja_log")
 		c.cleanLog(".ninja_deps")
 	}
-	
+
 	if len(errors) > 0 {
 		return cleaned, fmt.Errorf("failed to clean some files:\n%s", strings.Join(errors, "\n"))
 	}
-	
+
 	return cleaned, nil
 }
 
@@ -95,30 +95,30 @@ func (c *Cleaner) CleanTargets(targets []string) (int, error) {
 	if len(targets) == 0 {
 		return 0, fmt.Errorf("no targets specified")
 	}
-	
+
 	fmt.Printf("Cleaning %d targets...\n", len(targets))
-	
+
 	cleaned := 0
 	errors := []string{}
-	
+
 	for _, target := range targets {
 		node := c.state.LookupNode(target)
 		if node == nil {
 			errors = append(errors, fmt.Sprintf("unknown target '%s'", target))
 			continue
 		}
-		
+
 		count, err := c.cleanNode(node)
 		cleaned += count
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
-	
+
 	if len(errors) > 0 {
 		return cleaned, fmt.Errorf("failed to clean some targets:\n%s", strings.Join(errors, "\n"))
 	}
-	
+
 	return cleaned, nil
 }
 
@@ -128,12 +128,12 @@ func (c *Cleaner) CleanRule(ruleName string) (int, error) {
 	if rule == nil {
 		return 0, fmt.Errorf("unknown rule '%s'", ruleName)
 	}
-	
+
 	fmt.Printf("Cleaning outputs from rule '%s'...\n", ruleName)
-	
+
 	cleaned := 0
 	errors := []string{}
-	
+
 	for _, edge := range c.state.Edges() {
 		if edge.Rule() == rule {
 			for _, output := range edge.Outputs() {
@@ -145,32 +145,32 @@ func (c *Cleaner) CleanRule(ruleName string) (int, error) {
 			}
 		}
 	}
-	
+
 	if len(errors) > 0 {
 		return cleaned, fmt.Errorf("failed to clean some files:\n%s", strings.Join(errors, "\n"))
 	}
-	
+
 	return cleaned, nil
 }
 
 // cleanNode removes a node's outputs and recursively cleans dependencies if needed
 func (c *Cleaner) cleanNode(node *graph.Node) (int, error) {
 	cleaned := 0
-	
+
 	// If node has an in-edge, it's a generated file
 	if edge := node.InEdge(); edge != nil {
 		// Clean the output
 		if err := c.removeFile(node.Path()); err == nil {
 			cleaned++
 		}
-		
+
 		// Clean response file if present
 		if rspfile := edge.GetUnescapedRspfile(); rspfile != "" {
 			if err := c.removeFile(rspfile); err == nil {
 				cleaned++
 			}
 		}
-		
+
 		// Recursively clean inputs if they're generated
 		if c.generator {
 			for _, input := range edge.Inputs() {
@@ -188,7 +188,7 @@ func (c *Cleaner) cleanNode(node *graph.Node) (int, error) {
 			}
 		}
 	}
-	
+
 	return cleaned, nil
 }
 
@@ -198,7 +198,7 @@ func (c *Cleaner) shouldCleanEdge(edge *graph.Edge) bool {
 	if edge.IsPhony() {
 		return false
 	}
-	
+
 	// If generator mode, only clean generator outputs
 	if c.generator {
 		binding := edge.GetBinding("generator")
@@ -207,7 +207,7 @@ func (c *Cleaner) shouldCleanEdge(edge *graph.Edge) bool {
 		}
 		return false
 	}
-	
+
 	return true
 }
 
@@ -216,19 +216,19 @@ func (c *Cleaner) removeFile(path string) error {
 	if c.verbose {
 		fmt.Printf("Remove %s\n", path)
 	}
-	
+
 	if c.dryRun {
 		return nil
 	}
-	
+
 	err := os.Remove(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove %s: %w", path, err)
 	}
-	
+
 	// Try to remove empty parent directories
 	c.removeEmptyDirs(filepath.Dir(path))
-	
+
 	return nil
 }
 
@@ -237,13 +237,13 @@ func (c *Cleaner) removeEmptyDirs(dir string) {
 	if dir == "." || dir == "/" || dir == "" {
 		return
 	}
-	
+
 	// Check if directory is empty
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) > 0 {
 		return
 	}
-	
+
 	// Remove empty directory
 	if err := os.Remove(dir); err == nil {
 		if c.verbose {
@@ -259,7 +259,7 @@ func (c *Cleaner) cleanLog(filename string) {
 	if c.verbose {
 		fmt.Printf("Remove %s\n", filename)
 	}
-	
+
 	if !c.dryRun {
 		os.Remove(filename)
 	}
@@ -280,7 +280,7 @@ func (c *Cleaner) isInBuildDir(path string) bool {
 // PrintWouldClean prints what would be cleaned without actually doing it
 func (c *Cleaner) PrintWouldClean() error {
 	count := 0
-	
+
 	for _, edge := range c.state.Edges() {
 		if c.shouldCleanEdge(edge) {
 			for _, output := range edge.Outputs() {
@@ -289,7 +289,7 @@ func (c *Cleaner) PrintWouldClean() error {
 			}
 		}
 	}
-	
+
 	if !c.generator {
 		if _, err := os.Stat(".ninja_log"); err == nil {
 			fmt.Println(".ninja_log")
@@ -300,7 +300,7 @@ func (c *Cleaner) PrintWouldClean() error {
 			count++
 		}
 	}
-	
+
 	fmt.Printf("Would remove %d files.\n", count)
 	return nil
 }
@@ -308,7 +308,7 @@ func (c *Cleaner) PrintWouldClean() error {
 // GetCleanableFiles returns a list of files that would be cleaned
 func (c *Cleaner) GetCleanableFiles() []string {
 	var files []string
-	
+
 	for _, edge := range c.state.Edges() {
 		if c.shouldCleanEdge(edge) {
 			for _, output := range edge.Outputs() {
@@ -316,7 +316,7 @@ func (c *Cleaner) GetCleanableFiles() []string {
 			}
 		}
 	}
-	
+
 	if !c.generator {
 		if _, err := os.Stat(".ninja_log"); err == nil {
 			files = append(files, ".ninja_log")
@@ -325,14 +325,14 @@ func (c *Cleaner) GetCleanableFiles() []string {
 			files = append(files, ".ninja_deps")
 		}
 	}
-	
+
 	return files
 }
 
 // CleanDeadFiles removes files that are no longer generated by any edge
 func (c *Cleaner) CleanDeadFiles() (int, error) {
 	fmt.Println("Cleaning dead files...")
-	
+
 	// Build a map of all current outputs
 	currentOutputs := make(map[string]bool)
 	for _, edge := range c.state.Edges() {
@@ -340,14 +340,14 @@ func (c *Cleaner) CleanDeadFiles() (int, error) {
 			currentOutputs[output.Path()] = true
 		}
 	}
-	
+
 	// Find and remove files in build directory that aren't current outputs
 	cleaned := 0
 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip files we can't access
 		}
-		
+
 		if info.IsDir() {
 			// Skip hidden directories
 			if strings.HasPrefix(info.Name(), ".") && path != "." {
@@ -355,29 +355,29 @@ func (c *Cleaner) CleanDeadFiles() (int, error) {
 			}
 			return nil
 		}
-		
+
 		// Skip if it's a current output
 		if currentOutputs[path] {
 			return nil
 		}
-		
+
 		// Skip source files (no in-edge)
 		if node := c.state.LookupNode(path); node != nil && node.InEdge() == nil {
 			return nil
 		}
-		
+
 		// Skip files outside build directory
 		if !c.isInBuildDir(path) {
 			return nil
 		}
-		
+
 		// This looks like a dead file, remove it
 		if err := c.removeFile(path); err == nil {
 			cleaned++
 		}
-		
+
 		return nil
 	})
-	
+
 	return cleaned, err
 }

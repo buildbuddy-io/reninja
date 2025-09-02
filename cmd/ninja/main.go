@@ -34,17 +34,17 @@ const (
 
 // Options represents command-line options
 type Options struct {
-	inputFile          string
-	workingDir         string
-	parallelism        int
-	keepGoing          int
-	dryRun             bool
-	verbose            bool
-	showVersion        bool
-	showHelp           bool
-	debugMode          string
-	targets            []string
-	toolMode           string
+	inputFile           string
+	workingDir          string
+	parallelism         int
+	keepGoing           int
+	dryRun              bool
+	verbose             bool
+	showVersion         bool
+	showHelp            bool
+	debugMode           string
+	targets             []string
+	toolMode            string
 	phonyCycleShouldErr bool
 }
 
@@ -83,7 +83,7 @@ func main() {
 	// Load build file
 	s := state.New()
 	p := parser.New(s)
-	
+
 	if err := p.ParseFile(opts.inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
 		os.Exit(1)
@@ -187,34 +187,34 @@ func runTool(tool string, args []string) {
 
 	case "clean":
 		runClean(args)
-		
+
 	case "graph":
 		runGraphTool(args)
-		
+
 	case "query":
 		runQueryTool(args)
-		
+
 	case "targets":
 		runTargetsTool(args)
-		
+
 	case "commands":
 		runCommandsTool(args)
-		
+
 	case "deps":
 		fmt.Println("gin: deps tool not yet implemented")
-		
+
 	case "browse":
 		fmt.Println("gin: browse tool not yet implemented")
-		
+
 	case "compdb":
 		runCompDBTool(args)
-		
+
 	case "recompact":
 		runRecompactTool(args)
-		
+
 	case "restat":
 		runRestatTool(args)
-		
+
 	default:
 		fmt.Fprintf(os.Stderr, "gin: unknown tool '%s'\n", tool)
 		os.Exit(1)
@@ -233,25 +233,25 @@ func runClean(args []string) {
 			break
 		}
 	}
-	
+
 	// Parse options
 	cleanFlags := flag.NewFlagSet("clean", flag.ExitOnError)
 	verbose := cleanFlags.Bool("v", false, "verbose output")
 	dryRun := cleanFlags.Bool("n", false, "dry run")
 	generator := cleanFlags.Bool("g", false, "clean generator files")
 	rules := cleanFlags.Bool("r", false, "clean rule outputs")
-	
+
 	cleanFlags.Parse(cleanArgs)
-	
+
 	// Load build file
 	s := state.New()
 	p := parser.New(s)
-	
+
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Create cleaner
 	config := &clean.Config{
 		Verbose:   *verbose,
@@ -260,23 +260,23 @@ func runClean(args []string) {
 		Rules:     *rules,
 	}
 	cleaner := clean.New(s, config)
-	
+
 	// Run clean
 	targets := cleanFlags.Args()
 	var cleaned int
 	var err error
-	
+
 	if len(targets) > 0 {
 		cleaned, err = cleaner.CleanTargets(targets)
 	} else {
 		cleaned, err = cleaner.CleanAll()
 	}
-	
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gin: clean failed: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Cleaned %d files.\n", cleaned)
 }
 
@@ -292,16 +292,16 @@ func runGraphTool(args []string) {
 			break
 		}
 	}
-	
+
 	// Load build file
 	s := state.New()
 	p := parser.New(s)
-	
+
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Run tool
 	tool := tools.NewGraphTool(s)
 	if err := tool.Run(toolArgs); err != nil {
@@ -322,16 +322,16 @@ func runQueryTool(args []string) {
 			break
 		}
 	}
-	
+
 	// Load build file
 	s := state.New()
 	p := parser.New(s)
-	
+
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Run tool
 	tool := tools.NewQueryTool(s)
 	if err := tool.Run(toolArgs); err != nil {
@@ -352,16 +352,16 @@ func runTargetsTool(args []string) {
 			break
 		}
 	}
-	
+
 	// Load build file
 	s := state.New()
 	p := parser.New(s)
-	
+
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Run tool
 	tool := tools.NewTargetsTool(s)
 	if err := tool.Run(toolArgs); err != nil {
@@ -382,16 +382,16 @@ func runCommandsTool(args []string) {
 			break
 		}
 	}
-	
+
 	// Load build file
 	s := state.New()
 	p := parser.New(s)
-	
+
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Run tool
 	tool := tools.NewCommandsTool(s)
 	if err := tool.Run(toolArgs); err != nil {
@@ -412,16 +412,16 @@ func runCompDBTool(args []string) {
 			break
 		}
 	}
-	
+
 	// Load build file
 	s := state.New()
 	p := parser.New(s)
-	
+
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Run tool
 	tool := tools.NewCompDBTool(s)
 	if err := tool.Run(toolArgs); err != nil {

@@ -109,10 +109,10 @@ func pathDecanonicalized(path string, slashBits uint64) string {
 	if slashBits == 0 {
 		return path
 	}
-	
+
 	result := strings.Builder{}
 	result.Grow(len(path))
-	
+
 	bit := uint64(1)
 	for _, ch := range path {
 		if ch == '/' && (slashBits&bit) != 0 {
@@ -124,7 +124,7 @@ func pathDecanonicalized(path string, slashBits uint64) string {
 			bit <<= 1
 		}
 	}
-	
+
 	return result.String()
 }
 
@@ -258,7 +258,7 @@ func (n *Node) Stat(diskInterface interface{}) error {
 	if !ok {
 		return fmt.Errorf("invalid disk interface")
 	}
-	
+
 	mtime, err := di.Stat(n.path)
 	if err != nil {
 		if IsNotExist(err) {
@@ -268,7 +268,7 @@ func (n *Node) Stat(diskInterface interface{}) error {
 		}
 		return err
 	}
-	
+
 	n.mtime = mtime
 	n.exists = ExistenceStatusExists
 	return nil
@@ -286,9 +286,9 @@ func (n *Node) StatIfNecessary(diskInterface interface{}) error {
 func IsNotExist(err error) bool {
 	// This will be implemented based on the disk interface
 	// For now, we'll check for standard Go file not found errors
-	return strings.Contains(err.Error(), "no such file") || 
-	       strings.Contains(err.Error(), "cannot find the file") ||
-	       strings.Contains(err.Error(), "file does not exist")
+	return strings.Contains(err.Error(), "no such file") ||
+		strings.Contains(err.Error(), "cannot find the file") ||
+		strings.Contains(err.Error(), "file does not exist")
 }
 
 // CanonicalizePath normalizes a path to use forward slashes and returns slash bits
@@ -296,12 +296,12 @@ func CanonicalizePath(path string) (string, uint64) {
 	if !strings.ContainsRune(path, '\\') {
 		return filepath.Clean(path), 0
 	}
-	
+
 	var slashBits uint64
 	bit := uint64(1)
 	result := strings.Builder{}
 	result.Grow(len(path))
-	
+
 	for _, ch := range path {
 		if ch == '\\' {
 			result.WriteByte('/')
@@ -314,6 +314,6 @@ func CanonicalizePath(path string) (string, uint64) {
 			}
 		}
 	}
-	
+
 	return filepath.Clean(result.String()), slashBits
 }
