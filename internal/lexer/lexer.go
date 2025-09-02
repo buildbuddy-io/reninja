@@ -168,7 +168,7 @@ func (l *Lexer) ReadToken() Token {
 		}
 	}
 
-	l.eatWhitespace()
+	l.eatWhitespaceAndComments()
 
 	if l.pos >= len(l.input) {
 		l.lastToken = EOF
@@ -243,7 +243,12 @@ func (l *Lexer) ReadToken() Token {
 		return PIPE
 
 	default:
-		l.lastError = fmt.Sprintf("unexpected character '%c'", c)
+		// Special error message for tabs
+		if c == '\t' {
+			l.lastError = "tabs are not allowed, use spaces"
+		} else {
+			l.lastError = fmt.Sprintf("unexpected character '%c'", c)
+		}
 		l.lastToken = ERROR
 		return ERROR
 	}
@@ -263,7 +268,7 @@ func (l *Lexer) PeekToken(token Token) bool {
 
 // ReadIdent reads a simple identifier
 func (l *Lexer) ReadIdent() (string, bool) {
-	l.eatWhitespace()
+	l.eatWhitespaceAndComments()
 
 	if l.pos >= len(l.input) || !isIdentStart(l.input[l.pos]) {
 		return "", false
@@ -290,7 +295,7 @@ func (l *Lexer) ReadVarValue() (*graph.EvalString, error) {
 func (l *Lexer) readEvalString(isPath bool) (*graph.EvalString, error) {
 	es := &graph.EvalString{}
 	var currentText strings.Builder
-	l.eatWhitespace()
+	l.eatWhitespaceAndComments()
 
 	for l.pos < len(l.input) {
 		c := l.input[l.pos]
@@ -409,17 +414,19 @@ func (l *Lexer) readEvalString(isPath bool) (*graph.EvalString, error) {
 	return es, nil
 }
 
-// eatWhitespace skips whitespace except newlines
-func (l *Lexer) eatWhitespace() {
+// eatWhitespaceAndComments skips whitespace except newlines and tabs
+// Note: tabs are not allowed in ninja files (except in comments)
+func (l *Lexer) eatWhitespaceAndComments() {
 	for l.pos < len(l.input) {
 		c := l.input[l.pos]
-		if c != ' ' && c != '\t' && c != '\r' {
+		// Only skip spaces and \r, not tabs
+		if c != ' ' && c != '\r' {
 			break
 		}
 		l.pos++
 	}
 
-	// Skip comments
+	// Skip comments (tabs are allowed in comments)
 	if l.pos < len(l.input) && l.input[l.pos] == '#' {
 		for l.pos < len(l.input) && l.input[l.pos] != '\n' {
 			l.pos++
