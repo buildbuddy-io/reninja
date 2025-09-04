@@ -57,7 +57,7 @@ func TestError(t *testing.T) {
 	l := lexer.NewWithInput("foo$\nbad $")
 	_, err := l.ReadVarValue()
 	require.Error(t, err)
-	
+
 	// The error message should indicate a bad $-escape on line 2
 	assert.Contains(t, err.Error(), "2:")
 	assert.Contains(t, err.Error(), "$-escape")
@@ -75,7 +75,7 @@ func TestTabs(t *testing.T) {
 	l := lexer.NewWithInput("   \tfoobar")
 	token := l.ReadToken()
 	assert.Equal(t, lexer.INDENT, token)
-	
+
 	// Next token should be ERROR because tabs are not allowed
 	token = l.ReadToken()
 	assert.Equal(t, lexer.ERROR, token)
