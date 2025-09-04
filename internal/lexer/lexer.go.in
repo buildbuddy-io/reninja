@@ -305,8 +305,6 @@ func (l *Lexer) ReadEvalString(path bool) (*graph.EvalString, error) {
 	
   for {
     start = cursor
-
-	  fmt.Printf("ReadEvalString start: '%s'\n", l.input[start:])
     /*!re2c
     re2c:define:YYCTYPE    = byte;
     re2c:define:YYLESSTHAN = "cursor >= limit";
@@ -365,7 +363,7 @@ func (l *Lexer) ReadEvalString(path bool) (*graph.EvalString, error) {
     }
     "$". {
       l.lastToken = start
-      return nil, fmt.Errorf("bad $-escape (literal $ must be written as $$)")
+      return nil, l.Error("bad $-escape (literal $ must be written as $$)")
     }
     nul {
       l.lastToken = start
@@ -373,7 +371,7 @@ func (l *Lexer) ReadEvalString(path bool) (*graph.EvalString, error) {
     }
     [^] {
       l.lastToken = start
-      return nil, fmt.Errorf("unexpected character: %c", l.input[start])
+      return nil, l.Error(l.DescribeLastError())
     }
     */
   }
@@ -385,4 +383,70 @@ done:
   }
   // Non-path strings end in newlines, so there's no whitespace to eat.
   return eval, nil
+}
+
+// Scanner provides a higher-level interface for lexing
+type Scanner struct {
+	Lexer *Lexer // Exposed for parser access
+}
+
+// NewScanner creates a new Scanner
+func NewScanner() *Scanner {
+	return &Scanner{
+		Lexer: New(),
+	}
+}
+
+// Init initializes the scanner with input
+func (s *Scanner) Init(filename, input string) {
+	s.Lexer.Start(filename, input)
+}
+
+// NextToken reads the next token
+func (s *Scanner) NextToken() Token {
+	return s.Lexer.ReadToken()
+}
+
+// ExpectToken reads a token and checks it matches expected
+func (s *Scanner) ExpectToken(expected Token) error {
+	got := s.Lexer.ReadToken()
+	if got != expected {
+		return s.Lexer.Error(fmt.Sprintf("expected %s, got %s%s",
+			TokenName(expected), TokenName(got), TokenErrorHint(expected)))
+	}
+	return nil
+}
+
+// ExpectIdent reads an identifier
+func (s *Scanner) ExpectIdent() (string, error) {
+	ident, ok := s.Lexer.ReadIdent()
+	if !ok {
+		return "", s.Lexer.Error("expected identifier")
+	}
+	return ident, nil
+}
+
+// ReadPath reads a path
+func (s *Scanner) ReadPath() (*graph.EvalString, error) {
+	return s.Lexer.ReadEvalString(true)
+}
+
+// ReadVarValue reads a variable value
+func (s *Scanner) ReadVarValue() (*graph.EvalString, error) {
+	return s.Lexer.ReadVarValue()
+}
+
+// PeekToken checks if the next token matches
+func (s *Scanner) PeekToken(token Token) bool {
+	return s.Lexer.PeekToken(token)
+}
+
+// Error returns an error with context
+func (s *Scanner) Error(message string) error {
+	return s.Lexer.Error(message)
+}
+
+// IsEOF checks if we've reached end of file
+func (s *Scanner) IsEOF() bool {
+	return s.Lexer.ofs >= len(s.Lexer.input)
 }
