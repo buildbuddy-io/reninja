@@ -1,0 +1,388 @@
+//go:generate re2go $INPUT -o $OUTPUT -i --api generic
+package lexer
+
+import (
+	"fmt"
+	"strings"
+	
+	"github.com/buildbuddy-io/gin/internal/graph"
+)
+
+// Token represents a lexical token
+type Token int
+
+const (
+	ERROR Token = iota
+	BUILD
+	COLON
+	DEFAULT
+	EQUALS
+	IDENT
+	INCLUDE
+	INDENT
+	NEWLINE
+	PIPE2
+	PIPE
+	PIPEAT
+	POOL
+	RULE
+	SUBNINJA
+	EOF
+)
+
+// TokenName returns a human-readable form of a token
+func TokenName(t Token) string {
+	switch t {
+	case ERROR:
+		return "lexing error"
+	case BUILD:
+		return "'build'"
+	case COLON:
+		return "':'"
+	case DEFAULT:
+		return "'default'"
+	case EQUALS:
+		return "'='"
+	case IDENT:
+		return "identifier"
+	case INCLUDE:
+		return "'include'"
+	case INDENT:
+		return "indent"
+	case NEWLINE:
+		return "newline"
+	case PIPE:
+		return "'|'"
+	case PIPE2:
+		return "'||'"
+	case PIPEAT:
+		return "'|@'"
+	case POOL:
+		return "'pool'"
+	case RULE:
+		return "'rule'"
+	case SUBNINJA:
+		return "'subninja'"
+	case EOF:
+		return "eof"
+	default:
+		return fmt.Sprintf("unknown(%d)", t)
+	}
+}
+
+// TokenErrorHint returns a hint for expected tokens
+func TokenErrorHint(expected Token) string {
+	switch expected {
+	case COLON:
+		return " ($ also escapes ':')"
+	default:
+		return ""
+	}
+}
+
+// Lexer tokenizes ninja build files
+type Lexer struct {
+	filename  string
+	input     string
+	ofs       int    // current offset in input (like C++ ofs_)
+	lastToken int    // position of last token (like C++ last_token_)
+}
+
+// New creates a new Lexer
+func New() *Lexer {
+	return &Lexer{}
+}
+
+func (l *Lexer) DumpState() string {
+	sprintf := func(lastToken int) string {
+		if lastToken == -1 {
+			return "(null)"
+		}
+		return l.input[lastToken:]
+	}
+	
+	return fmt.Sprintf("ofs: %s, lastToken: %s\n", l.input[l.ofs:], sprintf(l.lastToken))
+}
+
+// NewWithInput creates a new Lexer with input
+func NewWithInput(input string) *Lexer {
+	l := &Lexer{}
+	l.Start("input", input)
+	return l
+}
+
+// Start initializes the lexer with input
+func (l *Lexer) Start(filename, input string) {
+	l.filename = filename
+	l.input = input
+	l.ofs = 0
+	l.lastToken = -1
+}
+
+// DescribeLastError returns the last error message
+func (l *Lexer) DescribeLastError() string {
+	if l.lastToken < len(l.input) {
+		switch l.input[l.lastToken] {
+		case '\t':
+			return "tabs are not allowed, use spaces"
+		}
+	}
+	return "lexing error"
+}
+
+// Error constructs an error message with context
+func (l *Lexer) Error(message string) error {
+	// Compute line/column
+	line := 1
+	lineStart := 0
+	for i := 0; i < l.lastToken && i < len(l.input); i++ {
+		if l.input[i] == '\n' {
+			line++
+			lineStart = i + 1
+		}
+	}
+	col := l.lastToken - lineStart + 1
+
+	err := fmt.Sprintf("%s:%d:%d: %s", l.filename, line, col, message)
+
+	// Add some context to the message
+	const truncateColumn = 72
+	if col > 0 && col < truncateColumn {
+		lineEnd := lineStart
+		for lineEnd < len(l.input) && l.input[lineEnd] != '\n' && lineEnd-lineStart < truncateColumn {
+			lineEnd++
+		}
+		truncated := lineEnd-lineStart >= truncateColumn
+
+		err += "\n" + l.input[lineStart:lineEnd]
+		if truncated {
+			err += "..."
+		}
+		err += "\n" + strings.Repeat(" ", col-1) + "^ near here"
+	}
+	return fmt.Errorf("%s", err)
+}
+
+// UnreadToken rewinds to the last read token
+func (l *Lexer) UnreadToken() {
+	l.ofs = l.lastToken
+}
+
+// ReadToken reads the next token
+func (l *Lexer) ReadToken() Token {
+    var cursor, marker, start int
+    cursor = l.ofs
+    limit := len(l.input)
+    var token Token
+	for {
+	    start = cursor
+            /*!re2c
+	      re2c:define:YYCTYPE    = byte;
+	      re2c:define:YYLESSTHAN = "cursor >= limit";
+	      re2c:define:YYPEEK     = "peek(l.input, cursor, limit)";
+	      re2c:define:YYSKIP     = "cursor += 1";
+	      re2c:define:YYBACKUP   = "marker = cursor";
+	      re2c:define:YYRESTORE  = "cursor = marker";
+	      re2c:yyfill:enable = 0;
+
+
+	      nul = "\x00";        
+	      simple_varname = [a-zA-Z0-9_-]+;
+	      varname = [a-zA-Z0-9_.-]+;
+
+	      [ ]*"#"[^\x00\n]*"\n" { continue; }
+	      [ ]*"\r\n" { token = NEWLINE;  break; }
+	      [ ]*"\n"   { token = NEWLINE;  break; }
+	      [ ]+       { token = INDENT;   break; }
+	      "build"    { token = BUILD;    break; }
+	      "pool"     { token = POOL;     break; }
+ 	      "rule"     { token = RULE;     break; }
+	      "default"  { token = DEFAULT;  break; }
+	      "="        { token = EQUALS;   break; }
+	      ":"        { token = COLON;    break; }
+	      "|@"       { token = PIPEAT;   break; }
+	      "||"       { token = PIPE2;    break; }
+	      "|"        { token = PIPE;     break; }
+	      "include"  { token = INCLUDE;  break; }
+	      "subninja" { token = SUBNINJA; break; }
+	      varname    { token = IDENT;    break; }
+	      nul        { token = EOF;      break; }
+	      [^]        { token = ERROR;    break; }
+            */
+	}
+	
+	l.lastToken = start
+	l.ofs = cursor
+	if token != NEWLINE && token != EOF {
+		l.EatWhitespace()
+	}
+	return token
+}
+
+// PeekToken checks if the next token matches
+func (l *Lexer) PeekToken(token Token) bool {
+	t := l.ReadToken()
+	if t == token {
+		return true
+	}
+	l.UnreadToken()
+	return false
+}
+
+// EatWhitespace skips trailing whitespace after tokens
+func (l *Lexer) EatWhitespace() {
+	var cursor, marker int
+	cursor = l.ofs
+	limit := len(l.input)
+	for {
+		l.ofs = cursor
+		/*!re2c
+		  re2c:define:YYCTYPE    = byte;
+		  re2c:define:YYLESSTHAN = "cursor >= limit";
+		  re2c:define:YYPEEK     = "peek(l.input, cursor, limit)";
+		  re2c:define:YYSKIP     = "cursor += 1";
+		  re2c:define:YYBACKUP   = "marker = cursor";
+		  re2c:define:YYRESTORE  = "cursor = marker";
+		  re2c:yyfill:enable = 0;
+
+		  [ ]+    { continue; }
+		  "$\r\n" { continue; }
+		  "$\n"   { continue; }
+		  [\x00]  { break; }
+		  [^]     { break; }
+		*/
+	}
+}
+
+// Returns "fake" terminating null if cursor has reached limit.
+func peek(str string, cursor, limit int) byte {
+    if cursor >= limit {
+        return 0 // fake null
+    } else {
+        return str[cursor]
+    }
+}
+
+func (l *Lexer) ReadIdent() (string, bool) {
+      cursor := l.ofs
+	  var start int
+	  limit := len(l.input)
+      for {
+        start = cursor
+        /*!re2c
+        re2c:define:YYCTYPE    = byte;
+        re2c:define:YYLESSTHAN = "cursor >= limit";
+        re2c:define:YYPEEK     = "peek(l.input, cursor, limit)";
+        re2c:define:YYSKIP     = "cursor += 1";
+        re2c:define:YYBACKUP   = "marker = cursor";
+        re2c:define:YYRESTORE  = "cursor = marker";
+        re2c:yyfill:enable = 0;
+
+        varname {
+          out := string(l.input[start:cursor])
+          l.lastToken = start
+          l.ofs = cursor
+          l.EatWhitespace()
+          return out, true
+        }
+        [^] {
+          l.lastToken = start
+          return "", false
+        }
+        */
+      }
+}
+
+func (l *Lexer) ReadVarValue() (*graph.EvalString, error) {
+       return l.ReadEvalString(false)
+}
+
+func (l *Lexer) ReadEvalString(path bool) (*graph.EvalString, error) {
+    eval := &graph.EvalString{}
+    limit := len(l.input)
+    var cursor, marker, start int
+    cursor = l.ofs
+	
+  for {
+    start = cursor
+
+	  fmt.Printf("ReadEvalString start: '%s'\n", l.input[start:])
+    /*!re2c
+    re2c:define:YYCTYPE    = byte;
+    re2c:define:YYLESSTHAN = "cursor >= limit";
+    re2c:define:YYPEEK     = "peek(l.input, cursor, limit)";
+    re2c:define:YYSKIP     = "cursor += 1";
+    re2c:define:YYBACKUP   = "marker = cursor";
+    re2c:define:YYRESTORE  = "cursor = marker";
+
+    [^$ :\r\n|\x00]+ {
+      eval.AddText(string(l.input[start:cursor]))
+      continue
+    }
+    "\r\n" {
+      if path {
+        cursor = start
+      }
+      goto done
+    }
+    [ :|\n] {
+      if path {
+        cursor = start
+        goto done
+      } else {
+        if l.input[start] == '\n' {
+          goto done
+        }
+        eval.AddText(string(l.input[start:start+1]))
+        continue
+      }
+    }
+    "$$" {
+      eval.AddText("$")
+      continue
+    }
+    "$ " {
+      eval.AddText(" ")
+      continue
+    }
+    "$\r\n"[ ]* {
+      continue
+    }
+    "$\n"[ ]* {
+      continue
+    }
+    "${"varname"}" {
+      eval.AddSpecial(string(l.input[start+2:cursor-1]))
+      continue
+    }
+    "$"simple_varname {
+      eval.AddSpecial(string(l.input[start+1:start+cursor-start]))
+      continue
+    }
+    "$:" {
+      eval.AddText(":")
+      continue
+    }
+    "$". {
+      l.lastToken = start
+      return nil, fmt.Errorf("bad $-escape (literal $ must be written as $$)")
+    }
+    nul {
+      l.lastToken = start
+      return nil, fmt.Errorf("unexpected EOF")
+    }
+    [^] {
+      l.lastToken = start
+      return nil, fmt.Errorf("unexpected character: %c", l.input[start])
+    }
+    */
+  }
+
+done:
+  l.lastToken = start
+  if path {
+    l.EatWhitespace()
+  }
+  // Non-path strings end in newlines, so there's no whitespace to eat.
+  return eval, nil
+}
