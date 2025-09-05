@@ -168,8 +168,12 @@ func (env *BindingEnv) AddBinding(key, value string) {
 
 // AddRule adds a rule to the environment
 func (env *BindingEnv) AddRule(rule *Rule) {
+	if _, ok := env.LookupRuleCurrentScope(rule.Name()); ok {
+		panic("AddRule attempting to duplicate rule in current scope")
+	}
 	env.rules[rule.Name()] = rule
 }
+
 
 // LookupVariable looks up a variable value, checking parent scopes
 func (env *BindingEnv) LookupVariable(key string) string {
@@ -198,6 +202,14 @@ func (env *BindingEnv) LookupVariable(key string) string {
 
 func (env *BindingEnv) GetRules() map[string]*Rule {
 	return env.rules
+}
+
+func (env *BindingEnv) LookupRuleCurrentScope(name string) (*Rule, bool) {
+	if rule, ok := env.rules[name]; ok {
+		return rule, true
+	}
+
+	return nil, false
 }
 
 // LookupRule looks up a rule by name
