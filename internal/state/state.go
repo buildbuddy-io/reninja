@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/eval_env"
+	"github.com/buildbuddy-io/gin/internal/graph"
 )
 
 // State represents the global build state
