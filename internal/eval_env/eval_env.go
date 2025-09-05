@@ -1,18 +1,4 @@
-// Copyright 2024 The Ninja-Go Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-package graph
+package eval_env
 
 import (
 	"fmt"
@@ -105,6 +91,59 @@ func (es *EvalString) Serialize() string {
 	}
 	return result.String()
 }
+
+type Env interface {
+	LookupVariable(key string) string
+}
+
+// Rule represents a build rule template
+type Rule struct {
+	name     string
+	bindings map[string]EvalString
+	phony    bool
+}
+
+// NewRule creates a new Rule
+func NewRule(name string) *Rule {
+	return &Rule{
+		name:     name,
+		bindings: make(map[string]EvalString),
+		phony:    false,
+	}
+}
+
+// Name returns the rule name
+func (r *Rule) Name() string {
+	return r.name
+}
+
+// IsPhony returns whether this is a phony rule
+func (r *Rule) IsPhony() bool {
+	return r.phony
+}
+
+// SetPhony sets whether this is a phony rule
+func (r *Rule) SetPhony(phony bool) {
+	r.phony = phony
+}
+
+// AddBinding adds a variable binding to the rule
+func (r *Rule) AddBinding(key string, value EvalString) {
+	r.bindings[key] = value
+}
+
+// GetBinding returns a binding value
+func (r *Rule) GetBinding(key string) (EvalString, bool) {
+	val, ok := r.bindings[key]
+	return val, ok
+}
+
+// Bindings returns all bindings
+func (r *Rule) Bindings() map[string]EvalString {
+	return r.bindings
+}
+
+var _ Env = &BindingEnv{}
 
 // BindingEnv represents a variable binding environment with scoping
 type BindingEnv struct {
@@ -199,40 +238,6 @@ func (env *BindingEnv) getBuiltinInNewline() string {
 		return ""
 	}
 	return strings.ReplaceAll(in, " ", "\n")
-}
-
-// EdgeEnv creates a new environment for edge evaluation that includes rule bindings
-func EdgeEnv(parent *BindingEnv, edge *Edge) *BindingEnv {
-	env := NewBindingEnv(parent)
-
-	// Add edge-specific built-in variables
-	var inputs []string
-	for _, input := range edge.ExplicitInputs() {
-		inputs = append(inputs, input.Path())
-	}
-	env.AddBinding("in", strings.Join(inputs, " "))
-
-	var outputs []string
-	for _, output := range edge.ExplicitOutputs() {
-		outputs = append(outputs, output.Path())
-	}
-	env.AddBinding("out", strings.Join(outputs, " "))
-
-	// Add all rule bindings to the environment
-	// This makes them available for variable expansion
-	if edge.Rule() != nil {
-		for name, evalStr := range edge.Rule().Bindings() {
-			// Skip command binding to avoid recursion
-			if name != "command" {
-				// Evaluate rule binding with current environment
-				// This allows $rspfile to reference $out
-				value := evalStr.Evaluate(env)
-				env.AddBinding(name, value)
-			}
-		}
-	}
-
-	return env
 }
 
 // ShellEscape escapes a string for shell execution

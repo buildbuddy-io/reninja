@@ -14,53 +14,6 @@
 
 package graph
 
-// Rule represents a build rule template
-type Rule struct {
-	name     string
-	bindings map[string]EvalString
-	phony    bool
-}
-
-// NewRule creates a new Rule
-func NewRule(name string) *Rule {
-	return &Rule{
-		name:     name,
-		bindings: make(map[string]EvalString),
-		phony:    false,
-	}
-}
-
-// Name returns the rule name
-func (r *Rule) Name() string {
-	return r.name
-}
-
-// IsPhony returns whether this is a phony rule
-func (r *Rule) IsPhony() bool {
-	return r.phony
-}
-
-// SetPhony sets whether this is a phony rule
-func (r *Rule) SetPhony(phony bool) {
-	r.phony = phony
-}
-
-// AddBinding adds a variable binding to the rule
-func (r *Rule) AddBinding(key string, value EvalString) {
-	r.bindings[key] = value
-}
-
-// GetBinding returns a binding value
-func (r *Rule) GetBinding(key string) (EvalString, bool) {
-	val, ok := r.bindings[key]
-	return val, ok
-}
-
-// Bindings returns all bindings
-func (r *Rule) Bindings() map[string]EvalString {
-	return r.bindings
-}
-
 // Pool represents a resource pool for limiting parallel execution
 type Pool struct {
 	name       string

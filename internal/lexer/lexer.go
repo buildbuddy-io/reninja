@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/eval_env"
 )
 
 // Token represents a lexical token
@@ -964,12 +964,12 @@ func (l *Lexer) ReadIdent() (string, bool) {
 	}
 }
 
-func (l *Lexer) ReadVarValue() (*graph.EvalString, error) {
+func (l *Lexer) ReadVarValue() (*eval_env.EvalString, error) {
 	return l.ReadEvalString(false)
 }
 
-func (l *Lexer) ReadEvalString(path bool) (*graph.EvalString, error) {
-	eval := &graph.EvalString{}
+func (l *Lexer) ReadEvalString(path bool) (*eval_env.EvalString, error) {
+	eval := &eval_env.EvalString{}
 	limit := len(l.input)
 	var cursor, marker, start int
 	cursor = l.ofs
@@ -1278,12 +1278,12 @@ func (s *Scanner) ExpectIdent() (string, error) {
 }
 
 // ReadPath reads a path
-func (s *Scanner) ReadPath() (*graph.EvalString, error) {
+func (s *Scanner) ReadPath() (*eval_env.EvalString, error) {
 	return s.Lexer.ReadEvalString(true)
 }
 
 // ReadVarValue reads a variable value
-func (s *Scanner) ReadVarValue() (*graph.EvalString, error) {
+func (s *Scanner) ReadVarValue() (*eval_env.EvalString, error) {
 	return s.Lexer.ReadVarValue()
 }
 

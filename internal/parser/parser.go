@@ -19,6 +19,7 @@ import (
 	"io/ioutil"
 	"path/filepath"
 
+	"github.com/buildbuddy-io/gin/internal/eval_env"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/lexer"
 	"github.com/buildbuddy-io/gin/internal/state"
@@ -28,7 +29,7 @@ import (
 type ManifestParser struct {
 	state    *state.State
 	scanner  *lexer.Scanner
-	env      *graph.BindingEnv
+	env      *eval_env.BindingEnv
 	filename string
 	quiet    bool
 }
@@ -232,7 +233,7 @@ func (p *ManifestParser) parseBuild() error {
 	}
 
 	// Parse edge bindings
-	edgeEnv := graph.NewBindingEnv(p.env)
+	edgeEnv := eval_env.NewBindingEnv(p.env)
 	if err := p.parseBindings(edgeEnv); err != nil {
 		return err
 	}
@@ -347,7 +348,7 @@ func (p *ManifestParser) parseRule() error {
 		return err
 	}
 
-	rule := graph.NewRule(name)
+	rule := eval_env.NewRule(name)
 
 	// Parse rule bindings - these should NOT be evaluated yet
 	if err := p.parseRuleBindings(rule); err != nil {
@@ -379,7 +380,7 @@ func (p *ManifestParser) parsePool() error {
 		return err
 	}
 
-	poolEnv := graph.NewBindingEnv(p.env)
+	poolEnv := eval_env.NewBindingEnv(p.env)
 	if err := p.parseBindings(poolEnv); err != nil {
 		return err
 	}
@@ -449,7 +450,7 @@ func (p *ManifestParser) parseVariable() error {
 }
 
 // parseRuleBindings parses indented variable bindings for a rule
-func (p *ManifestParser) parseRuleBindings(rule *graph.Rule) error {
+func (p *ManifestParser) parseRuleBindings(rule *eval_env.Rule) error {
 	for p.scanner.PeekToken(lexer.INDENT) {
 		p.scanner.NextToken() // consume indent
 
@@ -479,7 +480,7 @@ func (p *ManifestParser) parseRuleBindings(rule *graph.Rule) error {
 }
 
 // parseBindings parses indented variable bindings
-func (p *ManifestParser) parseBindings(env *graph.BindingEnv) error {
+func (p *ManifestParser) parseBindings(env *eval_env.BindingEnv) error {
 	for p.scanner.PeekToken(lexer.INDENT) {
 		p.scanner.NextToken() // consume indent
 
@@ -569,7 +570,7 @@ func (p *ManifestParser) parseSubninja() error {
 	subParser := &ManifestParser{
 		state:   p.state,
 		scanner: lexer.NewScanner(),
-		env:     graph.NewBindingEnv(p.env), // New scope
+		env:     eval_env.NewBindingEnv(p.env), // New scope
 		quiet:   p.quiet,
 	}
 

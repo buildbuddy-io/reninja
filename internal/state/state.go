@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/eval_env"
 )
 
 // State represents the global build state
@@ -35,10 +36,10 @@ type State struct {
 	pools map[string]*graph.Pool
 
 	// All rules
-	rules map[string]*graph.Rule
+	rules map[string]*eval_env.Rule
 
 	// Global variable bindings
-	bindings *graph.BindingEnv
+	bindings *eval_env.BindingEnv
 
 	// Default build targets
 	defaults []*graph.Node
@@ -53,8 +54,8 @@ func New() *State {
 		paths:    make(map[string]*graph.Node),
 		edges:    make([]*graph.Edge, 0),
 		pools:    make(map[string]*graph.Pool),
-		rules:    make(map[string]*graph.Rule),
-		bindings: graph.NewBindingEnv(nil),
+		rules:    make(map[string]*eval_env.Rule),
+		bindings: eval_env.NewBindingEnv(nil),
 		defaults: make([]*graph.Node, 0),
 		roots:    make([]*graph.Node, 0),
 	}
@@ -63,7 +64,7 @@ func New() *State {
 	s.AddPool(graph.NewPool("console", 1))
 
 	// Add phony rule
-	phonyRule := graph.NewRule("phony")
+	phonyRule := eval_env.NewRule("phony")
 	phonyRule.SetPhony(true)
 	s.AddRule(phonyRule)
 
@@ -181,7 +182,7 @@ func (s *State) Pools() map[string]*graph.Pool {
 }
 
 // AddRule adds a build rule
-func (s *State) AddRule(rule *graph.Rule) error {
+func (s *State) AddRule(rule *eval_env.Rule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -195,7 +196,7 @@ func (s *State) AddRule(rule *graph.Rule) error {
 }
 
 // LookupRule returns a rule by name
-func (s *State) LookupRule(name string) *graph.Rule {
+func (s *State) LookupRule(name string) *eval_env.Rule {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -203,12 +204,12 @@ func (s *State) LookupRule(name string) *graph.Rule {
 }
 
 // Rules returns all rules
-func (s *State) Rules() map[string]*graph.Rule {
+func (s *State) Rules() map[string]*eval_env.Rule {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	// Return a copy to prevent concurrent modification
-	rules := make(map[string]*graph.Rule, len(s.rules))
+	rules := make(map[string]*eval_env.Rule, len(s.rules))
 	for k, v := range s.rules {
 		rules[k] = v
 	}
@@ -216,7 +217,7 @@ func (s *State) Rules() map[string]*graph.Rule {
 }
 
 // Bindings returns the global binding environment
-func (s *State) Bindings() *graph.BindingEnv {
+func (s *State) Bindings() *eval_env.BindingEnv {
 	return s.bindings
 }
 
@@ -268,15 +269,15 @@ func (s *State) Reset() {
 	s.paths = make(map[string]*graph.Node)
 	s.edges = make([]*graph.Edge, 0)
 	s.pools = make(map[string]*graph.Pool)
-	s.rules = make(map[string]*graph.Rule)
-	s.bindings = graph.NewBindingEnv(nil)
+	s.rules = make(map[string]*eval_env.Rule)
+	s.bindings = eval_env.NewBindingEnv(nil)
 	s.defaults = make([]*graph.Node, 0)
 	s.roots = make([]*graph.Node, 0)
 
 	// Re-add built-in pools and rules
 	s.pools["console"] = graph.NewPool("console", 1)
 
-	phonyRule := graph.NewRule("phony")
+	phonyRule := eval_env.NewRule("phony")
 	phonyRule.SetPhony(true)
 	s.rules["phony"] = phonyRule
 	s.bindings.AddRule(phonyRule)

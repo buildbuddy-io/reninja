@@ -1,22 +1,10 @@
-// Copyright 2024 The Ninja-Go Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package graph
 
 import (
 	"fmt"
 	"strings"
+
+	"github.com/buildbuddy-io/gin/internal/eval_env"
 )
 
 // VisitMark represents the visitation state during graph traversal
@@ -33,13 +21,13 @@ const (
 
 // Edge represents a build rule connecting input and output nodes
 type Edge struct {
-	rule        *Rule
+	rule        *eval_env.Rule
 	pool        *Pool
 	inputs      []*Node
 	outputs     []*Node
 	validations []*Node
 	dyndep      *Node
-	env         *BindingEnv
+	env         *eval_env.BindingEnv
 	mark        VisitMark
 	id          int
 
@@ -78,12 +66,12 @@ func NewEdge() *Edge {
 }
 
 // Rule returns the edge's rule
-func (e *Edge) Rule() *Rule {
+func (e *Edge) Rule() *eval_env.Rule {
 	return e.rule
 }
 
 // SetRule sets the edge's rule
-func (e *Edge) SetRule(rule *Rule) {
+func (e *Edge) SetRule(rule *eval_env.Rule) {
 	e.rule = rule
 }
 
@@ -123,12 +111,12 @@ func (e *Edge) SetDyndep(node *Node) {
 }
 
 // Env returns the binding environment
-func (e *Edge) Env() *BindingEnv {
+func (e *Edge) Env() *eval_env.BindingEnv {
 	return e.env
 }
 
 // SetEnv sets the binding environment
-func (e *Edge) SetEnv(env *BindingEnv) {
+func (e *Edge) SetEnv(env *eval_env.BindingEnv) {
 	e.env = env
 }
 
@@ -408,4 +396,38 @@ func (e *Edge) EvaluateCommand(inclRspFile bool) string {
 func (e *Edge) MaybePhonycycleDiagnostic() bool {
 	// This would be implemented based on the actual rule's settings
 	return e.IsPhony()
+}
+
+// EdgeEnv creates a new environment for edge evaluation that includes rule bindings
+func EdgeEnv(parent *eval_env.BindingEnv, edge *Edge) *eval_env.BindingEnv {
+	env := eval_env.NewBindingEnv(parent)
+
+	// Add edge-specific built-in variables
+	var inputs []string
+	for _, input := range edge.ExplicitInputs() {
+		inputs = append(inputs, input.Path())
+	}
+	env.AddBinding("in", strings.Join(inputs, " "))
+
+	var outputs []string
+	for _, output := range edge.ExplicitOutputs() {
+		outputs = append(outputs, output.Path())
+	}
+	env.AddBinding("out", strings.Join(outputs, " "))
+
+	// Add all rule bindings to the environment
+	// This makes them available for variable expansion
+	if edge.Rule() != nil {
+		for name, evalStr := range edge.Rule().Bindings() {
+			// Skip command binding to avoid recursion
+			if name != "command" {
+				// Evaluate rule binding with current environment
+				// This allows $rspfile to reference $out
+				value := evalStr.Evaluate(env)
+				env.AddBinding(name, value)
+			}
+		}
+	}
+
+	return env
 }
