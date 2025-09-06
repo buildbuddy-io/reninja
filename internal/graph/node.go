@@ -292,7 +292,7 @@ func IsNotExist(err error) bool {
 }
 
 // CanonicalizePath normalizes a path to use forward slashes and returns slash bits
-func CanonicalizePath(path string) (string, uint64) {
+func CanonicalizePath(path string) (outp string, outs uint64) {
 	if !strings.ContainsRune(path, '\\') {
 		return filepath.Clean(path), 0
 	}

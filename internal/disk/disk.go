@@ -129,7 +129,8 @@ func (d *RealDiskInterface) ClearStatCache() {
 
 // MockDiskInterface provides a mock implementation for testing
 type MockDiskInterface struct {
-	files map[string]mockFile
+	files     map[string]mockFile
+	filesRead []string
 }
 
 type mockFile struct {
@@ -140,7 +141,8 @@ type mockFile struct {
 // NewMockDiskInterface creates a new MockDiskInterface
 func NewMockDiskInterface() *MockDiskInterface {
 	return &MockDiskInterface{
-		files: make(map[string]mockFile),
+		files:     make(map[string]mockFile),
+		filesRead: make([]string, 0),
 	}
 }
 
@@ -154,6 +156,7 @@ func (m *MockDiskInterface) Stat(path string) (graph.TimeStamp, error) {
 
 // ReadFile reads the contents of a mock file
 func (m *MockDiskInterface) ReadFile(path string) ([]byte, error) {
+	m.filesRead = append(m.filesRead, path)
 	if file, ok := m.files[path]; ok {
 		return file.contents, nil
 	}
@@ -193,6 +196,10 @@ func (m *MockDiskInterface) AddFile(path string, contents []byte, mtime graph.Ti
 		contents: contents,
 		mtime:    mtime,
 	}
+}
+
+func (m *MockDiskInterface) FilesRead() []string {
+	return m.filesRead
 }
 
 // FileReader provides an interface for reading files

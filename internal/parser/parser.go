@@ -114,7 +114,7 @@ func (p *ManifestParser) Parse(filename, input string) error {
 		case lexer.NEWLINE:
 			break
 		default:
-			return p.lexer.Error(fmt.Sprintf("unexpected token %s", lexer.TokenName(token)))
+			return p.lexer.Error(fmt.Sprintf("unexpected %s", lexer.TokenName(token)))
 		}
 	}
 
@@ -124,7 +124,7 @@ func (p *ManifestParser) Parse(filename, input string) error {
 func (p *ManifestParser) ExpectToken(expected lexer.Token) error {
 	token := p.lexer.ReadToken()
 	if token != expected {
-		msg := fmt.Sprintf("expected %s, got %s %s", lexer.TokenName(expected), lexer.TokenName(token), lexer.TokenErrorHint(expected))
+		msg := fmt.Sprintf("expected %s, got %s%s", lexer.TokenName(expected), lexer.TokenName(token), lexer.TokenErrorHint(expected))
 		return p.lexer.Error(msg)
 	}
 	return nil
@@ -150,7 +150,7 @@ func (p *ManifestParser) parsePool() error {
 		}
 		if key == "depth" {
 			depthString := value.Evaluate(p.env)
-			depth, _ := strconv.Atoi(depthString)
+			depth, _ = strconv.Atoi(depthString)
 			if depth < 0 {
 				return p.lexer.Error("invalid pool depth")
 			}
@@ -181,7 +181,6 @@ func (p *ManifestParser) parseEdge() error {
 			// STOPSHIP(tylerw): check std::move semantics are correct in the go version.
 			// If we're clearing objects that we've saved, we're going to have a bad time.
 			p.outs = append(p.outs, out.Clone())
-			fmt.Printf("added path out %q\n", out.Serialize())
 			out, err = p.lexer.ReadPath()
 			if err != nil {
 				return err
@@ -367,8 +366,8 @@ func (p *ManifestParser) parseEdge() error {
 	if dyndep != "" {
 		dyndep, _ = graph.CanonicalizePath(dyndep)
 		node := p.state.GetNode(dyndep)
+		node.SetDyndepPending(true)
 		edge.SetDyndep(node)
-		edge.SetDyndepPending(true)
 		if !slices.Contains(edge.Inputs(), node) {
 			return p.lexer.Error(fmt.Sprintf("dyndep '%s' is not an input", dyndep))
 		}
@@ -396,7 +395,6 @@ func (p *ManifestParser) parseRule() error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("ParseLET: key %s, value: %s\n", key, value.Serialize())
 		if eval_env.IsReservedBinding(key) {
 			rule.AddBinding(key, value)
 		} else {

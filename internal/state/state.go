@@ -63,28 +63,26 @@ func New() *State {
 }
 
 // GetNode returns a node by path, creating it if necessary
-func (s *State) GetNode(path string) *graph.Node {
+func (s *State) GetNode(canonicalPath string) *graph.Node {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	canonPath, slashBits := graph.CanonicalizePath(path)
-
-	if node, ok := s.paths[canonPath]; ok {
+	if node, ok := s.paths[canonicalPath]; ok {
 		return node
 	}
 
-	node := graph.NewNode(canonPath, slashBits)
-	s.paths[canonPath] = node
+	// TODO(tylerw): remove SlashBits everwhere?
+	node := graph.NewNode(canonicalPath, 0)
+	s.paths[canonicalPath] = node
 	return node
 }
 
 // LookupNode returns a node by path without creating it
-func (s *State) LookupNode(path string) *graph.Node {
+func (s *State) LookupNode(canonicalPath string) *graph.Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	canonPath, _ := graph.CanonicalizePath(path)
-	return s.paths[canonPath]
+	return s.paths[canonicalPath]
 }
 
 // Paths returns all paths
@@ -208,21 +206,21 @@ func (s *State) Bindings() *eval_env.BindingEnv {
 	return s.bindings
 }
 
-func (s *State) AddIn(path string, edge *graph.Edge) {
-	node := s.GetNode(path)
+func (s *State) AddIn(canonicalPath string, edge *graph.Edge) {
+	node := s.GetNode(canonicalPath)
 	node.SetGeneratedByDepLoader(false)
 	edge.AddInput(node)
 	node.AddOutEdge(edge)
 }
 
-func (s *State) AddOut(path string, edge *graph.Edge) error {
-	node := s.GetNode(path)
+func (s *State) AddOut(canonicalPath string, edge *graph.Edge) error {
+	node := s.GetNode(canonicalPath)
 	other := node.InEdge()
 	if other != nil {
 		if other == edge {
-			return fmt.Errorf("%s is defined as an output multiple times", path)
+			return fmt.Errorf("%s is defined as an output multiple times", canonicalPath)
 		} else {
-			return fmt.Errorf("multiple rules generate %s", path)
+			return fmt.Errorf("multiple rules generate %s", canonicalPath)
 		}
 	}
 	edge.AddOutput(node)
@@ -231,8 +229,8 @@ func (s *State) AddOut(path string, edge *graph.Edge) error {
 	return nil
 }
 
-func (s *State) AddValidation(path string, edge *graph.Edge) {
-	node := s.GetNode(path)
+func (s *State) AddValidation(canonicalPath string, edge *graph.Edge) {
+	node := s.GetNode(canonicalPath)
 	edge.AddValidation(node)
 	node.AddValidationOutEdge(edge)
 	node.SetGeneratedByDepLoader(false)
@@ -262,26 +260,30 @@ func (s *State) Defaults() []*graph.Node {
 	return defaults
 }
 
+func (s *State) DefaultNodes() ([]*graph.Node, error) {
+	if len(s.defaults) == 0 {
+		return s.RootNodes()
+	}
+	return s.defaults, nil
+}
+
 // RootNodes returns all root nodes (nodes with no output edges)
-func (s *State) RootNodes() []*graph.Node {
+func (s *State) RootNodes() ([]*graph.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if len(s.roots) > 0 {
-		roots := make([]*graph.Node, len(s.roots))
-		copy(roots, s.roots)
-		return roots
-	}
-
-	// Calculate root nodes if not cached
-	var roots []*graph.Node
-	for _, node := range s.paths {
-		if len(node.OutEdges()) == 0 && node.InEdge() == nil {
-			roots = append(roots, node)
+	rootNodes := make([]*graph.Node, 0)
+	for _, edge := range s.edges {
+		for _, out := range edge.Outputs() {
+			if len(out.OutEdges()) == 0 {
+				rootNodes = append(rootNodes, out)
+			}
 		}
 	}
-
-	return roots
+	if len(s.edges) != 0 && len(rootNodes) == 0 {
+		return nil, fmt.Errorf("could not determine root nodes of build graph")
+	}
+	return rootNodes, nil
 }
 
 // Reset clears the state
@@ -295,7 +297,6 @@ func (s *State) Reset() {
 	s.rules = make(map[string]*eval_env.Rule)
 	s.bindings = eval_env.NewBindingEnv(nil)
 	s.defaults = make([]*graph.Node, 0)
-	s.roots = make([]*graph.Node, 0)
 
 	// Re-add built-in pools and rules
 	s.pools["console"] = graph.NewPool("console", 1)
