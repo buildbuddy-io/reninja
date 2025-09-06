@@ -22,6 +22,7 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/build"
 	"github.com/buildbuddy-io/gin/internal/clean"
+	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/parser"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/tools"
@@ -81,8 +82,9 @@ func main() {
 	}
 
 	// Load build file
+	d := disk.NewRealDiskInterface()
 	s := state.New()
-	p := parser.New(s)
+	p := parser.New(s, d, parser.DefaultOptions())
 
 	if err := p.ParseFile(opts.inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
@@ -244,8 +246,9 @@ func runClean(args []string) {
 	cleanFlags.Parse(cleanArgs)
 
 	// Load build file
+	d := disk.NewRealDiskInterface()
 	s := state.New()
-	p := parser.New(s)
+	p := parser.New(s, d, parser.DefaultOptions())
 
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
@@ -294,8 +297,9 @@ func runGraphTool(args []string) {
 	}
 
 	// Load build file
+	d := disk.NewRealDiskInterface()
 	s := state.New()
-	p := parser.New(s)
+	p := parser.New(s, d, parser.DefaultOptions())
 
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
@@ -324,8 +328,9 @@ func runQueryTool(args []string) {
 	}
 
 	// Load build file
+	d := disk.NewRealDiskInterface()
 	s := state.New()
-	p := parser.New(s)
+	p := parser.New(s, d, parser.DefaultOptions())
 
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
@@ -354,8 +359,9 @@ func runTargetsTool(args []string) {
 	}
 
 	// Load build file
+	d := disk.NewRealDiskInterface()
 	s := state.New()
-	p := parser.New(s)
+	p := parser.New(s, d, parser.DefaultOptions())
 
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
@@ -384,8 +390,9 @@ func runCommandsTool(args []string) {
 	}
 
 	// Load build file
+	d := disk.NewRealDiskInterface()
 	s := state.New()
-	p := parser.New(s)
+	p := parser.New(s, d, parser.DefaultOptions())
 
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)
@@ -414,8 +421,9 @@ func runCompDBTool(args []string) {
 	}
 
 	// Load build file
+	d := disk.NewRealDiskInterface()
 	s := state.New()
-	p := parser.New(s)
+	p := parser.New(s, d, parser.DefaultOptions())
 
 	if err := p.ParseFile(inputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "gin: error: %v\n", err)

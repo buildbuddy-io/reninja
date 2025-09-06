@@ -1,17 +1,3 @@
-// Copyright 2024 The Ninja-Go Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package state
 
 import (
@@ -20,6 +6,11 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/eval_env"
 	"github.com/buildbuddy-io/gin/internal/graph"
+)
+
+var (
+	defaultPool = graph.NewPool("", 0)
+	consolePool = graph.NewPool("console", 1)
 )
 
 // State represents the global build state
@@ -109,31 +100,27 @@ func (s *State) Paths() map[string]*graph.Node {
 	return paths
 }
 
+func (s *State) RemoveLastEdge() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.edges) > 0 {
+		s.edges = s.edges[:len(s.edges)-1]
+	}
+}
+
 // AddEdge adds an edge to the build graph
-func (s *State) AddEdge(edge *graph.Edge) {
+func (s *State) AddEdge(rule *eval_env.Rule) *graph.Edge {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	edge := graph.NewEdge()
+	edge.SetRule(rule)
+	edge.SetPool(defaultPool)
+	edge.SetEnv(s.bindings)
 	edge.SetID(len(s.edges))
 	s.edges = append(s.edges, edge)
 
-	// Set up node relationships
-	for _, out := range edge.Outputs() {
-		if out.InEdge() != nil {
-			// Output is already produced by another edge
-			// This would be an error in a real build
-			continue
-		}
-		out.SetInEdge(edge)
-	}
-
-	for _, in := range edge.Inputs() {
-		in.AddOutEdge(edge)
-	}
-
-	for _, validation := range edge.Validations() {
-		validation.AddValidationOutEdge(edge)
-	}
+	return edge
 }
 
 // Edges returns all edges
@@ -221,12 +208,48 @@ func (s *State) Bindings() *eval_env.BindingEnv {
 	return s.bindings
 }
 
+func (s *State) AddIn(path string, edge *graph.Edge) {
+	node := s.GetNode(path)
+	node.SetGeneratedByDepLoader(false)
+	edge.AddInput(node)
+	node.AddOutEdge(edge)
+}
+
+func (s *State) AddOut(path string, edge *graph.Edge) error {
+	node := s.GetNode(path)
+	other := node.InEdge()
+	if other != nil {
+		if other == edge {
+			return fmt.Errorf("%s is defined as an output multiple times", path)
+		} else {
+			return fmt.Errorf("multiple rules generate %s", path)
+		}
+	}
+	edge.AddOutput(node)
+	node.SetInEdge(edge)
+	node.SetGeneratedByDepLoader(false)
+	return nil
+}
+
+func (s *State) AddValidation(path string, edge *graph.Edge) {
+	node := s.GetNode(path)
+	edge.AddValidation(node)
+	node.AddValidationOutEdge(edge)
+	node.SetGeneratedByDepLoader(false)
+}
+
 // AddDefault adds a default build target
-func (s *State) AddDefault(node *graph.Node) {
+func (s *State) AddDefault(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	canonPath, _ := graph.CanonicalizePath(path)
+	node := s.paths[canonPath]
+	if node == nil {
+		return fmt.Errorf("unknown target '%s'", path)
+	}
 	s.defaults = append(s.defaults, node)
+	return nil
 }
 
 // Defaults returns the default build targets

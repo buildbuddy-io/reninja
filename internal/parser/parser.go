@@ -1,594 +1,487 @@
-// Copyright 2024 The Ninja-Go Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package parser
 
 import (
 	"fmt"
-	"io/ioutil"
-	"path/filepath"
+	"log"
+	"slices"
+	"strconv"
 
+	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/eval_env"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/lexer"
 	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/gin/internal/version"
 )
+
+const (
+	PhonyCycleActionWarn = iota
+	PhonyCycleActionError
+)
+
+type ManifestParserOptions struct {
+	PhonyCycleAction int
+}
+
+func DefaultOptions() ManifestParserOptions {
+	return ManifestParserOptions{
+		PhonyCycleAction: PhonyCycleActionWarn,
+	}
+}
 
 // ManifestParser parses ninja build files
 type ManifestParser struct {
-	state    *state.State
-	scanner  *lexer.Scanner
-	env      *eval_env.BindingEnv
-	filename string
-	quiet    bool
+	state      *state.State
+	fileReader disk.FileReader
+	lexer      *lexer.Lexer
+
+	env     *eval_env.BindingEnv
+	options ManifestParserOptions
+
+	subparser   *ManifestParser
+	ins         []*eval_env.EvalString
+	outs        []*eval_env.EvalString
+	validations []*eval_env.EvalString
 }
 
 // New creates a new ManifestParser
-func New(s *state.State) *ManifestParser {
+func New(s *state.State, fileReader disk.FileReader, options ManifestParserOptions) *ManifestParser {
 	return &ManifestParser{
-		state:   s,
-		scanner: lexer.NewScanner(),
+		state:      s,
+		fileReader: fileReader,
+		lexer:      lexer.New(),
+
 		env:     s.Bindings(),
+		options: options,
 	}
 }
 
 // ParseFile parses a ninja build file
 func (p *ManifestParser) ParseFile(filename string) error {
-	content, err := ioutil.ReadFile(filename)
+	content, err := p.fileReader.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("loading '%s': %w", filename, err)
 	}
-
-	p.filename = filename
 	return p.Parse(filename, string(content))
 }
 
 // Parse parses ninja build file content
 func (p *ManifestParser) Parse(filename, input string) error {
-	p.filename = filename
-	p.scanner.Init(filename, input)
-
-	for !p.scanner.IsEOF() {
-		token := p.scanner.NextToken()
-
+	p.lexer.Start(filename, input)
+	for {
+		token := p.lexer.ReadToken()
+		log.Printf("Parse: token: %s", lexer.TokenName(token))
 		switch token {
-		case lexer.BUILD:
-			if err := p.parseBuild(); err != nil {
-				return err
-			}
-
-		case lexer.RULE:
-			if err := p.parseRule(); err != nil {
-				return err
-			}
-
 		case lexer.POOL:
 			if err := p.parsePool(); err != nil {
 				return err
 			}
-
+		case lexer.BUILD:
+			if err := p.parseEdge(); err != nil {
+				return err
+			}
+		case lexer.RULE:
+			if err := p.parseRule(); err != nil {
+				return err
+			}
 		case lexer.DEFAULT:
 			if err := p.parseDefault(); err != nil {
 				return err
 			}
-
 		case lexer.IDENT:
-			// We've already consumed the IDENT token, need to unread it
-			p.scanner.Lexer.UnreadToken()
-			if err := p.parseVariable(); err != nil {
+			p.lexer.UnreadToken()
+			name, let_value, err := p.parseLet()
+			if err != nil {
 				return err
 			}
-
+			value := let_value.Evaluate(p.env)
+			if name == "ninja_required_version" {
+				version.CheckNinjaVersion(value)
+			}
+			p.env.AddBinding(name, value)
 		case lexer.INCLUDE:
-			if err := p.parseInclude(); err != nil {
+			if err := p.parseFileInclude(false); err != nil {
 				return err
 			}
-
 		case lexer.SUBNINJA:
-			if err := p.parseSubninja(); err != nil {
+			if err := p.parseFileInclude(true); err != nil {
 				return err
 			}
-
-		case lexer.NEWLINE:
-			// Empty line, continue
-
+		case lexer.ERROR:
+			return p.lexer.Error(p.lexer.DescribeLastError())
 		case lexer.EOF:
 			return nil
-
+		case lexer.NEWLINE:
+			break
 		default:
-			return p.scanner.Error(fmt.Sprintf("unexpected token %s", lexer.TokenName(token)))
+			return p.lexer.Error(fmt.Sprintf("unexpected token %s", lexer.TokenName(token)))
 		}
 	}
 
 	return nil
 }
 
-// parseBuild parses a build edge
-func (p *ManifestParser) parseBuild() error {
-	// build outputs: rule inputs
-	var outputs []string
-	var implicitOuts int
+func (p *ManifestParser) ExpectToken(expected lexer.Token) error {
+	token := p.lexer.ReadToken()
+	if token != expected {
+		msg := fmt.Sprintf("expected %s, got %s %s", lexer.TokenName(expected), lexer.TokenName(token), lexer.TokenErrorHint(expected))
+		return p.lexer.Error(msg)
+	}
+	return nil
+}
 
-	// Parse outputs
-	for {
-		path, err := p.scanner.ReadPath()
+func (p *ManifestParser) parsePool() error {
+	name, ok := p.lexer.ReadIdent()
+	if !ok {
+		return p.lexer.Error("expected pool name")
+	}
+	if err := p.ExpectToken(lexer.NEWLINE); err != nil {
+		return err
+	}
+	if p.state.LookupPool(name) != nil {
+		return p.lexer.Error(fmt.Sprintf("duplicate pool '%s'", name))
+	}
+
+	depth := -1
+	for p.lexer.PeekToken(lexer.INDENT) {
+		key, value, err := p.parseLet()
 		if err != nil {
 			return err
 		}
-
-		evaluated := path.Evaluate(p.env)
-		if evaluated == "" {
-			// No more outputs
-			break
-		}
-
-		outputs = append(outputs, evaluated)
-
-		// Check for implicit outputs
-		if p.scanner.PeekToken(lexer.PIPE) {
-			p.scanner.NextToken() // consume |
-			implicitOuts = p.parseOutputs(&outputs)
-			break
-		}
-
-		if p.scanner.PeekToken(lexer.COLON) {
-			break
+		if key == "depth" {
+			depthString := value.Evaluate(p.env)
+			depth, _ := strconv.Atoi(depthString)
+			if depth < 0 {
+				return p.lexer.Error("invalid pool depth")
+			}
+		} else {
+			return p.lexer.Error(fmt.Sprintf("unexpected variable '%s'", key))
 		}
 	}
 
-	if len(outputs) == 0 {
-		return p.scanner.Error("expected output files")
+	if depth < 0 {
+		return p.lexer.Error("expected 'depth =' line")
 	}
+	p.state.AddPool(graph.NewPool(name, depth))
+	return nil
+}
 
-	// Expect colon
-	if err := p.scanner.ExpectToken(lexer.COLON); err != nil {
-		return err
-	}
+func (p *ManifestParser) parseEdge() error {
+	p.ins = p.ins[:0]
+	p.outs = p.outs[:0]
+	p.validations = p.validations[:0]
 
-	// Parse rule name
-	ruleName, err := p.scanner.ExpectIdent()
-	if err != nil {
-		return err
-	}
-
-	rule := p.state.LookupRule(ruleName)
-	if rule == nil {
-		return p.scanner.Error(fmt.Sprintf("unknown rule '%s'", ruleName))
-	}
-
-	// Create edge
-	edge := graph.NewEdge()
-	edge.SetRule(rule)
-	edge.SetImplicitOuts(implicitOuts)
-
-	// Add outputs to edge
-	for _, output := range outputs {
-		node := p.state.GetNode(output)
-		edge.AddOutput(node)
-	}
-
-	// Parse inputs
-	var implicitDeps, orderOnlyDeps int
-	for {
-		// Check for end of line or special tokens first
-		if p.scanner.PeekToken(lexer.NEWLINE) || p.scanner.IsEOF() {
-			break
-		}
-
-		if p.scanner.PeekToken(lexer.PIPE) || p.scanner.PeekToken(lexer.PIPE2) || p.scanner.PeekToken(lexer.PIPEAT) {
-			// Will be handled below
-			break
-		}
-
-		path, err := p.scanner.ReadPath()
+	{
+		// TODO(tylerw): should this be a do/while?
+		out, err := p.lexer.ReadPath()
 		if err != nil {
 			return err
 		}
-
-		evaluated := path.Evaluate(p.env)
-		if evaluated == "" {
-			// No more inputs
-			break
+		for !out.Empty() {
+			// STOPSHIP(tylerw): check std::move semantics are correct in the go version.
+			// If we're clearing objects that we've saved, we're going to have a bad time.
+			p.outs = append(p.outs, out.Clone())
+			fmt.Printf("added path out %q\n", out.Serialize())
+			out, err = p.lexer.ReadPath()
+			if err != nil {
+				return err
+			}
 		}
-
-		node := p.state.GetNode(evaluated)
-		edge.AddInput(node)
 	}
 
-	// Check for implicit deps (|) or order-only deps (||)
-	if p.scanner.PeekToken(lexer.PIPE) {
-		p.scanner.NextToken()
-		implicitDeps = p.parseInputs(edge)
+	implicitOuts := 0
+	if p.lexer.PeekToken(lexer.PIPE) {
+		for {
+			out, err := p.lexer.ReadPath()
+			if err != nil {
+				return err
+			}
+			if out.Empty() {
+				break
+			}
+			p.outs = append(p.outs, out)
+			implicitOuts++
+		}
 	}
 
-	if p.scanner.PeekToken(lexer.PIPE2) {
-		p.scanner.NextToken()
-		orderOnlyDeps = p.parseInputs(edge)
+	if len(p.outs) == 0 {
+		return p.lexer.Error("OH SHIT    expected path")
 	}
 
-	if p.scanner.PeekToken(lexer.PIPEAT) {
-		p.scanner.NextToken()
-		if err := p.parseValidations(edge); err != nil {
+	if err := p.ExpectToken(lexer.COLON); err != nil {
+		return err
+	}
+
+	ruleName, ok := p.lexer.ReadIdent()
+	if !ok {
+		return p.lexer.Error("expected build command name")
+	}
+	rule, ok := p.env.LookupRule(ruleName)
+	if !ok {
+		return p.lexer.Error(fmt.Sprintf("unknown build rule '%s'", ruleName))
+	}
+
+	for {
+		in, err := p.lexer.ReadPath()
+		if err != nil {
 			return err
 		}
+		if in.Empty() {
+			break
+		}
+		p.ins = append(p.ins, in)
 	}
 
-	edge.SetImplicitDeps(implicitDeps)
-	edge.SetOrderOnlyDeps(orderOnlyDeps)
-
-	// Expect newline
-	if err := p.expectNewline(); err != nil {
-		return err
-	}
-
-	// Parse edge bindings
-	edgeEnv := eval_env.NewBindingEnv(p.env)
-	if err := p.parseBindings(edgeEnv); err != nil {
-		return err
-	}
-	edge.SetEnv(edgeEnv)
-
-	// Check for pool - first check edge bindings, then rule bindings
-	poolName := ""
-	if name := edgeEnv.LookupVariable("pool"); name != "" {
-		poolName = name
-	} else if rule != nil {
-		// Check rule bindings for pool
-		if poolBinding, ok := rule.GetBinding("pool"); ok {
-			poolName = poolBinding.Evaluate(edgeEnv)
+	// Add all implicit deps, counting how many as we go.
+	implicit := 0
+	if p.lexer.PeekToken(lexer.PIPE) {
+		for {
+			in, err := p.lexer.ReadPath()
+			if err != nil {
+				return err
+			}
+			if in.Empty() {
+				break
+			}
+			p.ins = append(p.ins, in)
+			implicit++
 		}
 	}
 
+	// Add all order-only deps, counting how many as we go.
+	orderOnly := 0
+	if p.lexer.PeekToken(lexer.PIPE2) {
+		for {
+			in, err := p.lexer.ReadPath()
+			if err != nil {
+				return err
+			}
+			if in.Empty() {
+				break
+			}
+			p.ins = append(p.ins, in)
+			orderOnly++
+		}
+	}
+
+	if p.lexer.PeekToken(lexer.PIPEAT) {
+		for {
+			validation, err := p.lexer.ReadPath()
+			if err != nil {
+				return err
+			}
+			if validation.Empty() {
+				break
+			}
+			p.validations = append(p.validations, validation)
+		}
+	}
+
+	if err := p.ExpectToken(lexer.NEWLINE); err != nil {
+		return err
+	}
+
+	// Bindings on edges are rare, so allocate per-edge envs only when needed.
+	hasIndentToken := p.lexer.PeekToken(lexer.INDENT)
+	var env *eval_env.BindingEnv
+	if hasIndentToken {
+		env = eval_env.NewBindingEnv(p.env)
+	} else {
+		env = p.env
+	}
+	for hasIndentToken {
+		key, val, err := p.parseLet()
+		if err != nil {
+			return err
+		}
+		env.AddBinding(key, val.Evaluate(p.env))
+		hasIndentToken = p.lexer.PeekToken(lexer.INDENT)
+	}
+
+	edge := p.state.AddEdge(rule)
+	edge.SetEnv(env)
+
+	poolName := edge.GetBinding("pool")
 	if poolName != "" {
 		pool := p.state.LookupPool(poolName)
 		if pool == nil {
-			return fmt.Errorf("unknown pool '%s'", poolName)
+			return p.lexer.Error(fmt.Sprintf("unknown pool name '%s'", poolName))
 		}
 		edge.SetPool(pool)
 	}
 
-	// Add edge to state
-	p.state.AddEdge(edge)
-
-	return nil
-}
-
-// parseOutputs parses additional outputs after |
-func (p *ManifestParser) parseOutputs(outputs *[]string) int {
-	count := 0
-	for {
-		path, err := p.scanner.ReadPath()
-		if err != nil {
-			break
+	for i := range len(p.outs) {
+		path := p.outs[i].Evaluate(env)
+		if path == "" {
+			return p.lexer.Error("empty path")
 		}
-
-		evaluated := path.Evaluate(p.env)
-		if evaluated == "" {
-			break
-		}
-
-		*outputs = append(*outputs, evaluated)
-		count++
-
-		if p.scanner.PeekToken(lexer.COLON) {
-			break
-		}
-	}
-	return count
-}
-
-// parseInputs parses additional inputs after | or ||
-func (p *ManifestParser) parseInputs(edge *graph.Edge) int {
-	count := 0
-	for {
-		path, err := p.scanner.ReadPath()
-		if err != nil {
-			break
-		}
-
-		evaluated := path.Evaluate(p.env)
-		if evaluated == "" {
-			break
-		}
-
-		node := p.state.GetNode(evaluated)
-		edge.AddInput(node)
-		count++
-
-		if p.scanner.PeekToken(lexer.PIPE) || p.scanner.PeekToken(lexer.PIPE2) ||
-			p.scanner.PeekToken(lexer.PIPEAT) || p.scanner.PeekToken(lexer.NEWLINE) {
-			break
-		}
-	}
-	return count
-}
-
-// parseValidations parses validation outputs after |@
-func (p *ManifestParser) parseValidations(edge *graph.Edge) error {
-	for {
-		path, err := p.scanner.ReadPath()
-		if err != nil {
+		path, _ = graph.CanonicalizePath(path)
+		if err := p.state.AddOut(path, edge); err != nil {
 			return err
 		}
+	}
 
-		evaluated := path.Evaluate(p.env)
-		if evaluated == "" {
-			break
+	// All outputs of the edge are already created by other edges. Don't add
+	// this edge.  Do this check before input nodes are connected to the edge.
+	if len(edge.Outputs()) == 0 {
+		p.state.RemoveLastEdge()
+		return nil
+	}
+	edge.SetImplicitOuts(implicitOuts)
+
+	for i := range len(p.ins) {
+		path := p.ins[i].Evaluate(env)
+		if path == "" {
+			return p.lexer.Error("empty path")
 		}
+		path, _ = graph.CanonicalizePath(path)
+		p.state.AddIn(path, edge)
+	}
+	edge.SetImplicitDeps(implicit)
+	edge.SetOrderOnlyDeps(orderOnly)
 
-		node := p.state.GetNode(evaluated)
-		edge.AddValidation(node)
+	for i := range len(p.validations) {
+		path := p.validations[i].Evaluate(env)
+		if path == "" {
+			return p.lexer.Error("empty path")
+		}
+		path, _ = graph.CanonicalizePath(path)
+		p.state.AddValidation(path, edge)
+	}
 
-		if p.scanner.PeekToken(lexer.NEWLINE) || p.scanner.IsEOF() {
-			break
+	if p.options.PhonyCycleAction == PhonyCycleActionWarn && edge.MaybePhonycycleDiagnostic() {
+		// CMake 2.8.12.x and 3.0.x incorrectly write phony build statements
+		// that reference themselves.  Ninja used to tolerate these in the
+		// build graph but that has since been fixed.  Filter them out to
+		// support users of those old CMake versions.
+		out := edge.Outputs()[0]
+		edge.RemoveInput(out)
+		edge.RemoveOutput(out)
+		log.Printf("phony target '%s' names itself as an input; ignoring [-w phonycycle=warn]", out.Path())
+	}
+
+	// Lookup, validate, and save any dyndep binding.  It will be used later
+	// to load generated dependency information dynamically, but it must
+	// be one of our manifest-specified inputs.
+	dyndep := edge.GetUnescapedDyndep()
+	if dyndep != "" {
+		dyndep, _ = graph.CanonicalizePath(dyndep)
+		node := p.state.GetNode(dyndep)
+		edge.SetDyndep(node)
+		edge.SetDyndepPending(true)
+		if !slices.Contains(edge.Inputs(), node) {
+			return p.lexer.Error(fmt.Sprintf("dyndep '%s' is not an input", dyndep))
+		}
+		if node.GeneratedByDepLoader() {
+			panic("dyndep should not have been generated by dep loaded")
 		}
 	}
 	return nil
 }
 
-// parseRule parses a rule definition
 func (p *ManifestParser) parseRule() error {
-	name, err := p.scanner.ExpectIdent()
-	if err != nil {
+	name, ok := p.lexer.ReadIdent()
+	if !ok {
+		return p.lexer.Error("expected rule name")
+	}
+	if err := p.ExpectToken(lexer.NEWLINE); err != nil {
 		return err
 	}
-
-	if err := p.expectNewline(); err != nil {
-		return err
+	if _, ok := p.env.LookupRuleCurrentScope(name); ok {
+		return p.lexer.Error(fmt.Sprintf("duplicate rule '%s'", name))
 	}
-
 	rule := eval_env.NewRule(name)
-
-	// Parse rule bindings - these should NOT be evaluated yet
-	if err := p.parseRuleBindings(rule); err != nil {
-		return err
+	for p.lexer.PeekToken(lexer.INDENT) {
+		key, value, err := p.parseLet()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("ParseLET: key %s, value: %s\n", key, value.Serialize())
+		if eval_env.IsReservedBinding(key) {
+			rule.AddBinding(key, value)
+		} else {
+			return p.lexer.Error(fmt.Sprintf("unexpected variable '%s'", key))
+		}
 	}
 
-	// Validate rspfile and rspfile_content are both specified or neither
-	_, hasRspfile := rule.GetBinding("rspfile")
-	_, hasRspfileContent := rule.GetBinding("rspfile_content")
-	if hasRspfile != hasRspfileContent {
-		return p.scanner.Error("rspfile and rspfile_content need to be both specified or neither")
+	rspFile, rspFileOK := rule.GetBinding("rspfile")
+	rspFileContent, rspFileContentOK := rule.GetBinding("rspfile_content")
+	if rspFileOK != rspFileContentOK || rspFile.Empty() != rspFileContent.Empty() {
+		return p.lexer.Error("rspfile and rspfile_content need to be both specified")
 	}
-
-	if err := p.state.AddRule(rule); err != nil {
-		return err
+	if cmd, ok := rule.GetBinding("command"); !ok || cmd.Empty() {
+		return p.lexer.Error("expected 'command =' line")
 	}
-
+	p.env.AddRule(rule) // env takes ownership of rule
 	return nil
 }
 
-// parsePool parses a pool definition
-func (p *ManifestParser) parsePool() error {
-	name, err := p.scanner.ExpectIdent()
-	if err != nil {
-		return err
+// returns key, value, error
+func (p *ManifestParser) parseLet() (string, *eval_env.EvalString, error) {
+	var key string
+	if k, ok := p.lexer.ReadIdent(); !ok {
+		return "", nil, p.lexer.Error("expected variable name")
+	} else {
+		key = k
 	}
-
-	if err := p.expectNewline(); err != nil {
-		return err
+	if err := p.ExpectToken(lexer.EQUALS); err != nil {
+		return "", nil, err
 	}
-
-	poolEnv := eval_env.NewBindingEnv(p.env)
-	if err := p.parseBindings(poolEnv); err != nil {
-		return err
-	}
-
-	depthStr := poolEnv.LookupVariable("depth")
-	if depthStr == "" {
-		return p.scanner.Error("pool is missing 'depth' variable")
-	}
-
-	var depth int
-	if _, err := fmt.Sscanf(depthStr, "%d", &depth); err != nil {
-		return p.scanner.Error(fmt.Sprintf("invalid pool depth '%s'", depthStr))
-	}
-
-	pool := graph.NewPool(name, depth)
-	if err := p.state.AddPool(pool); err != nil {
-		return err
-	}
-
-	return nil
+	value, err := p.lexer.ReadVarValue()
+	return key, value, err
 }
 
-// parseDefault parses default targets
 func (p *ManifestParser) parseDefault() error {
-	for {
-		path, err := p.scanner.ReadPath()
-		if err != nil {
-			return err
-		}
-
-		evaluated := path.Evaluate(p.env)
-		if evaluated == "" {
-			break
-		}
-
-		node := p.state.GetNode(evaluated)
-		p.state.AddDefault(node)
-
-		if p.scanner.PeekToken(lexer.NEWLINE) || p.scanner.IsEOF() {
-			break
-		}
+	eval, err := p.lexer.ReadPath()
+	if err != nil {
+		return err
+	}
+	if eval.Empty() {
+		return p.lexer.Error("expected target name")
 	}
 
-	return p.expectNewline()
+	for ok := true; ok; ok = !eval.Empty() {
+		path := eval.Evaluate(p.env)
+		if path == "" {
+			return p.lexer.Error("empty path")
+		}
+		path, _ = graph.CanonicalizePath(path)
+		if err := p.state.AddDefault(path); err != nil {
+			return p.lexer.Error(err.Error())
+		}
+		eval.Clear()
+		if nextEval, err := p.lexer.ReadPath(); err != nil {
+			return err
+		} else {
+			eval = nextEval
+		}
+	}
+	return p.ExpectToken(lexer.NEWLINE)
 }
 
-// parseVariable parses a variable assignment
 func (p *ManifestParser) parseVariable() error {
-	name, err := p.scanner.ExpectIdent()
-	if err != nil {
-		return err
-	}
-
-	if err := p.scanner.ExpectToken(lexer.EQUALS); err != nil {
-		return err
-	}
-
-	value, err := p.scanner.ReadVarValue()
-	if err != nil {
-		return err
-	}
-
-	evaluated := value.Evaluate(p.env)
-	p.env.AddBinding(name, evaluated)
-
-	return p.expectNewline()
-}
-
-// parseRuleBindings parses indented variable bindings for a rule
-func (p *ManifestParser) parseRuleBindings(rule *eval_env.Rule) error {
-	for p.scanner.PeekToken(lexer.INDENT) {
-		p.scanner.NextToken() // consume indent
-
-		name, err := p.scanner.ExpectIdent()
-		if err != nil {
-			return err
-		}
-
-		if err := p.scanner.ExpectToken(lexer.EQUALS); err != nil {
-			return err
-		}
-
-		value, err := p.scanner.ReadVarValue()
-		if err != nil {
-			return err
-		}
-
-		// Store the raw EvalString without evaluating it
-		rule.AddBinding(name, *value)
-
-		if err := p.expectNewline(); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
-
-// parseBindings parses indented variable bindings
-func (p *ManifestParser) parseBindings(env *eval_env.BindingEnv) error {
-	for p.scanner.PeekToken(lexer.INDENT) {
-		p.scanner.NextToken() // consume indent
-
-		name, err := p.scanner.ExpectIdent()
-		if err != nil {
-			return err
-		}
-
-		if err := p.scanner.ExpectToken(lexer.EQUALS); err != nil {
-			return err
-		}
-
-		value, err := p.scanner.ReadVarValue()
-		if err != nil {
-			return err
-		}
-
-		evaluated := value.Evaluate(p.env)
-		env.AddBinding(name, evaluated)
-
-		if err := p.expectNewline(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// parseInclude parses an include directive
-func (p *ManifestParser) parseInclude() error {
-	path, err := p.scanner.ReadPath()
+func (p *ManifestParser) parseFileInclude(newScope bool) error {
+	eval, err := p.lexer.ReadPath()
 	if err != nil {
 		return err
 	}
-
-	evaluated := path.Evaluate(p.env)
-	if evaluated == "" {
-		return p.scanner.Error("empty include path")
+	path := eval.Evaluate(p.env)
+	if p.subparser == nil {
+		p.subparser = New(p.state, p.fileReader, p.options)
+	}
+	if newScope {
+		p.subparser.env = eval_env.NewBindingEnv(p.env)
+	} else {
+		p.subparser.env = p.env
 	}
 
-	if err := p.expectNewline(); err != nil {
+	if err := p.subparser.ParseFile(path); err != nil {
 		return err
 	}
-
-	// Make path relative to current file's directory
-	includeFile := evaluated
-	if !filepath.IsAbs(includeFile) {
-		dir := filepath.Dir(p.filename)
-		includeFile = filepath.Join(dir, includeFile)
-	}
-
-	// Parse included file with same environment
-	subParser := &ManifestParser{
-		state:   p.state,
-		scanner: lexer.NewScanner(),
-		env:     p.env, // Share environment
-		quiet:   p.quiet,
-	}
-
-	return subParser.ParseFile(includeFile)
-}
-
-// parseSubninja parses a subninja directive
-func (p *ManifestParser) parseSubninja() error {
-	path, err := p.scanner.ReadPath()
-	if err != nil {
+	if err := p.ExpectToken(lexer.NEWLINE); err != nil {
 		return err
-	}
-
-	evaluated := path.Evaluate(p.env)
-	if evaluated == "" {
-		return p.scanner.Error("empty subninja path")
-	}
-
-	if err := p.expectNewline(); err != nil {
-		return err
-	}
-
-	// Make path relative to current file's directory
-	subninjaFile := evaluated
-	if !filepath.IsAbs(subninjaFile) {
-		dir := filepath.Dir(p.filename)
-		subninjaFile = filepath.Join(dir, subninjaFile)
-	}
-
-	// Parse subninja file with new environment scope
-	subParser := &ManifestParser{
-		state:   p.state,
-		scanner: lexer.NewScanner(),
-		env:     eval_env.NewBindingEnv(p.env), // New scope
-		quiet:   p.quiet,
-	}
-
-	return subParser.ParseFile(subninjaFile)
-}
-
-// SetQuiet sets quiet mode
-func (p *ManifestParser) SetQuiet(quiet bool) {
-	p.quiet = quiet
-}
-
-// expectNewline expects a newline or EOF
-func (p *ManifestParser) expectNewline() error {
-	if !p.scanner.PeekToken(lexer.NEWLINE) && !p.scanner.IsEOF() {
-		return p.scanner.Error("expected newline")
-	}
-	if p.scanner.PeekToken(lexer.NEWLINE) {
-		p.scanner.NextToken() // consume it
 	}
 	return nil
 }

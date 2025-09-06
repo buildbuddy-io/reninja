@@ -28,6 +28,14 @@ type EvalString struct {
 	singleToken string
 }
 
+func (es *EvalString) Clone() *EvalString {
+	clone := &EvalString{
+		parsed:      append([]Token{}, es.parsed...),
+		singleToken: es.singleToken,
+	}
+	return clone
+}
+
 // AddText adds literal text to the EvalString
 func (es *EvalString) AddText(text string) {
 	if len(es.parsed) == 0 {
@@ -40,6 +48,18 @@ func (es *EvalString) AddText(text string) {
 		// Need to add a new RAW token
 		es.parsed = append(es.parsed, Token{Value: text, Type: RAW})
 	}
+}
+
+func (es *EvalString) Empty() bool {
+	if es != nil {
+		return len(es.parsed) == 0 && es.singleToken == ""
+	}
+	return true
+}
+
+func (es *EvalString) Clear() {
+	es.singleToken = ""
+	es.parsed = es.parsed[:0]
 }
 
 // AddSpecial adds a variable reference to the EvalString
@@ -99,7 +119,7 @@ type Env interface {
 // Rule represents a build rule template
 type Rule struct {
 	name     string
-	bindings map[string]EvalString
+	bindings map[string]*EvalString
 	phony    bool
 }
 
@@ -107,7 +127,7 @@ type Rule struct {
 func NewRule(name string) *Rule {
 	return &Rule{
 		name:     name,
-		bindings: make(map[string]EvalString),
+		bindings: make(map[string]*EvalString),
 		phony:    false,
 	}
 }
@@ -128,19 +148,33 @@ func (r *Rule) SetPhony(phony bool) {
 }
 
 // AddBinding adds a variable binding to the rule
-func (r *Rule) AddBinding(key string, value EvalString) {
+func (r *Rule) AddBinding(key string, value *EvalString) {
 	r.bindings[key] = value
 }
 
 // GetBinding returns a binding value
-func (r *Rule) GetBinding(key string) (EvalString, bool) {
+func (r *Rule) GetBinding(key string) (*EvalString, bool) {
 	val, ok := r.bindings[key]
 	return val, ok
 }
 
 // Bindings returns all bindings
-func (r *Rule) Bindings() map[string]EvalString {
+func (r *Rule) Bindings() map[string]*EvalString {
 	return r.bindings
+}
+
+func IsReservedBinding(key string) bool {
+	return key == "command" ||
+		key == "depfile" ||
+		key == "dyndep" ||
+		key == "description" ||
+		key == "deps" ||
+		key == "generator" ||
+		key == "pool" ||
+		key == "restat" ||
+		key == "rspfile" ||
+		key == "rspfile_content" ||
+		key == "msvc_deps_prefix"
 }
 
 var _ Env = &BindingEnv{}
@@ -174,10 +208,9 @@ func (env *BindingEnv) AddRule(rule *Rule) {
 	env.rules[rule.Name()] = rule
 }
 
-
 // LookupVariable looks up a variable value, checking parent scopes
 func (env *BindingEnv) LookupVariable(key string) string {
-	// Check special built-in variables
+	// TODO(tylerw): this seems dumb, why is this here?
 	switch key {
 	case "in":
 		return env.getBuiltinIn()

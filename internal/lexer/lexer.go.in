@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 	
-	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/eval_env"
 )
 
 // Token represents a lexical token
@@ -101,7 +101,7 @@ func (l *Lexer) DumpState() string {
 		return l.input[lastToken:]
 	}
 	
-	return fmt.Sprintf("ofs: %s, lastToken: %s\n", l.input[l.ofs:], sprintf(l.lastToken))
+	return fmt.Sprintf("ofs: [%d] '%s', lastToken: [%d] '%s'\n", l.ofs, l.input[l.ofs:], l.lastToken, sprintf(l.lastToken))
 }
 
 // NewWithInput creates a new Lexer with input
@@ -184,7 +184,6 @@ func (l *Lexer) ReadToken() Token {
 	      re2c:define:YYBACKUP   = "marker = cursor";
 	      re2c:define:YYRESTORE  = "cursor = marker";
 	      re2c:yyfill:enable = 0;
-
 
 	      nul = "\x00";        
 	      simple_varname = [a-zA-Z0-9_-]+;
@@ -293,12 +292,16 @@ func (l *Lexer) ReadIdent() (string, bool) {
       }
 }
 
-func (l *Lexer) ReadVarValue() (*graph.EvalString, error) {
+func (l *Lexer) ReadPath() (*eval_env.EvalString, error) {
+       return l.ReadEvalString(true)
+}
+
+func (l *Lexer) ReadVarValue() (*eval_env.EvalString, error) {
        return l.ReadEvalString(false)
 }
 
-func (l *Lexer) ReadEvalString(path bool) (*graph.EvalString, error) {
-    eval := &graph.EvalString{}
+func (l *Lexer) ReadEvalString(path bool) (*eval_env.EvalString, error) {
+    eval := &eval_env.EvalString{}
     limit := len(l.input)
     var cursor, marker, start int
     cursor = l.ofs
@@ -377,76 +380,11 @@ func (l *Lexer) ReadEvalString(path bool) (*graph.EvalString, error) {
   }
 
 done:
-  l.lastToken = start
+	l.lastToken = start
+	l.ofs = cursor
   if path {
     l.EatWhitespace()
   }
   // Non-path strings end in newlines, so there's no whitespace to eat.
   return eval, nil
-}
-
-// Scanner provides a higher-level interface for lexing
-type Scanner struct {
-	Lexer *Lexer // Exposed for parser access
-}
-
-// NewScanner creates a new Scanner
-func NewScanner() *Scanner {
-	return &Scanner{
-		Lexer: New(),
-	}
-}
-
-// Init initializes the scanner with input
-func (s *Scanner) Init(filename, input string) {
-	s.Lexer.Start(filename, input)
-}
-
-// NextToken reads the next token
-func (s *Scanner) NextToken() Token {
-	return s.Lexer.ReadToken()
-}
-
-// ExpectToken reads a token and checks it matches expected
-func (s *Scanner) ExpectToken(expected Token) error {
-	got := s.Lexer.ReadToken()
-	if got != expected {
-		return s.Lexer.Error(fmt.Sprintf("expected %s, got %s%s",
-			TokenName(expected), TokenName(got), TokenErrorHint(expected)))
-	}
-	return nil
-}
-
-// ExpectIdent reads an identifier
-func (s *Scanner) ExpectIdent() (string, error) {
-	ident, ok := s.Lexer.ReadIdent()
-	if !ok {
-		return "", s.Lexer.Error("expected identifier")
-	}
-	return ident, nil
-}
-
-// ReadPath reads a path
-func (s *Scanner) ReadPath() (*graph.EvalString, error) {
-	return s.Lexer.ReadEvalString(true)
-}
-
-// ReadVarValue reads a variable value
-func (s *Scanner) ReadVarValue() (*graph.EvalString, error) {
-	return s.Lexer.ReadVarValue()
-}
-
-// PeekToken checks if the next token matches
-func (s *Scanner) PeekToken(token Token) bool {
-	return s.Lexer.PeekToken(token)
-}
-
-// Error returns an error with context
-func (s *Scanner) Error(message string) error {
-	return s.Lexer.Error(message)
-}
-
-// IsEOF checks if we've reached end of file
-func (s *Scanner) IsEOF() bool {
-	return s.Lexer.ofs >= len(s.Lexer.input)
 }

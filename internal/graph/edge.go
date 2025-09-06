@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/buildbuddy-io/gin/internal/eval_env"
@@ -21,15 +22,16 @@ const (
 
 // Edge represents a build rule connecting input and output nodes
 type Edge struct {
-	rule        *eval_env.Rule
-	pool        *Pool
-	inputs      []*Node
-	outputs     []*Node
-	validations []*Node
-	dyndep      *Node
-	env         *eval_env.BindingEnv
-	mark        VisitMark
-	id          int
+	rule          *eval_env.Rule
+	pool          *Pool
+	inputs        []*Node
+	outputs       []*Node
+	validations   []*Node
+	dyndep        *Node
+	dyndepPending bool
+	env           *eval_env.BindingEnv
+	mark          VisitMark
+	id            int
 
 	// Critical path weight for build scheduling priority
 	criticalPathWeight int64
@@ -108,6 +110,11 @@ func (e *Edge) Dyndep() *Node {
 // SetDyndep sets the dynamic dependency node
 func (e *Edge) SetDyndep(node *Node) {
 	e.dyndep = node
+}
+
+// SetDyndep sets the dynamic dependency node
+func (e *Edge) SetDyndepPending(t bool) {
+	e.dyndepPending = t
 }
 
 // Env returns the binding environment
@@ -253,9 +260,21 @@ func (e *Edge) AddInput(node *Node) {
 	e.inputs = append(e.inputs, node)
 }
 
+func (e *Edge) RemoveInput(node *Node) {
+	e.inputs = slices.DeleteFunc(e.inputs, func(n *Node) bool {
+		return n == node
+	})
+}
+
 // AddOutput adds an output node
 func (e *Edge) AddOutput(node *Node) {
 	e.outputs = append(e.outputs, node)
+}
+
+func (e *Edge) RemoveOutput(node *Node) {
+	e.outputs = slices.DeleteFunc(e.outputs, func(n *Node) bool {
+		return n == node
+	})
 }
 
 // AddValidation adds a validation node
