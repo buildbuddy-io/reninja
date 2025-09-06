@@ -1,0 +1,8 @@
+package version
+
+const ninjaVersion = "1.14.0.git"
+
+// TODO(tylerw): use semver or something
+func ParseVersion(version string) (major, minor int) {
+	
+}
