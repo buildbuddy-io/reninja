@@ -42,6 +42,8 @@ type ManifestParser struct {
 	ins         []*eval_env.EvalString
 	outs        []*eval_env.EvalString
 	validations []*eval_env.EvalString
+
+	quiet       bool
 }
 
 // New creates a new ManifestParser
@@ -53,6 +55,7 @@ func New(s *state.State, fileReader disk.FileReader, options ManifestParserOptio
 
 		env:     s.Bindings(),
 		options: options,
+		quiet:   true,
 	}
 }
 
@@ -70,7 +73,6 @@ func (p *ManifestParser) Parse(filename, input string) error {
 	p.lexer.Start(filename, input)
 	for {
 		token := p.lexer.ReadToken()
-		log.Printf("Parse: token: %s", lexer.TokenName(token))
 		switch token {
 		case lexer.POOL:
 			if err := p.parsePool(); err != nil {
@@ -356,7 +358,9 @@ func (p *ManifestParser) parseEdge() error {
 		out := edge.Outputs()[0]
 		edge.RemoveInput(out)
 		edge.RemoveOutput(out)
-		log.Printf("phony target '%s' names itself as an input; ignoring [-w phonycycle=warn]", out.Path())
+		if !p.quiet {
+			log.Printf("phony target '%s' names itself as an input; ignoring [-w phonycycle=warn]", out.Path())
+		}
 	}
 
 	// Lookup, validate, and save any dyndep binding.  It will be used later
