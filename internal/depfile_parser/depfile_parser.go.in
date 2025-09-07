@@ -1,0 +1,236 @@
+package depfile_parser
+
+import (
+	"fmt"
+	"slices"
+)
+
+type DepfileParserOptions struct {}
+
+func DefaultOptions() DepfileParserOptions {
+	return DepfileParserOptions{}
+}
+
+type DepfileParser struct {
+	outs        []string
+	ins         []string
+	options     DepfileParserOptions
+}
+
+// New creates a new ManifestParser
+func New(options DepfileParserOptions) *DepfileParser {
+	return &DepfileParser{
+		outs: make([]string, 0),
+		ins: make([]string, 0),
+		options: options,
+	}
+}
+
+// Returns "fake" terminating null if cursor has reached limit.
+func peek(str []byte, cursor, limit int) byte {
+    if cursor >= limit {
+        return 0 // fake null
+    } else {
+        return str[cursor]
+    }
+}
+
+func (p *DepfileParser) Ins() []string {
+	return p.ins
+}
+
+func (p *DepfileParser) Outs() []string {
+	return p.outs
+}
+
+func memset(arr []byte, chr byte) {
+	for i := range arr {
+		arr[i] = chr
+	}
+}
+
+func memmov(dst, src []byte, n int) {
+	copy(dst, src[:n])
+}
+
+func (p *DepfileParser) Parse(content string) error {
+	// Convert string to byte slice for processing
+	contentBytes := []byte(content)
+	
+	// in: current parser input point.
+	// end: end of input.
+	// parsingTargets: whether we are parsing targets or dependencies.
+	cursor := 0
+	limit := len(contentBytes)
+	haveTarget := false
+	parsingTargets := true
+	poisonedInput := false
+	isEmpty := true
+	
+	for cursor < limit {
+		haveNewline := false
+		// out: current output point (typically same as in, but can fall behind
+		// as we de-escape backslashes).
+		outIdx := cursor
+		// filename: start of the current parsed filename.
+		filenameIdx := outIdx
+		
+		for {
+			// start: beginning of the current parsed span.
+			start := cursor
+			var marker int
+			
+			/*!re2c
+			re2c:define:YYCTYPE    = byte;
+			re2c:define:YYLESSTHAN = "cursor >= limit";
+			re2c:define:YYPEEK     = "peek(contentBytes, cursor, limit)";
+			re2c:define:YYSKIP     = "cursor += 1";
+			re2c:define:YYBACKUP   = "marker = cursor";
+			re2c:define:YYRESTORE  = "cursor = marker";
+			re2c:yyfill:enable = 0;
+
+			re2c:indent:top = 3;
+			re2c:indent:string = "\t";
+
+			nul = "\x00";
+			newline = '\r'?'\n';
+
+			'\\\\'* '\\ ' {
+				// 2N+1 backslashes plus space -> N backslashes plus space.
+				length := cursor - start
+				n := length/2 - 1
+				if outIdx < start {
+					memset(contentBytes[outIdx:outIdx+n], '\\')
+				}
+				outIdx += n
+				contentBytes[outIdx] = ' '
+				outIdx++
+				continue
+			}
+			'\\\\'+ ' ' {
+				// 2N backslashes plus space -> 2N backslashes, end of filename.
+				length := cursor - start
+				if outIdx < start {
+					memset(contentBytes[outIdx:outIdx+length-1], '\\')
+				}
+				outIdx += length - 1
+				break
+			}
+			'\\'+ '#' {
+				// De-escape hash sign, but preserve other leading backslashes.
+				length := cursor - start
+				if length > 2 && outIdx < start {
+					memset(contentBytes[outIdx:outIdx+length-2], '\\')
+				}
+				outIdx += length - 2
+				contentBytes[outIdx] = '#'
+				outIdx++
+				continue
+			}
+			'\\'+ ':' [\x00\x20\r\n\t] {
+				// Backslash followed by : and whitespace.
+				// It is therefore normal text and not an escaped colon
+				length := cursor - start - 1
+				// Need to shift it over if we're overwriting backslashes.
+				if outIdx < start {
+					memmov(contentBytes[outIdx:], contentBytes[start:], length)
+				}
+				outIdx += length
+                                if peek(contentBytes, cursor-1, limit) == '\n' {
+					haveNewline = true
+				}
+				break
+			}
+			'\\'+ ':' {
+				// De-escape colon sign, but preserve other leading backslashes.
+				// Regular expression uses lookahead to make sure that no whitespace
+				// nor EOF follows. In that case it'd be the : at the end of a target
+				length := cursor - start
+				if length > 2 && outIdx < start {
+					memset(contentBytes[outIdx:outIdx+length-2], '\\')
+				}
+				outIdx += length - 2
+				contentBytes[outIdx] = ':'
+				outIdx++
+				continue
+			}
+			'$$' {
+				// De-escape dollar character.
+				contentBytes[outIdx] = '$'
+				outIdx++
+				continue
+			}
+			'\\'+ [^\x00\r\n] | [a-zA-Z0-9+?"'&,/_:.~()}{%=@\x5B\x5D!\x80-\xFF-]+ {
+				// Got a span of plain text.
+				length := cursor - start
+				// Need to shift it over if we're overwriting backslashes.
+				if outIdx < start {
+					memmov(contentBytes[outIdx:], contentBytes[start:], length)
+				}
+				outIdx += length
+				continue
+			}
+			nul {
+				break
+			}
+			'\\' newline {
+				// A line continuation ends the current file name.
+				break
+			}
+			newline {
+				// A newline ends the current file name and the current rule.
+				haveNewline = true
+				break
+			}
+			[^] {
+				// For any other character (e.g. whitespace), swallow it here,
+				// allowing the outer logic to loop around again.
+				break
+			}
+			*/
+		}
+		
+		length := outIdx - filenameIdx
+		isDependency := !parsingTargets
+		if length > 0 && contentBytes[filenameIdx+length-1] == ':' {
+			length-- // Strip off trailing colon, if any.
+			parsingTargets = false
+			haveTarget = true
+		}
+		
+		if length > 0 {
+			isEmpty = false
+			piece := string(contentBytes[filenameIdx:filenameIdx+length])
+			// If we've seen this as an input before, skip it.
+			pos := slices.Index(p.ins, piece)
+			if pos == -1 {
+				if isDependency {
+					if poisonedInput {
+						return fmt.Errorf("inputs may not also have inputs")
+					}
+					// New input.
+					p.ins = append(p.ins, piece)
+				} else {
+					// Check for a new output.
+					if slices.Index(p.outs, piece) == -1 {
+						p.outs = append(p.outs, piece)
+					}
+				}
+			} else if !isDependency {
+				// We've passed an input on the left side; reject new inputs.
+				poisonedInput = true
+			}
+		}
+		
+		if haveNewline {
+			// A newline ends a rule so the next filename will be a new target.
+			parsingTargets = true
+			poisonedInput = false
+		}
+	}
+	
+	if !haveTarget && !isEmpty {
+		return fmt.Errorf("expected ':' in depfile")
+	}
+	return nil
+}
