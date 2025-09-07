@@ -43,7 +43,7 @@ type ManifestParser struct {
 	outs        []*eval_env.EvalString
 	validations []*eval_env.EvalString
 
-	quiet       bool
+	quiet bool
 }
 
 // New creates a new ManifestParser
