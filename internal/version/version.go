@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const ninjaVersion = "1.14.0.git"
+const NinjaVersion = "1.14.0.git"
 
 // TODO(tylerw): use semver or something
 // Returns (major, minor)
@@ -22,17 +22,17 @@ func ParseVersion(version string) (int, int) {
 }
 
 func CheckNinjaVersion(fileVersion string) {
-	binMajor, binMinor := ParseVersion(ninjaVersion)
+	binMajor, binMinor := ParseVersion(NinjaVersion)
 	fileMajor, fileMinor := ParseVersion(fileVersion)
 
 	if binMajor > fileMajor {
 		log.Printf("ninja executable version (%s) greater than build file "+
 			"ninja_required_version (%s); versions may be incompatible.",
-			ninjaVersion, fileVersion)
+			NinjaVersion, fileVersion)
 	}
 	if (binMajor == fileMajor && binMinor < fileMinor) || binMajor < fileMajor {
 		log.Fatalf("ninja executable version (%s) greater than build file "+
 			"ninja_required_version (%s); versions may be incompatible.",
-			ninjaVersion, fileVersion)
+			NinjaVersion, fileVersion)
 	}
 }

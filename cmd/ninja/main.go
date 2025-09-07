@@ -26,11 +26,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/parser"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/tools"
-)
-
-const (
-	// Version information
-	version = "1.12.0-gin"
+	"github.com/buildbuddy-io/gin/internal/version"
 )
 
 // Options represents command-line options
@@ -58,7 +54,7 @@ func main() {
 	}
 
 	if opts.showVersion {
-		fmt.Printf("gin %s\n", version)
+		fmt.Printf("gin %s\n", version.NinjaVersion)
 		os.Exit(0)
 	}
 
