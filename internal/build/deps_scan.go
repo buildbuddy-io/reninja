@@ -19,7 +19,8 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/log"
+	"github.com/buildbuddy-io/gin/internal/deps_log"
+	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/state"
 )
 
@@ -27,12 +28,12 @@ import (
 type DependencyScan struct {
 	state         *state.State
 	diskInterface disk.Interface
-	buildLog      *log.BuildLog
-	depsLog       *log.DepsLog
+	buildLog      *build_log.BuildLog
+	depsLog       *deps_log.DepsLog
 }
 
 // NewDependencyScan creates a new DependencyScan
-func NewDependencyScan(s *state.State, buildLog *log.BuildLog, depsLog *log.DepsLog, diskInterface disk.Interface) *DependencyScan {
+func NewDependencyScan(s *state.State, buildLog *build_log.BuildLog, depsLog *deps_log.DepsLog, diskInterface disk.Interface) *DependencyScan {
 	if diskInterface == nil {
 		diskInterface = disk.NewRealDiskInterface()
 	}

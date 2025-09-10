@@ -4,72 +4,22 @@ import (
 	"testing"
 
 	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/parser"
 	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/gin/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func VerifyGraph(t *testing.T, state *state.State) {
-	t.Helper()
-	for _, edge := range state.Edges() {
-		// All edges need at least one output.
-		require.NotEmpty(t, edge.Outputs, "Edge should have at least one output")
-
-		// Check that the edge's inputs have the edge as out-edge.
-		for _, inNode := range edge.Inputs() {
-			found := false
-			for _, outEdge := range inNode.OutEdges() {
-				if outEdge == edge {
-					found = true
-					break
-				}
-			}
-			require.True(t, found, "Input node should have this edge in its out-edges")
-		}
-
-		// Check that the edge's outputs have the edge as in-edge.
-		for _, outNode := range edge.Outputs() {
-			require.Equal(t, edge, outNode.InEdge(), "Output node %s should have this edge %d in its in-edges", outNode.Path(), edge.ID())
-		}
-	}
-
-	// The union of all in- and out-edges of each nodes should be exactly edges_.
-	nodeEdgeSet := make(map[*graph.Edge]bool)
-	for _, node := range state.Paths() {
-		if node.InEdge() != nil {
-			nodeEdgeSet[node.InEdge()] = true
-		}
-		for _, outEdge := range node.OutEdges() {
-			nodeEdgeSet[outEdge] = true
-		}
-	}
-
-	edgeSet := make(map[*graph.Edge]bool)
-	for _, edge := range state.Edges() {
-		edgeSet[edge] = true
-	}
-
-	require.Equal(t, edgeSet, nodeEdgeSet, "Union of all node edges should equal state edges")
-}
-
-func AssertParse(t *testing.T, input string, s *state.State) {
-	t.Helper()
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
-	assert.NoError(t, manifestParser.Parse("", input))
-	VerifyGraph(t, s)
-}
-
 func TestEmpty(t *testing.T) {
 	s := state.New()
-	AssertParse(t, "", s)
+	test.AssertParse(t, "", s)
 }
 
 func TestRuleAttributes(t *testing.T) {
 	// Check that all of the allowed rule attributes are parsed ok.
 	s := state.New()
-	AssertParse(t, `rule cat
+	test.AssertParse(t, `rule cat
   command = a
   depfile = a
   deps = a
@@ -83,7 +33,7 @@ func TestRuleAttributes(t *testing.T) {
 
 func TestIgnoreIndentedComments(t *testing.T) {
 	s := state.New()
-	AssertParse(t, `  #indented comment
+	test.AssertParse(t, `  #indented comment
 rule cat
   command = cat $in > $out
   #generator = 1
@@ -106,7 +56,7 @@ build result: cat in_1.cc in-2.O
 
 func TestIgnoreIndentedBlankLines(t *testing.T) {
 	s := state.New()
-	AssertParse(t, `  #indented comment
+	test.AssertParse(t, `  #indented comment
   
 rule cat
   command = cat $in > $out
@@ -121,7 +71,7 @@ variable=1
 
 func TestResponseFiles(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat_rsp
   command = cat $rspfile > $out
   rspfile = $rspfile
@@ -141,7 +91,7 @@ build out: cat_rsp in
 
 func TestInNewline(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat_rsp
   command = cat $in_newline > $out
 
@@ -162,7 +112,7 @@ build out: cat_rsp in in2
 
 func TestVariables(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`l = one-letter-test
 rule link
   command = ld $l $extra $with_under -o $out $in
@@ -186,7 +136,7 @@ build supernested: link x
 
 func TestVariableScope(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`foo = bar
 rule cmd
   command = cmd $foo $in $out
@@ -206,7 +156,7 @@ build outer: cmd b
 
 func TestContinuation(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule link
   command = foo bar $
     baz
@@ -225,7 +175,7 @@ build a: link c $
 
 func TestBackslash(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`foo = bar\\baz
 foo2 = bar\\ baz
 `, s)
@@ -235,7 +185,7 @@ foo2 = bar\\ baz
 
 func TestComment(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`# this is a comment
 foo = not # a comment
 `, s)
@@ -244,7 +194,7 @@ foo = not # a comment
 
 func TestDollars(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule foo
   command = ${out}bar$$baz$$$
 blah
@@ -258,7 +208,7 @@ build $x: foo y
 
 func TestRules(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 
@@ -278,7 +228,7 @@ build result: cat in_1.cc in-2.O
 
 func TestEscapeSpaces(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule spaces
   command = something
 build foo$ bar: spaces $$one two$$$ three
@@ -292,7 +242,7 @@ build foo$ bar: spaces $$one two$$$ three
 
 func TestCanonicalizeFile(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build out: cat in/1 in//2
@@ -308,7 +258,7 @@ build in/2: cat
 
 func TestPathVariables(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 dir = out
@@ -320,7 +270,7 @@ build $dir/exe: cat src
 
 func TestCanonicalizePaths(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build ./out.o: cat ./bar/baz/../foo.cc
@@ -365,7 +315,7 @@ build final: cat out1
 
 func TestPhonySelfReferenceIgnored(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`build a: phony a
 `, s)
 	node := s.LookupNode("a")
@@ -391,7 +341,7 @@ func TestPhonySelfReferenceKept(t *testing.T) {
 
 func TestReservedWords(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule build
   command = rule run $out
 build subninja: build include default foo.cc
@@ -605,7 +555,7 @@ build $builddir/outer: varref
 subninja test.ninja
 build $builddir/outer2: varref
 `))
-	VerifyGraph(t, s)
+	test.VerifyGraph(t, s)
 
 	assert.Equal(t, 1, len(fs.FilesRead()))
 	assert.Equal(t, "test.ninja", fs.FilesRead()[0])
@@ -671,7 +621,7 @@ func TestInclude(t *testing.T) {
 	assert.NoError(t, manifestParser.Parse("", `var = outer
 include include.ninja
 `))
-	VerifyGraph(t, s)
+	test.VerifyGraph(t, s)
 	assert.Equal(t, 1, len(fs.FilesRead()))
 	assert.Equal(t, "include.ninja", fs.FilesRead()[0])
 	assert.Equal(t, "inner", s.Bindings().LookupVariable("var"))
@@ -689,7 +639,7 @@ func TestBrokenInclude(t *testing.T) {
 
 func TestImplicit(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build foo: cat bar | baz
@@ -700,7 +650,7 @@ build foo: cat bar | baz
 
 func TestOrderOnly(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build foo: cat bar || baz
@@ -711,7 +661,7 @@ build foo: cat bar || baz
 
 func TestValidations(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build foo: cat bar |@ baz
@@ -723,7 +673,7 @@ build foo: cat bar |@ baz
 
 func TestImplicitOutput(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build foo | imp: cat bar
@@ -735,7 +685,7 @@ build foo | imp: cat bar
 
 func TestImplicitOutputEmpty(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build foo | : cat bar
@@ -781,7 +731,7 @@ build | imp : cat bar
 
 func TestDefaultDefault(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build a: cat foo
@@ -796,7 +746,7 @@ build d: cat foo
 
 func TestDefaultDefaultCycle(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build a: cat a
@@ -809,7 +759,7 @@ build a: cat a
 
 func TestDefaultStatements(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build a: cat foo
@@ -830,7 +780,7 @@ default $third
 
 func TestUTF8(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		"rule utf8\n"+
 			"  command = true\n"+
 			"  description = compilaci\xC3\xB3\n", s)
@@ -854,7 +804,7 @@ func TestCRLF(t *testing.T) {
 
 func TestDyndepNotSpecified(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build result: cat in
@@ -877,7 +827,7 @@ build result: touch
 
 func TestDyndepExplicitInput(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build result: cat in
@@ -891,7 +841,7 @@ build result: cat in
 
 func TestDyndepImplicitInput(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build result: cat in | dd
@@ -905,7 +855,7 @@ build result: cat in | dd
 
 func TestDyndepOrderOnlyInput(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
 build result: cat in || dd
@@ -919,7 +869,7 @@ build result: cat in || dd
 
 func TestDyndepRuleInput(t *testing.T) {
 	s := state.New()
-	AssertParse(t,
+	test.AssertParse(t,
 		`rule cat
   command = cat $in > $out
   dyndep = $in

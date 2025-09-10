@@ -22,7 +22,8 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/log"
+	"github.com/buildbuddy-io/gin/internal/build_log"
+	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/state"
 )
 
@@ -44,8 +45,8 @@ type Builder struct {
 	commandRunner CommandRunner
 	diskInterface disk.Interface
 	scan          *DependencyScan
-	buildLog      *log.BuildLog
-	depsLog       *log.DepsLog
+	buildLog      *build_log.BuildLog
+	depsLog       *deps_log.DepsLog
 
 	mu           sync.Mutex
 	runningEdges map[*graph.Edge]*RunningEdge
@@ -76,8 +77,8 @@ func New(s *state.State, config *Config) *Builder {
 	diskInterface := disk.NewRealDiskInterface()
 
 	// Initialize logs
-	buildLog := log.NewBuildLog()
-	depsLog := log.NewDepsLog()
+	buildLog := build_log.NewBuildLog()
+	depsLog := deps_log.NewDepsLog()
 
 	// Open logs for writing
 	buildLog.OpenForWrite(".ninja_log", "")
