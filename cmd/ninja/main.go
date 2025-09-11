@@ -23,7 +23,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/build"
 	"github.com/buildbuddy-io/gin/internal/clean"
 	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/parser"
+	"github.com/buildbuddy-io/gin/internal/manifest_parser"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/tools"
 	"github.com/buildbuddy-io/gin/internal/version"

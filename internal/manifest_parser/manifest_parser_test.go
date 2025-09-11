@@ -1,10 +1,10 @@
-package parser_test
+package manifest_parser_test
 
 import (
 	"testing"
 
 	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/parser"
+	"github.com/buildbuddy-io/gin/internal/manifest_parser"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/test"
 	"github.com/stretchr/testify/assert"
@@ -289,7 +289,7 @@ build out1 out2: cat in1
 build out1: cat in2
 build final: cat out1
 `
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multiple rules generate out1")
@@ -307,7 +307,7 @@ build final: cat out1
 `))
 	input := `subninja sub.ninja
 `
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multiple rules generate out1")
@@ -327,9 +327,9 @@ func TestPhonySelfReferenceKept(t *testing.T) {
 	s := state.New()
 	input := `build a: phony a
 `
-	opts := parser.DefaultOptions()
-	opts.PhonyCycleAction = parser.PhonyCycleActionError
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), opts)
+	opts := manifest_parser.DefaultOptions()
+	opts.PhonyCycleAction = manifest_parser.PhonyCycleActionError
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), opts)
 	err := manifestParser.Parse("", input)
 	require.NoError(t, err)
 
@@ -499,7 +499,7 @@ func TestErrors(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.err, func(t *testing.T) {
 			s := state.New()
-			manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+			manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 			err := manifestParser.Parse("", tc.input)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.err)
@@ -510,7 +510,7 @@ func TestErrors(t *testing.T) {
 func TestMissingInput(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	err := manifestParser.ParseFile("build.ninja")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loading 'build.ninja'")
@@ -519,7 +519,7 @@ func TestMissingInput(t *testing.T) {
 
 func TestMultipleOutputs(t *testing.T) {
 	s := state.New()
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", `rule cc
   command = foo
   depfile = bar
@@ -530,7 +530,7 @@ build a.o b.o: cc c.cc
 
 func TestMultipleOutputsWithDeps(t *testing.T) {
 	s := state.New()
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", `rule cc
   command = foo
   deps = gcc
@@ -546,7 +546,7 @@ func TestSubNinja(t *testing.T) {
 		`var = inner
 build $builddir/inner: varref
 `))
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	assert.NoError(t, manifestParser.Parse("", `builddir = some_dir/
 rule varref
   command = varref $var
@@ -572,7 +572,7 @@ build $builddir/outer2: varref
 func TestMissingSubNinja(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", "subninja foo.ninja\n")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loading 'foo.ninja'")
@@ -586,7 +586,7 @@ func TestDuplicateRuleInDifferentSubninjas(t *testing.T) {
 	fs.WriteFile("test.ninja", []byte(`rule cat
   command = cat
 `))
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", `rule cat
   command = cat
 subninja test.ninja
@@ -604,7 +604,7 @@ func TestDuplicateRuleInDifferentSubninjasWithInclude(t *testing.T) {
 	fs.WriteFile("test.ninja", []byte(`include rules.ninja
 build x : cat
 `))
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", `include rules.ninja
 subninja test.ninja
 build y : cat
@@ -617,7 +617,7 @@ func TestInclude(t *testing.T) {
 	fs := disk.NewMockDiskInterface()
 	fs.WriteFile("include.ninja", []byte("var = inner\n"))
 
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	assert.NoError(t, manifestParser.Parse("", `var = outer
 include include.ninja
 `))
@@ -631,7 +631,7 @@ func TestBrokenInclude(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
 	fs.WriteFile("include.ninja", []byte("build\n"))
-	manifestParser := parser.New(s, fs, parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", "include include.ninja\n")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected path")
@@ -701,7 +701,7 @@ func TestImplicitOutputDupeError(t *testing.T) {
   command = cat $in > $out
 build foo baz | foo baq foo: cat bar
 `
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "foo is defined as an output multiple times")
@@ -713,7 +713,7 @@ func TestImplicitOutputDupesError(t *testing.T) {
   command = cat $in > $out
 build foo foo foo | foo foo foo foo: cat bar
 `
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "foo is defined as an output multiple times")
@@ -721,7 +721,7 @@ build foo foo foo | foo foo foo foo: cat bar
 
 func TestNoExplicitOutput(t *testing.T) {
 	s := state.New()
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", `rule cat
   command = cat $in > $out
 build | imp : cat bar
@@ -788,7 +788,7 @@ func TestUTF8(t *testing.T) {
 
 func TestCRLF(t *testing.T) {
 	s := state.New()
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", "# comment with crlf\r\n")
 	require.NoError(t, err)
 	err = manifestParser.Parse("", "foo = foo\nbar = bar\r\n")
@@ -815,7 +815,7 @@ build result: cat in
 
 func TestDyndepNotInput(t *testing.T) {
 	s := state.New()
-	manifestParser := parser.New(s, disk.NewMockDiskInterface(), parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", `rule touch
   command = touch $out
 build result: touch

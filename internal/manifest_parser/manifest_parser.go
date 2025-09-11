@@ -1,4 +1,4 @@
-package parser
+package manifest_parser
 
 import (
 	"fmt"
