@@ -1,398 +1,479 @@
 package deps_log
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
-	"sync"
 
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/state"
 )
 
 const (
-	// DepsLogVersion is the current deps log format version
-	DepsLogVersion = 4
+	// The version is stored as 4 bytes after the signature and also serves as a
+	// byte order mark. Signature and version combined are 16 bytes long.
+	fileSignature  = "# ninjadeps\n"
+	currentVersion = 4
 
-	// DepsLogSignature for binary format
-	DepsLogSignature = 0x6e696e44 // "ninD"
+	// Record size is currently limited to less than the full 32 bit, due to
+	// internal buffers having to have this size.
+	maxRecordSize = (1 << 19) - 1
 )
 
-// DepsRecord represents a dependency record
-type DepsRecord struct {
-	Output       *graph.Node
-	Dependencies []*graph.Node
-	Mtime        graph.TimeStamp
+type Deps struct {
+	Mtime graph.TimeStamp
+	Nodes []*graph.Node
+}
+
+func NewDeps(mtime graph.TimeStamp, nodeCount int) *Deps {
+	return &Deps{
+		Mtime: mtime,
+		Nodes: make([]*graph.Node, nodeCount),
+	}
 }
 
 // DepsLog tracks dependency information
 type DepsLog struct {
-	mu      sync.RWMutex
-	records map[*graph.Node]*DepsRecord
-	logFile string
-	dirty   bool
-	nodeMap map[string]*graph.Node
+	nodes []*graph.Node
+	deps  []*Deps
+
+	logFile           *os.File
+	logFilePath       string
+	needsRecompaction bool
 }
 
 // NewDepsLog creates a new DepsLog
 func NewDepsLog() *DepsLog {
 	return &DepsLog{
-		records: make(map[*graph.Node]*DepsRecord),
-		nodeMap: make(map[string]*graph.Node),
+		nodes:             make([]*graph.Node, 0),
+		deps:              make([]*Deps, 0),
+		needsRecompaction: false,
 	}
 }
 
-// OpenForWrite opens the deps log for writing
-func (d *DepsLog) OpenForWrite(path string, buildDir string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.logFile = path
-
-	// Load existing log if it exists
-	if err := d.load(buildDir); err != nil {
-		// If loading fails, start fresh
-		d.records = make(map[*graph.Node]*DepsRecord)
+func (d *DepsLog) OpenForWrite(path string) error {
+	if d.needsRecompaction {
+		if err := d.Recompact(path); err != nil {
+			return err
+		}
+	}
+	if d.logFile != nil {
+		panic("logFile was already opened!")
 	}
 
+	// we don't actually open the file right now, but will
+	// do so on the first write attempt
+	d.logFilePath = path
 	return nil
 }
 
-// RecordDeps records dependencies for a node
-func (d *DepsLog) RecordDeps(output *graph.Node, mtime graph.TimeStamp, deps []*graph.Node) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+func (d *DepsLog) RecordId(node *graph.Node) error {
+	pathSize := len(node.Path())
+	if pathSize <= 0 {
+		panic("Trying to record empty path Node!")
+	}
+	padding := (4 - pathSize%4) % 4 // Pad path to 4 byte boundary
+	size := pathSize + padding + 4
 
-	// Check if we already have this exact record
-	if existing, ok := d.records[output]; ok {
-		if existing.Mtime == mtime && d.depsEqual(existing.Dependencies, deps) {
-			return true // No change needed
+	if size > maxRecordSize {
+		return fmt.Errorf("ERANGE")
+	}
+
+	if err := d.OpenForWriteIfNeeded(); err != nil {
+		return err
+	}
+	// TODO(tylerw): this pattern is used a lot in this file and could probably be
+	// simplified by adding a method like `fWrite4ByteInt(i int) error`.
+	sizeBuf := intTo4Bytes(size)
+	if _, err := d.logFile.Write(sizeBuf); err != nil {
+		return err
+	}
+	pathBuf := make([]byte, pathSize)
+	copy(pathBuf, []byte(node.Path()))
+	if _, err := d.logFile.Write(pathBuf); err != nil {
+		return err
+	}
+	if padding > 0 {
+		if _, err := d.logFile.Write(make([]byte, padding)); err != nil {
+			return err
 		}
 	}
-
-	record := &DepsRecord{
-		Output:       output,
-		Dependencies: make([]*graph.Node, len(deps)),
-		Mtime:        mtime,
+	id := len(d.nodes)
+	checksum := ^id
+	checksumBuf := intTo4Bytes(checksum)
+	if _, err := d.logFile.Write(checksumBuf); err != nil {
+		return err
 	}
-	copy(record.Dependencies, deps)
-
-	d.records[output] = record
-	d.dirty = true
-
-	return true
+	node.SetID(id)
+	d.nodes = append(d.nodes, node)
+	return nil
 }
 
-// GetDeps returns the recorded dependencies for a node
-func (d *DepsLog) GetDeps(node *graph.Node) *DepsRecord {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	return d.records[node]
+func (d *DepsLog) UpdateDeps(outID int, deps *Deps) bool {
+	if outID >= len(d.deps) {
+		newCapacity := outID + 1
+		newSlice := make([]*Deps, newCapacity)
+		copy(newSlice[:len(d.deps)], d.deps)
+		d.deps = newSlice
+	}
+	deleteOld := d.deps[outID] != nil
+	if deleteOld {
+		d.deps[outID] = nil
+	}
+	d.deps[outID] = deps
+	return deleteOld
 }
 
-// Save writes the deps log to disk
-func (d *DepsLog) Save() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if !d.dirty || d.logFile == "" {
+func (d *DepsLog) GetDeps(node *graph.Node) *Deps {
+	// Abort if the node has no id (never referenced in the deps) or if
+	// there's no deps recorded for the node.
+	if node.ID() < 0 || node.ID() >= len(d.deps) {
 		return nil
 	}
-
-	// Write to temp file first for atomic update
-	tempFile := d.logFile + ".tmp"
-	file, err := os.Create(tempFile)
-	if err != nil {
-		return err
-	}
-
-	writer := bufio.NewWriter(file)
-
-	// Write header (signature and version)
-	if err := binary.Write(writer, binary.LittleEndian, uint32(DepsLogSignature)); err != nil {
-		file.Close()
-		os.Remove(tempFile)
-		return err
-	}
-
-	if err := binary.Write(writer, binary.LittleEndian, uint32(DepsLogVersion)); err != nil {
-		file.Close()
-		os.Remove(tempFile)
-		return err
-	}
-
-	// Write records
-	for _, record := range d.records {
-		// Write output path
-		outputPath := record.Output.Path()
-		if err := d.writeString(writer, outputPath); err != nil {
-			file.Close()
-			os.Remove(tempFile)
-			return err
-		}
-
-		// Write mtime
-		if err := binary.Write(writer, binary.LittleEndian, int64(record.Mtime)); err != nil {
-			file.Close()
-			os.Remove(tempFile)
-			return err
-		}
-
-		// Write dependency count
-		if err := binary.Write(writer, binary.LittleEndian, uint32(len(record.Dependencies))); err != nil {
-			file.Close()
-			os.Remove(tempFile)
-			return err
-		}
-
-		// Write dependencies
-		for _, dep := range record.Dependencies {
-			if err := d.writeString(writer, dep.Path()); err != nil {
-				file.Close()
-				os.Remove(tempFile)
-				return err
-			}
-		}
-	}
-
-	if err := writer.Flush(); err != nil {
-		file.Close()
-		os.Remove(tempFile)
-		return err
-	}
-
-	if err := file.Close(); err != nil {
-		os.Remove(tempFile)
-		return err
-	}
-
-	// Atomic rename
-	if err := os.Rename(tempFile, d.logFile); err != nil {
-		os.Remove(tempFile)
-		return err
-	}
-
-	d.dirty = false
-	return nil
+	return d.deps[node.ID()]
 }
 
-// load reads the deps log from disk
-func (d *DepsLog) load(buildDir string) error {
-	if d.logFile == "" {
-		return nil
-	}
-
-	file, err := os.Open(d.logFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // No existing log
-		}
-		return err
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-
-	// Read header
-	var signature, version uint32
-	if err := binary.Read(reader, binary.LittleEndian, &signature); err != nil {
-		if err == io.EOF {
-			return nil // Empty file
-		}
-		return fmt.Errorf("failed to read signature: %w", err)
-	}
-
-	if signature != DepsLogSignature {
-		return fmt.Errorf("invalid deps log signature: %x", signature)
-	}
-
-	if err := binary.Read(reader, binary.LittleEndian, &version); err != nil {
-		return fmt.Errorf("failed to read version: %w", err)
-	}
-
-	if version != DepsLogVersion {
-		return fmt.Errorf("unsupported deps log version: %d", version)
-	}
-
-	// Read records
-	for {
-		// Read output path
-		outputPath, err := d.readString(reader)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-
-		// Get or create node
-		outputNode := d.getOrCreateNode(outputPath)
-
-		// Read mtime
-		var mtime int64
-		if err := binary.Read(reader, binary.LittleEndian, &mtime); err != nil {
-			return err
-		}
-
-		// Read dependency count
-		var depCount uint32
-		if err := binary.Read(reader, binary.LittleEndian, &depCount); err != nil {
-			return err
-		}
-
-		// Read dependencies
-		deps := make([]*graph.Node, depCount)
-		for i := uint32(0); i < depCount; i++ {
-			depPath, err := d.readString(reader)
-			if err != nil {
-				return err
-			}
-			deps[i] = d.getOrCreateNode(depPath)
-		}
-
-		// Store record
-		d.records[outputNode] = &DepsRecord{
-			Output:       outputNode,
-			Dependencies: deps,
-			Mtime:        graph.TimeStamp(mtime),
-		}
-	}
-
-	return nil
-}
-
-// writeString writes a string with length prefix
-func (d *DepsLog) writeString(w io.Writer, s string) error {
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(s))); err != nil {
-		return err
-	}
-	_, err := w.Write([]byte(s))
-	return err
-}
-
-// readString reads a string with length prefix
-func (d *DepsLog) readString(r io.Reader) (string, error) {
-	var length uint32
-	if err := binary.Read(r, binary.LittleEndian, &length); err != nil {
-		return "", err
-	}
-
-	if length > 1024*1024 { // Sanity check: 1MB max path
-		return "", fmt.Errorf("path too long: %d bytes", length)
-	}
-
-	buf := make([]byte, length)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return "", err
-	}
-
-	return string(buf), nil
-}
-
-// getOrCreateNode gets or creates a node for tracking
-func (d *DepsLog) getOrCreateNode(path string) *graph.Node {
-	if node, ok := d.nodeMap[path]; ok {
-		return node
-	}
-
-	// Create a minimal node for tracking
-	// We use NewNode which takes the path and slashBits (0 for Unix)
-	node := graph.NewNode(path, 0)
-	d.nodeMap[path] = node
-	return node
-}
-
-// depsEqual checks if two dependency lists are equal
-func (d *DepsLog) depsEqual(a, b []*graph.Node) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if a[i].Path() != b[i].Path() {
-			return false
-		}
-	}
-
-	return true
-}
-
-// Clear removes all records
-func (d *DepsLog) Clear() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.records = make(map[*graph.Node]*DepsRecord)
-	d.nodeMap = make(map[string]*graph.Node)
-	d.dirty = true
-}
-
-// IsDirty returns whether the log has unsaved changes
-func (d *DepsLog) IsDirty() bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.dirty
-}
-
-// GetLogPath returns the log file path
-func (d *DepsLog) GetLogPath() string {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.logFile
-}
-
-// Stats represents deps log statistics
-type DepsStats struct {
-	TotalRecords int
-	TotalDeps    int
-}
-
-// GetStats returns statistics about the deps log
-func (d *DepsLog) GetStats() *DepsStats {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	stats := &DepsStats{
-		TotalRecords: len(d.records),
-	}
-
-	for _, record := range d.records {
-		stats.TotalDeps += len(record.Dependencies)
-	}
-
-	return stats
-}
-
-// PruneMissing removes records for nodes that no longer exist
-func (d *DepsLog) PruneMissing() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	removed := 0
-	for node, record := range d.records {
-		// Check if output still exists
-		if _, err := os.Stat(node.Path()); os.IsNotExist(err) {
-			delete(d.records, node)
-			removed++
-			d.dirty = true
+func (d *DepsLog) GetFirstReverseDepsNode(node *graph.Node) *graph.Node {
+	for i := range d.deps {
+		deps := d.deps[i]
+		if deps == nil {
 			continue
 		}
-
-		// Check if any dependencies are missing
-		validDeps := make([]*graph.Node, 0, len(record.Dependencies))
-		for _, dep := range record.Dependencies {
-			if _, err := os.Stat(dep.Path()); err == nil {
-				validDeps = append(validDeps, dep)
+		for j := range deps.Nodes {
+			if deps.Nodes[j].Path() == node.Path() {
+				return d.nodes[i]
 			}
 		}
+	}
+	return nil
+}
 
-		if len(validDeps) != len(record.Dependencies) {
-			record.Dependencies = validDeps
-			d.dirty = true
+func (d *DepsLog) RecordDeps(node *graph.Node, mtime graph.TimeStamp, nodes []*graph.Node) error {
+	// Track whether there's any new data to be recorded.
+	nodeCount := len(nodes)
+	madeChange := false
+
+	// Assign ids to all nodes that are missing one.
+	if node.ID() < 0 {
+		if err := d.RecordId(node); err != nil {
+			return err
+		}
+		madeChange = true
+	}
+	for i := range nodes {
+		if nodes[i].ID() < 0 {
+			if err := d.RecordId(nodes[i]); err != nil {
+				return err
+			}
+			madeChange = true
 		}
 	}
 
-	return removed
+	if !madeChange {
+		deps := d.GetDeps(node)
+		if deps == nil || deps.Mtime != mtime || len(deps.Nodes) != nodeCount {
+			madeChange = true
+		} else {
+			for i := range nodes {
+				if deps.Nodes[i] != nodes[i] {
+					madeChange = true
+					break
+				}
+			}
+		}
+	}
+	if !madeChange {
+		return nil
+	}
+
+	size := 4 * (1 + 2 + nodeCount)
+	if size > maxRecordSize {
+		return fmt.Errorf("ERANGE")
+	}
+	if err := d.OpenForWriteIfNeeded(); err != nil {
+		return err
+	}
+	size |= 0x80000000
+	sizeBuf := intTo4Bytes(size)
+	if _, err := d.logFile.Write(sizeBuf); err != nil {
+		return err
+	}
+	id := node.ID()
+	idBuf := intTo4Bytes(id)
+	if _, err := d.logFile.Write(idBuf); err != nil {
+		return err
+	}
+	mtimePart := int(int64(mtime) & 0xffffffff)
+	mtimeBuf := intTo4Bytes(mtimePart)
+	if _, err := d.logFile.Write(mtimeBuf); err != nil {
+		return err
+	}
+	mtimePart = int(int64(mtime>>32) & 0xffffffff)
+	mtimeBuf = intTo4Bytes(mtimePart)
+	if _, err := d.logFile.Write(mtimeBuf); err != nil {
+		return err
+	}
+	for i := range nodes {
+		idBuf := intTo4Bytes(nodes[i].ID())
+		if _, err := d.logFile.Write(idBuf); err != nil {
+			return err
+		}
+	}
+
+	deps := NewDeps(mtime, nodeCount)
+	for i := range nodes {
+		deps.Nodes[i] = nodes[i]
+	}
+	d.UpdateDeps(node.ID(), deps)
+
+	return nil
+}
+
+func (d *DepsLog) Load(path string, state *state.State) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, maxRecordSize)
+
+	n, err := io.ReadFull(f, buf[:len(fileSignature)])
+	validHeader := err == nil && n == len(fileSignature) &&
+		string(buf[:len(fileSignature)]) == fileSignature
+
+	n, err = io.ReadFull(f, buf[:4])
+	version := bytesToInt(buf[:4])
+	validVersion := err == nil && n == 4 && version == currentVersion
+
+	if !validHeader || !validVersion {
+		if version == 1 {
+			return fmt.Errorf("deps log version change; rebuilding")
+		} else {
+			return fmt.Errorf("bad deps log signature or version; starting over")
+		}
+		f.Close()
+		os.Remove(path)
+		return nil
+	}
+
+	offset, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	readFailed := false
+	uniqueDepRecordCount := 0
+	totalDepRecordCount := 0
+	for {
+		n, err = io.ReadFull(f, buf[:4])
+		if err != nil || n != 4 {
+			readFailed = true
+			break
+		}
+		size := bytesToInt(buf[:4])
+		isDeps := (size >> 31) != 0
+		size = size & 0x7FFFFFFF
+
+		if size > maxRecordSize {
+			readFailed = true
+			break
+		}
+		n, err = io.ReadFull(f, buf[:size])
+		if err != nil || n != size {
+			readFailed = true
+			break
+		}
+		offset += int64(size + 4 /*=sizeof(size)*/)
+
+		if isDeps {
+			if size%4 != 0 {
+				readFailed = true
+				break
+			}
+			outID := bytesToInt(buf[0:4])
+			mtimeLow := bytesToInt(buf[4:8])
+			mtimeHigh := bytesToInt(buf[8:12])
+			mtime := graph.TimeStamp(mtimeLow | (mtimeHigh << 32))
+
+			depsCount := (size / 4) - 3
+			deps := NewDeps(mtime, depsCount)
+
+			for i := 0; i < depsCount; i++ {
+				s := 12 + (4 * i)
+				e := 12 + (4 * i) + 4
+				nodeID := bytesToInt(buf[s:e])
+				if nodeID >= len(d.nodes) || d.nodes[nodeID] == nil {
+					readFailed = true
+					break
+				}
+				deps.Nodes[i] = d.nodes[nodeID]
+			}
+			totalDepRecordCount++
+			if !d.UpdateDeps(outID, deps) {
+				uniqueDepRecordCount++
+			}
+		} else {
+			pathSize := size - 4
+			if pathSize <= 0 {
+				readFailed = true
+				break
+			}
+			if buf[pathSize-1] == 0 {
+				pathSize -= 1
+			}
+			if buf[pathSize-1] == 0 {
+				pathSize -= 1
+			}
+			if buf[pathSize-1] == 0 {
+				pathSize -= 1
+			}
+			subPath := string(buf[:pathSize])
+			node := state.GetNode(subPath)
+
+			checksum := bytesToInt(buf[size-4 : size])
+			expectedID := ^checksum
+			id := len(d.nodes)
+			if id != expectedID || node.ID() >= 0 {
+				readFailed = true
+				break
+			}
+			node.SetID(id)
+			d.nodes = append(d.nodes, node)
+		}
+	}
+	if readFailed {
+		f.Close()
+
+		if err := os.Truncate(path, offset); err != nil {
+			return err
+		}
+		return nil
+	}
+	f.Close()
+	minCompactionEntryCount := 1000
+	compactionRatio := 3
+
+	if totalDepRecordCount > minCompactionEntryCount &&
+		totalDepRecordCount > uniqueDepRecordCount*compactionRatio {
+		d.needsRecompaction = true
+	}
+
+	return nil
+}
+
+func (d *DepsLog) Recompact(path string) error {
+	if err := d.Close(); err != nil {
+		return err
+	}
+	tempPath := path + ".recompact"
+
+	// OpenForWrite() opens for append.  Make sure it's not appending to a
+	// left-over file from a previous recompaction attempt that crashed somehow.
+	_ = os.Remove(tempPath) // ignore error
+
+	newLog := NewDepsLog()
+	if err := newLog.OpenForWrite(tempPath); err != nil {
+		return err
+	}
+	for i := range d.nodes {
+		d.nodes[i].SetID(-1)
+	}
+
+	for oldID := range d.deps {
+		deps := d.deps[oldID]
+		if deps == nil {
+			continue
+		}
+		if !d.IsDepsEntryLiveFor(d.nodes[oldID]) {
+			continue
+		}
+		if err := newLog.RecordDeps(d.nodes[oldID], deps.Mtime, deps.Nodes); err != nil {
+			newLog.Close()
+			return err
+		}
+	}
+
+	newLog.Close()
+
+	d.deps = newLog.deps
+	d.nodes = newLog.nodes
+
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *DepsLog) IsDepsEntryLiveFor(node *graph.Node) bool {
+	// Skip entries that don't have in-edges or whose edges don't have a
+	// "deps" attribute. They were in the deps log from previous builds, but
+	// the the files they were for were removed from the build and their deps
+	// entries are no longer needed.
+	// (Without the check for "deps", a chain of two or more nodes that each
+	// had deps wouldn't be collected in a single recompaction.)
+	return node.InEdge() != nil && node.InEdge().GetBinding("deps") != ""
+}
+
+func (d *DepsLog) Close() error {
+	if err := d.OpenForWriteIfNeeded(); err != nil {
+		return err
+	}
+	if d.logFile != nil {
+		if err := d.logFile.Close(); err != nil {
+			return err
+		}
+	}
+	d.logFile = nil
+	return nil
+}
+
+func (d *DepsLog) OpenForWriteIfNeeded() error {
+	if d.logFile != nil || len(d.logFilePath) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile(d.logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	d.logFile = f
+
+	pos, err := d.logFile.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if pos == 0 {
+		if _, err := d.logFile.Write([]byte(fileSignature)); err != nil {
+			return err
+		}
+		versionBuf := intTo4Bytes(currentVersion)
+		if _, err := d.logFile.Write(versionBuf); err != nil {
+			return err
+		}
+	}
+	d.logFilePath = "" // TODO(tylerw): is this necessary? Not present in build_log.go
+	return nil
+}
+
+func (d *DepsLog) TestingGetNodes() []*graph.Node {
+	return d.nodes
+}
+
+func (d *DepsLog) TestingGetDeps() []*Deps {
+	return d.deps
+}
+
+func intTo4Bytes(i int) []byte {
+	i2 := int32(i)
+	buf := make([]byte, binary.Size(i2))
+	binary.Encode(buf, binary.NativeEndian, i2)
+	return buf
+}
+
+func bytesToInt(buf []byte) int {
+	var i int32
+	binary.Decode(buf, binary.NativeEndian, &i)
+	return int(i)
 }

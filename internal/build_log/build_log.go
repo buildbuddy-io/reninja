@@ -52,7 +52,6 @@ type BuildLog struct {
 	needsRecompaction bool
 }
 
-// NewBuildLog creates a new BuildLog
 func NewBuildLog() *BuildLog {
 	return &BuildLog{
 		entries: make(map[string]*LogEntry),
@@ -67,7 +66,6 @@ func WriteEntry(f *os.File, entry *LogEntry) error {
 	return err
 }
 
-// OpenForWrite opens the build log for writing
 func (b *BuildLog) OpenForWrite(path string, user BuildLogUser) error {
 	if b.needsRecompaction {
 		if err := b.Recompact(path, user); err != nil {
