@@ -1,0 +1,11 @@
+package explanations
+
+import (
+	"fmt"
+)
+
+type OptionalExplanations interface {
+	Record(key comparable, fmt string, args ...interface{})
+	LookupAndAppend(key comparable, out []string)
+}
+
