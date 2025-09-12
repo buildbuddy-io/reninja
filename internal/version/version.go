@@ -1,22 +1,36 @@
 package version
 
 import (
+	"fmt"
 	"log"
-	"strconv"
 	"strings"
 )
 
 const NinjaVersion = "1.14.0.git"
 
-// TODO(tylerw): use semver or something
+func find(haystack, needle string, startOffset int) int {
+	h := haystack[startOffset:]
+	e := strings.Index(h, needle)
+	if e == -1 {
+		return len(haystack)
+	}
+	return e
+}
+
+// TODO(tylerw): use semver or something?
 // Returns (major, minor)
 func ParseVersion(version string) (int, int) {
-	parts := strings.Split(version, ".")
-	major, _ := strconv.Atoi(parts[0])
-	minor := 0
+	end := find(version, ".", 0)
+	var major, minor int
 
-	if len(parts) > 1 {
-		minor, _ = strconv.Atoi(parts[1])
+	// can't use stronv.Atoi because it's stricter than
+	// cpp atoi.
+
+	_, _ = fmt.Sscan(version[0:end], &major)
+	if end != len(version) {
+		start := end + 1
+		end = find(version, ".", start)
+		_, _ = fmt.Sscan(version[start:end], &minor)
 	}
 	return major, minor
 }
