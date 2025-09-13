@@ -20,11 +20,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/deps_log"
+	"github.com/buildbuddy-io/gin/internal/disk"
+	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
 
 // Config represents build configuration
@@ -281,7 +282,7 @@ func (b *Builder) finishEdge(edge *graph.Edge, result *Result) {
 
 	if result.Success {
 		// Mark outputs as clean
-		var restatMtime graph.TimeStamp
+		var restatMtime timestamp.TimeStamp
 		for _, output := range edge.Outputs() {
 			output.SetDirty(false)
 			// Update mtime

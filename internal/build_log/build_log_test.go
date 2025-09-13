@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	
+
 	"github.com/buildbuddy-io/gin/internal/build_log"
-	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/test"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +18,7 @@ const (
 )
 
 type pathChecker func(s string) bool
+
 func (p pathChecker) IsPathDead(s string) bool {
 	return p(s)
 }
@@ -31,7 +32,7 @@ func TestWriteRead(t *testing.T) {
 	})
 
 	s := state.New()
-        test.AssertParse(t, `rule cat
+	test.AssertParse(t, `rule cat
   command = cat $in > $out
 build out: cat mid
 build mid: cat in
@@ -191,7 +192,7 @@ func TestSpacesInOutput(t *testing.T) {
 	require.NotNil(t, e)
 	assert.Equal(t, int64(123), e.StartTime)
 	assert.Equal(t, int64(456), e.EndTime)
-	assert.Equal(t, graph.TimeStamp(456), e.Mtime)
+	assert.Equal(t, timestamp.TimeStamp(456), e.Mtime)
 	assert.Equal(t, build_log.HashCommand("command"), e.CommandHash)
 }
 
@@ -219,20 +220,20 @@ func TestDuplicateVersionHeader(t *testing.T) {
 	require.NotNil(t, e)
 	assert.Equal(t, int64(123), e.StartTime)
 	assert.Equal(t, int64(456), e.EndTime)
-	assert.Equal(t, graph.TimeStamp(456), e.Mtime)
+	assert.Equal(t, timestamp.TimeStamp(456), e.Mtime)
 	assert.Equal(t, build_log.HashCommand("command"), e.CommandHash)
 
 	e = log.LookupByOutput("out2")
 	require.NotNil(t, e)
 	assert.Equal(t, int64(456), e.StartTime)
 	assert.Equal(t, int64(789), e.EndTime)
-	assert.Equal(t, graph.TimeStamp(789), e.Mtime)
+	assert.Equal(t, timestamp.TimeStamp(789), e.Mtime)
 	assert.Equal(t, build_log.HashCommand("command2"), e.CommandHash)
 }
 
 type testDiskInterface struct{}
 
-func (t *testDiskInterface) Stat(path string) (graph.TimeStamp, error) {
+func (t *testDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 	return 4, nil
 }
 
@@ -267,17 +268,17 @@ func TestRestat(t *testing.T) {
 	log := build_log.NewBuildLog()
 	require.NoError(t, log.Load(testFilename))
 	e := log.LookupByOutput("out")
-	assert.Equal(t, graph.TimeStamp(3), e.Mtime)
+	assert.Equal(t, timestamp.TimeStamp(3), e.Mtime)
 
 	testDisk := &testDiskInterface{}
 	filter := []string{"out2"}
 	require.NoError(t, log.Restat(testFilename, testDisk, 1, filter))
 	e = log.LookupByOutput("out")
-	assert.Equal(t, graph.TimeStamp(3), e.Mtime) // unchanged, since the filter doesn't match
+	assert.Equal(t, timestamp.TimeStamp(3), e.Mtime) // unchanged, since the filter doesn't match
 
 	require.NoError(t, log.Restat(testFilename, testDisk, 0, nil))
 	e = log.LookupByOutput("out")
-	assert.Equal(t, graph.TimeStamp(4), e.Mtime)
+	assert.Equal(t, timestamp.TimeStamp(4), e.Mtime)
 }
 
 func TestVeryLongInputLine(t *testing.T) {
@@ -309,7 +310,7 @@ func TestVeryLongInputLine(t *testing.T) {
 	require.NotNil(t, e)
 	assert.Equal(t, int64(456), e.StartTime)
 	assert.Equal(t, int64(789), e.EndTime)
-	assert.Equal(t, graph.TimeStamp(789), e.Mtime)
+	assert.Equal(t, timestamp.TimeStamp(789), e.Mtime)
 	assert.Equal(t, build_log.HashCommand("command2"), e.CommandHash)
 }
 
@@ -372,7 +373,7 @@ build out2: cat in
 	assert.Equal(t, 2, len(log2.Entries()))
 	assert.NotNil(t, log2.LookupByOutput("out"))
 	assert.NotNil(t, log2.LookupByOutput("out2"))
-	
+
 	// ...and force a recompaction.
 	require.NoError(t, log2.OpenForWrite(testFilename, deadPathChecker))
 	require.NoError(t, log2.Close())

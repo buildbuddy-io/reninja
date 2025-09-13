@@ -23,12 +23,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
 
 // Interface provides file system operations
 type Interface interface {
-	Stat(path string) (graph.TimeStamp, error)
+	Stat(path string) (timestamp.TimeStamp, error)
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, contents []byte) error
 	MakeDir(path string) error
@@ -42,7 +42,7 @@ type RealDiskInterface struct {
 }
 
 type statCacheEntry struct {
-	mtime  graph.TimeStamp
+	mtime  timestamp.TimeStamp
 	exists bool
 	cached time.Time
 }
@@ -55,13 +55,13 @@ func NewRealDiskInterface() *RealDiskInterface {
 }
 
 // Stat returns the modification time of a file
-func (d *RealDiskInterface) Stat(path string) (graph.TimeStamp, error) {
+func (d *RealDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 	// Check cache first
 	if entry, ok := d.statCache[path]; ok {
 		// Cache entries are valid for a short time during a build
 		if time.Since(entry.cached) < 1*time.Second {
 			if !entry.exists {
-				return graph.TimeStampMissing, os.ErrNotExist
+				return timestamp.TimeStampMissing, os.ErrNotExist
 			}
 			return entry.mtime, nil
 		}
@@ -72,17 +72,17 @@ func (d *RealDiskInterface) Stat(path string) (graph.TimeStamp, error) {
 		if os.IsNotExist(err) {
 			// Cache the non-existence
 			d.statCache[path] = statCacheEntry{
-				mtime:  graph.TimeStampMissing,
+				mtime:  timestamp.TimeStampMissing,
 				exists: false,
 				cached: time.Now(),
 			}
-			return graph.TimeStampMissing, err
+			return timestamp.TimeStampMissing, err
 		}
-		return graph.TimeStampUnknown, err
+		return timestamp.TimeStampUnknown, err
 	}
 
 	// Convert to milliseconds since epoch
-	mtime := graph.TimeStamp(info.ModTime().UnixMilli())
+	mtime := timestamp.TimeStamp(info.ModTime().UnixMilli())
 
 	// Cache the result
 	d.statCache[path] = statCacheEntry{
@@ -135,7 +135,7 @@ type MockDiskInterface struct {
 
 type mockFile struct {
 	contents []byte
-	mtime    graph.TimeStamp
+	mtime    timestamp.TimeStamp
 }
 
 // NewMockDiskInterface creates a new MockDiskInterface
@@ -147,11 +147,11 @@ func NewMockDiskInterface() *MockDiskInterface {
 }
 
 // Stat returns the modification time of a mock file
-func (m *MockDiskInterface) Stat(path string) (graph.TimeStamp, error) {
+func (m *MockDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 	if file, ok := m.files[path]; ok {
 		return file.mtime, nil
 	}
-	return graph.TimeStampMissing, os.ErrNotExist
+	return timestamp.TimeStampMissing, os.ErrNotExist
 }
 
 // ReadFile reads the contents of a mock file
@@ -167,7 +167,7 @@ func (m *MockDiskInterface) ReadFile(path string) ([]byte, error) {
 func (m *MockDiskInterface) WriteFile(path string, contents []byte) error {
 	m.files[path] = mockFile{
 		contents: contents,
-		mtime:    graph.TimeStamp(time.Now().UnixMilli()),
+		mtime:    timestamp.TimeStamp(time.Now().UnixMilli()),
 	}
 	return nil
 }
@@ -176,7 +176,7 @@ func (m *MockDiskInterface) WriteFile(path string, contents []byte) error {
 func (m *MockDiskInterface) MakeDir(path string) error {
 	// Just mark it as existing with no contents
 	m.files[path+"/"] = mockFile{
-		mtime: graph.TimeStamp(time.Now().UnixMilli()),
+		mtime: timestamp.TimeStamp(time.Now().UnixMilli()),
 	}
 	return nil
 }
@@ -191,7 +191,7 @@ func (m *MockDiskInterface) RemoveFile(path string) error {
 }
 
 // AddFile adds a file to the mock file system
-func (m *MockDiskInterface) AddFile(path string, contents []byte, mtime graph.TimeStamp) {
+func (m *MockDiskInterface) AddFile(path string, contents []byte, mtime timestamp.TimeStamp) {
 	m.files[path] = mockFile{
 		contents: contents,
 		mtime:    mtime,

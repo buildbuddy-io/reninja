@@ -17,10 +17,10 @@ package build
 import (
 	"fmt"
 
+	"github.com/buildbuddy-io/gin/internal/build_log"
+	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/deps_log"
-	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/state"
 )
 

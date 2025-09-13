@@ -9,6 +9,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/test"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,7 @@ func TestWriteRead(t *testing.T) {
 
 		logDeps := log1.GetDeps(state1.GetNode("out.o"))
 		require.NotNil(t, logDeps)
-		assert.Equal(t, graph.TimeStamp(1), logDeps.Mtime)
+		assert.Equal(t, timestamp.TimeStamp(1), logDeps.Mtime)
 		assert.Equal(t, 2, len(logDeps.Nodes))
 		assert.Equal(t, "foo.h", logDeps.Nodes[0].Path())
 		assert.Equal(t, "bar.h", logDeps.Nodes[1].Path())
@@ -57,7 +58,7 @@ func TestWriteRead(t *testing.T) {
 
 	logDeps := log2.GetDeps(state2.GetNode("out2.o"))
 	require.NotNil(t, logDeps)
-	assert.Equal(t, graph.TimeStamp(2), logDeps.Mtime)
+	assert.Equal(t, timestamp.TimeStamp(2), logDeps.Mtime)
 	assert.Equal(t, 2, len(logDeps.Nodes))
 	assert.Equal(t, "foo.h", logDeps.Nodes[0].Path())
 	assert.Equal(t, "bar2.h", logDeps.Nodes[1].Path())
@@ -210,14 +211,14 @@ build other_out.o: cc
 		out := st.GetNode("out.o")
 		deps := log.GetDeps(out)
 		require.NotNil(t, deps)
-		assert.Equal(t, graph.TimeStamp(1), deps.Mtime)
+		assert.Equal(t, timestamp.TimeStamp(1), deps.Mtime)
 		assert.Equal(t, 1, len(deps.Nodes))
 		assert.Equal(t, "foo.h", deps.Nodes[0].Path())
 
 		otherOut := st.GetNode("other_out.o")
 		deps = log.GetDeps(otherOut)
 		require.NotNil(t, deps)
-		assert.Equal(t, graph.TimeStamp(1), deps.Mtime)
+		assert.Equal(t, timestamp.TimeStamp(1), deps.Mtime)
 		assert.Equal(t, 2, len(deps.Nodes))
 		assert.Equal(t, "foo.h", deps.Nodes[0].Path())
 		assert.Equal(t, "baz.h", deps.Nodes[1].Path())
@@ -226,7 +227,7 @@ build other_out.o: cc
 
 		deps = log.GetDeps(out)
 		require.NotNil(t, deps)
-		assert.Equal(t, graph.TimeStamp(1), deps.Mtime)
+		assert.Equal(t, timestamp.TimeStamp(1), deps.Mtime)
 		assert.Equal(t, 1, len(deps.Nodes))
 		assert.Equal(t, "foo.h", deps.Nodes[0].Path())
 		nodes := log.TestingGetNodes()
@@ -234,7 +235,7 @@ build other_out.o: cc
 
 		deps = log.GetDeps(otherOut)
 		require.NotNil(t, deps)
-		assert.Equal(t, graph.TimeStamp(1), deps.Mtime)
+		assert.Equal(t, timestamp.TimeStamp(1), deps.Mtime)
 		assert.Equal(t, 2, len(deps.Nodes))
 		assert.Equal(t, "foo.h", deps.Nodes[0].Path())
 		assert.Equal(t, "baz.h", deps.Nodes[1].Path())
@@ -254,14 +255,14 @@ build other_out.o: cc
 		out := st.GetNode("out.o")
 		deps := log.GetDeps(out)
 		require.NotNil(t, deps)
-		assert.Equal(t, graph.TimeStamp(1), deps.Mtime)
+		assert.Equal(t, timestamp.TimeStamp(1), deps.Mtime)
 		assert.Equal(t, 1, len(deps.Nodes))
 		assert.Equal(t, "foo.h", deps.Nodes[0].Path())
 
 		otherOut := st.GetNode("other_out.o")
 		deps = log.GetDeps(otherOut)
 		require.NotNil(t, deps)
-		assert.Equal(t, graph.TimeStamp(1), deps.Mtime)
+		assert.Equal(t, timestamp.TimeStamp(1), deps.Mtime)
 		assert.Equal(t, 2, len(deps.Nodes))
 		assert.Equal(t, "foo.h", deps.Nodes[0].Path())
 		assert.Equal(t, "baz.h", deps.Nodes[1].Path())

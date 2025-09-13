@@ -8,6 +8,7 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
 
 const (
@@ -22,11 +23,11 @@ const (
 )
 
 type Deps struct {
-	Mtime graph.TimeStamp
+	Mtime timestamp.TimeStamp
 	Nodes []*graph.Node
 }
 
-func NewDeps(mtime graph.TimeStamp, nodeCount int) *Deps {
+func NewDeps(mtime timestamp.TimeStamp, nodeCount int) *Deps {
 	return &Deps{
 		Mtime: mtime,
 		Nodes: make([]*graph.Node, nodeCount),
@@ -149,7 +150,7 @@ func (d *DepsLog) GetFirstReverseDepsNode(node *graph.Node) *graph.Node {
 	return nil
 }
 
-func (d *DepsLog) RecordDeps(node *graph.Node, mtime graph.TimeStamp, nodes []*graph.Node) error {
+func (d *DepsLog) RecordDeps(node *graph.Node, mtime timestamp.TimeStamp, nodes []*graph.Node) error {
 	// Track whether there's any new data to be recorded.
 	nodeCount := len(nodes)
 	madeChange := false
@@ -293,7 +294,7 @@ func (d *DepsLog) Load(path string, state *state.State) error {
 			outID := bytesToInt(buf[0:4])
 			mtimeLow := bytesToInt(buf[4:8])
 			mtimeHigh := bytesToInt(buf[8:12])
-			mtime := graph.TimeStamp(mtimeLow | (mtimeHigh << 32))
+			mtime := timestamp.TimeStamp(mtimeLow | (mtimeHigh << 32))
 
 			depsCount := (size / 4) - 3
 			deps := NewDeps(mtime, depsCount)

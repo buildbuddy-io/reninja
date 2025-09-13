@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/buildbuddy-io/gin/internal/eval_env"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
 
 // VisitMark represents the visitation state during graph traversal
@@ -41,7 +42,7 @@ type Edge struct {
 	depsLoaded           bool
 	depsMissing          bool
 	generatedByDepLoader bool
-	commandStartTime     TimeStamp
+	commandStartTime     timestamp.TimeStamp
 
 	// Job server slot
 	jobSlot interface{} // Will be properly typed when we implement jobserver

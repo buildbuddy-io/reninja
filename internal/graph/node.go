@@ -18,16 +18,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-)
 
-// TimeStamp represents a file modification time in milliseconds since epoch
-type TimeStamp int64
-
-const (
-	// TimeStampUnknown indicates file hasn't been examined
-	TimeStampUnknown TimeStamp = -1
-	// TimeStampMissing indicates file doesn't exist
-	TimeStampMissing TimeStamp = 0
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
 
 // ExistenceStatus represents the existence state of a file
@@ -51,7 +43,7 @@ type Node struct {
 	//   -1: file hasn't been examined
 	//   0:  we looked, and file doesn't exist
 	//   >0: actual file's mtime, or the latest mtime of its dependencies if it doesn't exist
-	mtime  TimeStamp
+	mtime  timestamp.TimeStamp
 	exists ExistenceStatus
 
 	// Dirty is true when the underlying file is out-of-date
@@ -85,7 +77,7 @@ func NewNode(path string, slashBits uint64) *Node {
 	return &Node{
 		path:                 path,
 		slashBits:            slashBits,
-		mtime:                TimeStampUnknown,
+		mtime:                timestamp.TimeStampUnknown,
 		exists:               ExistenceStatusUnknown,
 		dirty:                false,
 		dyndepPending:        false,
@@ -134,12 +126,12 @@ func (n *Node) SlashBits() uint64 {
 }
 
 // Mtime returns the modification time
-func (n *Node) Mtime() TimeStamp {
+func (n *Node) Mtime() timestamp.TimeStamp {
 	return n.mtime
 }
 
 // SetMtime sets the modification time
-func (n *Node) SetMtime(mtime TimeStamp) {
+func (n *Node) SetMtime(mtime timestamp.TimeStamp) {
 	n.mtime = mtime
 }
 
@@ -230,21 +222,21 @@ func (n *Node) AddValidationOutEdge(edge *Edge) {
 
 // ResetState marks as not-yet-stat()ed and not dirty
 func (n *Node) ResetState() {
-	n.mtime = TimeStampUnknown
+	n.mtime = timestamp.TimeStampUnknown
 	n.exists = ExistenceStatusUnknown
 	n.dirty = false
 }
 
 // MarkMissing marks the Node as already-stat()ed and missing
 func (n *Node) MarkMissing() {
-	if n.mtime == TimeStampUnknown {
-		n.mtime = TimeStampMissing
+	if n.mtime == timestamp.TimeStampUnknown {
+		n.mtime = timestamp.TimeStampMissing
 	}
 	n.exists = ExistenceStatusMissing
 }
 
 // UpdatePhonyMtime updates mtime for phony targets
-func (n *Node) UpdatePhonyMtime(mtime TimeStamp) {
+func (n *Node) UpdatePhonyMtime(mtime timestamp.TimeStamp) {
 	if !n.Exists() {
 		n.mtime = mtime
 	}
@@ -253,7 +245,7 @@ func (n *Node) UpdatePhonyMtime(mtime TimeStamp) {
 // Stat updates the node's status from disk
 func (n *Node) Stat(diskInterface interface{}) error {
 	di, ok := diskInterface.(interface {
-		Stat(string) (TimeStamp, error)
+		Stat(string) (timestamp.TimeStamp, error)
 	})
 	if !ok {
 		return fmt.Errorf("invalid disk interface")
@@ -262,7 +254,7 @@ func (n *Node) Stat(diskInterface interface{}) error {
 	mtime, err := di.Stat(n.path)
 	if err != nil {
 		if IsNotExist(err) {
-			n.mtime = TimeStampMissing
+			n.mtime = timestamp.TimeStampMissing
 			n.exists = ExistenceStatusMissing
 			return nil
 		}

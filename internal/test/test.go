@@ -60,4 +60,3 @@ func AssertParse(t *testing.T, input string, s *state.State) {
 	assert.NoError(t, manifestParser.Parse("", input))
 	VerifyGraph(t, s)
 }
-

@@ -10,14 +10,15 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 	rapidhash "github.com/poiug07/rapidhash_go"
 )
 
 const (
-	fileSignature = "# ninja log v%d\n"
-	currentVersion = 7
+	fileSignature          = "# ninja log v%d\n"
+	currentVersion         = 7
 	oldestSupportedVersion = 7
-	
+
 	// BuildLogVersion is the current build log format version
 	BuildLogVersion = "# ninja log v6\n"
 
@@ -32,15 +33,15 @@ type BuildLogUser interface {
 }
 
 func HashCommand(command string) uint64 {
-       return rapidhash.RapidhashWithSeed([]byte(command), rapidHashSeed)
+	return rapidhash.RapidhashWithSeed([]byte(command), rapidHashSeed)
 }
 
 // LogEntry represents a single build log entry
 type LogEntry struct {
 	Output      string
-	StartTime   int64 // Milliseconds since epoch
-	EndTime     int64 // Milliseconds since epoch
-	Mtime       graph.TimeStamp  // TODO(tylerw): move to own package.
+	StartTime   int64               // Milliseconds since epoch
+	EndTime     int64               // Milliseconds since epoch
+	Mtime       timestamp.TimeStamp // TODO(tylerw): move to own package.
 	CommandHash uint64
 }
 
@@ -54,7 +55,7 @@ type BuildLog struct {
 
 func NewBuildLog() *BuildLog {
 	return &BuildLog{
-		entries: make(map[string]*LogEntry),
+		entries:           make(map[string]*LogEntry),
 		needsRecompaction: false,
 	}
 }
@@ -83,7 +84,7 @@ func (b *BuildLog) OpenForWrite(path string, user BuildLogUser) error {
 }
 
 // RecordCommand records a command execution
-func (b *BuildLog) RecordCommand(edge *graph.Edge, start, end int64, mtime graph.TimeStamp) error {
+func (b *BuildLog) RecordCommand(edge *graph.Edge, start, end int64, mtime timestamp.TimeStamp) error {
 	command := edge.EvaluateCommand(true)
 	commandHash := HashCommand(command)
 
@@ -136,7 +137,7 @@ func (b *BuildLog) OpenForWriteIfNeeded() error {
 		return err
 	}
 	b.logFile = f
-	
+
 	// TODO(tylerw): there is no buffering here, add some.
 	// cpp version uses line buffering which prolly requires some bufio thing.
 
@@ -160,7 +161,7 @@ func (b *BuildLog) Load(path string) error {
 		return err
 	}
 	defer f.Close()
-	
+
 	logVersion := 0
 	uniqueEntryCount := 0
 	totalEntryCount := 0
@@ -190,7 +191,7 @@ func (b *BuildLog) Load(path string) error {
 		}
 		if len(buf) > 256000 {
 			buf = buf[:0]
-			continue  // Skip lines > 256kB to match ninja
+			continue // Skip lines > 256kB to match ninja
 		}
 		lineStr := string(buf)
 		buf = buf[:0]
@@ -215,7 +216,7 @@ func (b *BuildLog) Load(path string) error {
 		if len(parts) != 5 {
 			continue
 		}
-		
+
 		startTimeStr := parts[0]
 		endTimeStr := parts[1]
 		mTimeStr := parts[2]
@@ -236,13 +237,13 @@ func (b *BuildLog) Load(path string) error {
 		if err != nil {
 			return err
 		}
-		mTime := graph.TimeStamp(mTimeInt)
+		mTime := timestamp.TimeStamp(mTimeInt)
 
 		var commandHash uint64
 		if _, err := fmt.Sscanf(commandHashStr, "%x", &commandHash); err != nil {
 			return err
 		}
-		
+
 		entry, ok := b.entries[outPath]
 		if !ok {
 			entry = &LogEntry{
@@ -252,14 +253,14 @@ func (b *BuildLog) Load(path string) error {
 			uniqueEntryCount++
 		}
 		totalEntryCount++
-		
+
 		entry.CommandHash = commandHash
 		entry.StartTime = startTime
 		entry.EndTime = endTime
 		entry.Mtime = mTime
 	}
 	if !successfullyParsedVersion {
-		return nil  // file was empty
+		return nil // file was empty
 	}
 
 	// Decide whether it's time to rebuild the log:
@@ -271,10 +272,10 @@ func (b *BuildLog) Load(path string) error {
 	if logVersion < currentVersion {
 		b.needsRecompaction = true
 	} else if totalEntryCount > minCompactionEntryCount &&
-		totalEntryCount > uniqueEntryCount * compactionRatio {
+		totalEntryCount > uniqueEntryCount*compactionRatio {
 		b.needsRecompaction = true
 	}
-	return nil	
+	return nil
 }
 
 func (b *BuildLog) LookupByOutput(path string) *LogEntry {
@@ -282,7 +283,7 @@ func (b *BuildLog) LookupByOutput(path string) *LogEntry {
 }
 
 func (b *BuildLog) Entries() map[string]*LogEntry {
-        return b.entries
+	return b.entries
 }
 
 func (b *BuildLog) Recompact(path string, user BuildLogUser) error {
@@ -294,7 +295,7 @@ func (b *BuildLog) Recompact(path string, user BuildLogUser) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if _, err := fmt.Fprintf(f, fileSignature, currentVersion); err != nil {
 		f.Close()
 		return err
@@ -317,7 +318,7 @@ func (b *BuildLog) Recompact(path string, user BuildLogUser) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	
+
 	if err := os.Remove(path); err != nil {
 		return err
 	}
@@ -338,7 +339,7 @@ func (b *BuildLog) Restat(path string, diskInterface disk.Interface, outputCount
 	if err != nil {
 		return err
 	}
-	
+
 	if _, err := fmt.Fprintf(f, fileSignature, currentVersion); err != nil {
 		f.Close()
 		return err
