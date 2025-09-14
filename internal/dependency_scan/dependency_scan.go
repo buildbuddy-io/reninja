@@ -256,7 +256,7 @@ func (s *DependencyScan) VerifyDAG(node *graph.Node, stack []*graph.Node) error 
 }
 
 func (s *DependencyScan) RecomputeOutputsDirty(edge *graph.Edge, mostRecentInput *graph.Node, outputsDirty *bool) bool {
-	command := edge.EvaluateCommand(/*incl_rsp_file=*/true)
+	command := edge.EvaluateCommand( /*incl_rsp_file=*/ true)
 	for _, o := range edge.Outputs() {
 		if s.RecomputeOutputDirty(edge, mostRecentInput, command, o) {
 			*outputsDirty = true
@@ -344,7 +344,7 @@ func (s *DependencyScan) RecomputeOutputDirty(edge *graph.Edge, mostRecentInput 
 			return true
 		}
 	}
-	return false	
+	return false
 }
 
 func (s *DependencyScan) LoadDyndeps(node *graph.Node) error {
