@@ -96,7 +96,7 @@ func (d *RealDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 
 // ReadFile reads the contents of a file
 func (d *RealDiskInterface) ReadFile(path string) ([]byte, error) {
-	return ioutil.ReadFile(path)
+	return os.ReadFile(path)
 }
 
 // WriteFile writes contents to a file
@@ -107,7 +107,7 @@ func (d *RealDiskInterface) WriteFile(path string, contents []byte) error {
 		return err
 	}
 
-	return ioutil.WriteFile(path, contents, 0644)
+	return os.WriteFile(path, contents, 0644)
 }
 
 // MakeDir creates a directory and all necessary parents
@@ -131,6 +131,7 @@ func (d *RealDiskInterface) ClearStatCache() {
 type MockDiskInterface struct {
 	files     map[string]mockFile
 	filesRead []string
+	now       timestamp.TimeStamp
 }
 
 type mockFile struct {
@@ -143,6 +144,7 @@ func NewMockDiskInterface() *MockDiskInterface {
 	return &MockDiskInterface{
 		files:     make(map[string]mockFile),
 		filesRead: make([]string, 0),
+		now:       timestamp.TimeStamp(time.Now().UnixMilli()),
 	}
 }
 
@@ -167,7 +169,7 @@ func (m *MockDiskInterface) ReadFile(path string) ([]byte, error) {
 func (m *MockDiskInterface) WriteFile(path string, contents []byte) error {
 	m.files[path] = mockFile{
 		contents: contents,
-		mtime:    timestamp.TimeStamp(time.Now().UnixMilli()),
+		mtime:    m.now,
 	}
 	return nil
 }
@@ -176,7 +178,7 @@ func (m *MockDiskInterface) WriteFile(path string, contents []byte) error {
 func (m *MockDiskInterface) MakeDir(path string) error {
 	// Just mark it as existing with no contents
 	m.files[path+"/"] = mockFile{
-		mtime: timestamp.TimeStamp(time.Now().UnixMilli()),
+		mtime: m.now,
 	}
 	return nil
 }
@@ -200,6 +202,12 @@ func (m *MockDiskInterface) AddFile(path string, contents []byte, mtime timestam
 
 func (m *MockDiskInterface) FilesRead() []string {
 	return m.filesRead
+}
+
+func (m *MockDiskInterface) Tick() timestamp.TimeStamp {
+	t2 := m.now + 1
+	m.now = t2
+	return t2
 }
 
 // FileReader provides an interface for reading files
