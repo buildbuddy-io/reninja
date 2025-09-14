@@ -51,6 +51,40 @@ func New() *State {
 	return s
 }
 
+func (s *State) Reset() {
+	for _, node := range s.paths {
+		node.ResetState()
+	}
+	for _, e := range s.edges {
+		e.SetOutputsReady(false)
+		e.SetDepsLoaded(false)
+		e.SetMark(graph.VisitNone)
+	}
+}
+
+func (s *State) Dump() {
+	for _, node := range s.paths {
+		status := "unknown"
+		if node.StatusKnown() {
+			if node.Dirty() {
+				status = "dirty"
+			} else {
+				status = "clean"
+			}
+		}
+		fmt.Printf("%s %s [id:%d]\n", node.Path(), status, node.ID())
+	}
+	if len(s.pools) > 0 {
+		fmt.Printf("resource_pools:\n")
+		for _, pool := range s.pools {
+			if pool.Name() != "" {
+				pool.Dump()
+			}
+		}
+	}
+
+}
+
 // GetNode returns a node by path, creating it if necessary
 func (s *State) GetNode(canonicalPath string) *graph.Node {
 	node := s.LookupNode(canonicalPath)

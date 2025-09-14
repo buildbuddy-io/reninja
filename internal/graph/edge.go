@@ -455,3 +455,61 @@ func EdgeEnv(parent *eval_env.BindingEnv, edge *Edge) *eval_env.BindingEnv {
 
 	return env
 }
+
+func (e *Edge) Dump(prefix string) {
+	fmt.Printf("%s[ ", prefix)
+	for _, node := range e.inputs {
+		fmt.Printf("%s ", node.Path())
+	}
+	fmt.Printf("--%s-> ", e.rule.Name())
+	for _, node := range e.outputs {
+		fmt.Printf("%s ", node.Path())
+	}
+	if len(e.validations) > 0 {
+		fmt.Printf(" validations")
+		for _, node := range e.validations {
+			fmt.Printf("%s ", node.Path())
+		}
+	}
+	if e.pool != nil {
+		if e.pool.Name() != "" {
+			fmt.Printf("(in pool '%s')", e.pool.Name())
+		}
+	} else {
+		fmt.Printf("(null pool?)")
+	}
+	fmt.Printf("] %p\n", e)
+}
+
+type escapeKind int
+
+const (
+	shellEscape escapeKind = iota
+	doNodEscape
+)
+
+/*
+type EdgeEnv struct {
+	// env eval_env.Env
+	lookups []string
+	edge *Edge
+	escapeInOut escapeKind
+	recursive bool
+}
+
+func NewEdgeEnv(edge *Edge, escape escapeKind) *EdgeEnv {
+	return &EdgeEnv{
+		edge: edge,
+		escapeInOut: escape,
+		recursive: false,
+	}
+}
+
+func (e *EdgeEnv) MakePathList(node
+func (e *EdgeEnv) LookupVariable(v string) string {
+	if var == "in" || var == "in_newline" {
+
+		explicitDepsCount := len(edge.inputs) - edge.implicitDeps - edge.orderOnlyDeps
+		return makePathList(edge.Inputs(), explicitDepsCount)
+
+*/

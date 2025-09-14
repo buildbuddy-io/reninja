@@ -1,5 +1,9 @@
 package graph
 
+import (
+	"fmt"
+)
+
 // Pool represents a resource pool for limiting parallel execution
 type Pool struct {
 	name       string
@@ -87,4 +91,12 @@ func (p *Pool) HasDelayedEdges() bool {
 // ClearDelayed clears all delayed edges
 func (p *Pool) ClearDelayed() {
 	p.delayed = p.delayed[:0]
+}
+
+func (p *Pool) Dump() {
+	fmt.Printf("%s (%d/%d) ->\n", p.name, p.currentUse, p.depth)
+	for _, edge := range p.delayed {
+		fmt.Printf("\t")
+		edge.Dump("")
+	}
 }
