@@ -288,6 +288,10 @@ func (e *Edge) SetImplicitDeps(count int) {
 	e.implicitDeps = count
 }
 
+func (e *Edge) GetImplicitDeps() int {
+	return e.implicitDeps
+}
+
 // SetOrderOnlyDeps sets the number of order-only dependencies
 func (e *Edge) SetOrderOnlyDeps(count int) {
 	e.orderOnlyDeps = count
