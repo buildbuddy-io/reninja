@@ -4,13 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	
+
 	"github.com/buildbuddy-io/gin/internal/depfile_parser"
 	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/explanations"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/gin/internal/util"
 )
 
 type ImplicitDepLoader struct {
@@ -23,11 +24,11 @@ type ImplicitDepLoader struct {
 
 func New(state *state.State, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, explanations *explanations.OptionalExplanations) *ImplicitDepLoader {
 	return &ImplicitDepLoader{
-		state: state,
-		depsLog: depsLog,
-		diskInterface: diskInterface,
+		state:                state,
+		depsLog:              depsLog,
+		diskInterface:        diskInterface,
 		depfileParserOptions: depfileParserOptions,
-		explanations: explanations,
+		explanations:         explanations,
 	}
 }
 
@@ -69,7 +70,7 @@ func (l *ImplicitDepLoader) LoadDepFile(edge *graph.Edge, path string) (bool, er
 		return false, fmt.Errorf("%s: %s", path, err)
 	}
 	primaryOut := depfile.Outs()[0]
-	primaryOut, _ = graph.CanonicalizePath(primaryOut)
+	primaryOut, _ = util.CanonicalizePath(primaryOut)
 
 	// Check that this depfile matches the edge's output, if not return false to
 	// mark the edge as dirty.
@@ -93,13 +94,13 @@ func (l *ImplicitDepLoader) LoadDepFile(edge *graph.Edge, path string) (bool, er
 			return false, fmt.Errorf("%s: depfile mentions '%s' as an output, but no such output was declared", path, o)
 		}
 	}
-	return true, l.ProcessDepfileDeps(edge, depfile.Ins())	
+	return true, l.ProcessDepfileDeps(edge, depfile.Ins())
 }
 
 func (l *ImplicitDepLoader) ProcessDepfileDeps(edge *graph.Edge, ins []string) error {
 	// TODO(tylerw): preallocate space in edge.inputs
 	for _, in := range ins {
-		in, _ = graph.CanonicalizePath(in)
+		in, _ = util.CanonicalizePath(in)
 		node := l.state.GetNode(in)
 		edge.AddInput(node)
 		node.AddOutEdge(edge)
@@ -120,7 +121,7 @@ func (l *ImplicitDepLoader) LoadDepsFromLog(edge *graph.Edge) (bool, error) {
 	}
 
 	// Deps are invalid if the output is newer than the deps.
-	if (output.Mtime() > deps.Mtime) {
+	if output.Mtime() > deps.Mtime {
 		l.explanations.Record(output, "stored deps info out of date for '%s' (%d vs %d)", output.Path(), deps.Mtime, output.Mtime())
 		return false, nil
 	}

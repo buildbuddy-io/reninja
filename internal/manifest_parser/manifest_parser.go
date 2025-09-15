@@ -11,6 +11,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/lexer"
 	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/buildbuddy-io/gin/internal/version"
 )
 
@@ -316,7 +317,7 @@ func (p *ManifestParser) parseEdge() error {
 		if path == "" {
 			return p.lexer.Error("empty path")
 		}
-		path, _ = graph.CanonicalizePath(path)
+		path, _ = util.CanonicalizePath(path)
 		if err := p.state.AddOut(path, edge); err != nil {
 			return err
 		}
@@ -335,7 +336,7 @@ func (p *ManifestParser) parseEdge() error {
 		if path == "" {
 			return p.lexer.Error("empty path")
 		}
-		path, _ = graph.CanonicalizePath(path)
+		path, _ = util.CanonicalizePath(path)
 		p.state.AddIn(path, edge)
 	}
 	edge.SetImplicitDeps(implicit)
@@ -346,7 +347,7 @@ func (p *ManifestParser) parseEdge() error {
 		if path == "" {
 			return p.lexer.Error("empty path")
 		}
-		path, _ = graph.CanonicalizePath(path)
+		path, _ = util.CanonicalizePath(path)
 		p.state.AddValidation(path, edge)
 	}
 
@@ -368,7 +369,7 @@ func (p *ManifestParser) parseEdge() error {
 	// be one of our manifest-specified inputs.
 	dyndep := edge.GetUnescapedDyndep()
 	if dyndep != "" {
-		dyndep, _ = graph.CanonicalizePath(dyndep)
+		dyndep, _ = util.CanonicalizePath(dyndep)
 		node := p.state.GetNode(dyndep)
 		node.SetDyndepPending(true)
 		edge.SetDyndep(node)
@@ -447,7 +448,7 @@ func (p *ManifestParser) parseDefault() error {
 		if path == "" {
 			return p.lexer.Error("empty path")
 		}
-		path, _ = graph.CanonicalizePath(path)
+		path, _ = util.CanonicalizePath(path)
 		if err := p.state.AddDefault(path); err != nil {
 			return p.lexer.Error(err.Error())
 		}

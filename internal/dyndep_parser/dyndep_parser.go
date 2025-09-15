@@ -8,6 +8,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/lexer"
 	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/buildbuddy-io/gin/internal/version"
 )
 
@@ -155,7 +156,7 @@ func (d *DyndepParser) parseEdge() error {
 		if path == "" {
 			return d.lexer.Error("empty path")
 		}
-		path, _ = graph.CanonicalizePath(path)
+		path, _ = util.CanonicalizePath(path)
 		node := d.state.LookupNode(path)
 		if node == nil || node.InEdge() == nil {
 			return d.lexer.Error(fmt.Sprintf("no build statement exists for '%s'", path))
@@ -255,7 +256,7 @@ func (d *DyndepParser) parseEdge() error {
 		if path == "" {
 			return d.lexer.Error("empty path")
 		}
-		path, _ = graph.CanonicalizePath(path)
+		path, _ = util.CanonicalizePath(path)
 		n := d.state.GetNode(path)
 		dyndeps.ImplicitInputs = append(dyndeps.ImplicitInputs, n)
 	}
@@ -266,7 +267,7 @@ func (d *DyndepParser) parseEdge() error {
 		if path == "" {
 			return d.lexer.Error("empty path")
 		}
-		path, _ = graph.CanonicalizePath(path)
+		path, _ = util.CanonicalizePath(path)
 		n := d.state.GetNode(path)
 		dyndeps.ImplicitOutputs = append(dyndeps.ImplicitOutputs, n)
 	}

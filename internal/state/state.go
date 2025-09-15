@@ -5,6 +5,7 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/eval_env"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/util"
 )
 
 var (
@@ -200,7 +201,7 @@ func (s *State) AddValidation(canonicalPath string, edge *graph.Edge) {
 
 // AddDefault adds a default build target
 func (s *State) AddDefault(path string) error {
-	canonPath, _ := graph.CanonicalizePath(path)
+	canonPath, _ := util.CanonicalizePath(path)
 	node := s.paths[canonPath]
 	if node == nil {
 		return fmt.Errorf("unknown target '%s'", path)

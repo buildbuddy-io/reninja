@@ -65,7 +65,7 @@ func AddCatRule(t *testing.T, s *state.State) {
 	t.Helper()
 	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 	assert.NoError(t, manifestParser.Parse("",
-`rule cat
+		`rule cat
   command = cat $in > $out
 `))
 	VerifyGraph(t, s)

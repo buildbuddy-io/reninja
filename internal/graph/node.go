@@ -16,7 +16,6 @@ package graph
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/buildbuddy-io/gin/internal/timestamp"
@@ -281,31 +280,4 @@ func IsNotExist(err error) bool {
 	return strings.Contains(err.Error(), "no such file") ||
 		strings.Contains(err.Error(), "cannot find the file") ||
 		strings.Contains(err.Error(), "file does not exist")
-}
-
-// CanonicalizePath normalizes a path to use forward slashes and returns slash bits
-func CanonicalizePath(path string) (outp string, outs uint64) {
-	if !strings.ContainsRune(path, '\\') {
-		return filepath.Clean(path), 0
-	}
-
-	var slashBits uint64
-	bit := uint64(1)
-	result := strings.Builder{}
-	result.Grow(len(path))
-
-	for _, ch := range path {
-		if ch == '\\' {
-			result.WriteByte('/')
-			slashBits |= bit
-			bit <<= 1
-		} else {
-			result.WriteRune(ch)
-			if ch == '/' {
-				bit <<= 1
-			}
-		}
-	}
-
-	return filepath.Clean(result.String()), slashBits
 }
