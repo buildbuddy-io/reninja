@@ -54,11 +54,17 @@ func VerifyGraph(t *testing.T, state *state.State) {
 	require.Equal(t, edgeSet, nodeEdgeSet, "Union of all node edges should equal state edges")
 }
 
-func AssertParse(t *testing.T, input string, s *state.State) {
+func AssertParseWithOptions(t *testing.T, input string, s *state.State, diskInterface disk.Interface, parserOptions manifest_parser.ManifestParserOptions) {
 	t.Helper()
-	manifestParser := manifest_parser.New(s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
+	manifestParser := manifest_parser.New(s, diskInterface, parserOptions)
 	assert.NoError(t, manifestParser.Parse("", input))
 	VerifyGraph(t, s)
+}
+
+
+func AssertParse(t *testing.T, input string, s *state.State) {
+	t.Helper()
+	AssertParseWithOptions(t, input, s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())
 }
 
 func AddCatRule(t *testing.T, s *state.State) {
