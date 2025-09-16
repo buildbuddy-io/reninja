@@ -144,7 +144,7 @@ func NewMockDiskInterface() *MockDiskInterface {
 	return &MockDiskInterface{
 		files:     make(map[string]mockFile),
 		filesRead: make([]string, 0),
-		now:       timestamp.TimeStamp(time.Now().UnixMilli()),
+		now:       timestamp.TimeStamp(1),
 	}
 }
 
