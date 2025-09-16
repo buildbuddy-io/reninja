@@ -2,11 +2,15 @@ package graph
 
 import (
 	"fmt"
+	"log"
+	"runtime"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/buildbuddy-io/gin/internal/eval_env"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
+	"github.com/buildbuddy-io/gin/internal/util"
 )
 
 // VisitMark represents the visitation state during graph traversal
@@ -324,23 +328,8 @@ func (e *Edge) UseConsole() bool {
 
 // GetBinding returns the shell-escaped value of a binding
 func (e *Edge) GetBinding(key string) string {
-	// First check edge-specific bindings
-	if e.env != nil {
-		if val := e.env.LookupVariable(key); val != "" {
-			return val
-		}
-	}
-
-	// Then check rule bindings
-	if e.rule != nil {
-		if evalStr, ok := e.rule.GetBinding(key); ok {
-			// Create evaluation environment with edge context for $in, $out variables
-			evalEnv := EdgeEnv(e.env, e)
-			return evalStr.Evaluate(evalEnv)
-		}
-	}
-
-	return ""
+	edgeEnv := NewEdgeEnv(e, shellEscape)
+	return edgeEnv.LookupVariable(key)
 }
 
 // GetBindingBool returns a binding value as a boolean
@@ -351,69 +340,32 @@ func (e *Edge) GetBindingBool(key string) bool {
 
 // GetUnescapedDepfile returns the depfile binding without shell escaping
 func (e *Edge) GetUnescapedDepfile() string {
-	return e.getUnescapedBinding("depfile")
+	edgeEnv := NewEdgeEnv(e, doNotEscape)
+	return edgeEnv.LookupVariable("depfile")
 }
 
 // GetUnescapedDyndep returns the dyndep binding without shell escaping
 func (e *Edge) GetUnescapedDyndep() string {
-	return e.getUnescapedBinding("dyndep")
+	edgeEnv := NewEdgeEnv(e, doNotEscape)
+	return edgeEnv.LookupVariable("dyndep")
 }
 
 // GetUnescapedRspfile returns the rspfile binding without shell escaping
 func (e *Edge) GetUnescapedRspfile() string {
-	return e.getUnescapedBinding("rspfile")
-}
-
-func (e *Edge) getUnescapedBinding(key string) string {
-	// First check edge bindings
-	if e.env != nil {
-		if val := e.env.LookupVariable(key); val != "" {
-			// TODO: Implement proper unescaping if needed
-			return val
-		}
-	}
-
-	// Then check rule bindings and evaluate them
-	if e.rule != nil {
-		if evalStr, ok := e.rule.GetBinding(key); ok {
-			// Create evaluation environment with edge context
-			evalEnv := EdgeEnv(e.env, e)
-			return evalStr.Evaluate(evalEnv)
-		}
-	}
-
-	return ""
+	edgeEnv := NewEdgeEnv(e, doNotEscape)
+	return edgeEnv.LookupVariable("rspfile")
 }
 
 // EvaluateCommand expands all variables in a command and returns it as a string
 func (e *Edge) EvaluateCommand(inclRspFile bool) string {
-	if e.rule == nil {
-		return ""
-	}
-
-	// Get the command binding from the rule
-	commandEval, ok := e.rule.GetBinding("command")
-	if !ok {
-		return ""
-	}
-
-	// Create evaluation environment with built-in variables
-	evalEnv := EdgeEnv(e.env, e)
-
-	// Evaluate the command with the proper environment
-	expanded := commandEval.Evaluate(evalEnv)
-
+	command := e.GetBinding("command")
 	if inclRspFile {
-		rspfile := e.GetUnescapedRspfile()
-		if rspfile != "" {
-			rspfileContent := e.GetBinding("rspfile_content")
-			if rspfileContent != "" {
-				expanded = fmt.Sprintf("%s\n[%s]:\n%s", expanded, rspfile, rspfileContent)
-			}
+		rspfileContent := e.GetBinding("rspfile_content")
+		if rspfileContent != "" {
+			command += ";rspfile=" + rspfileContent
 		}
 	}
-
-	return expanded
+	return command
 }
 
 // MaybePhonycycleDiagnostic returns true if phony cycle diagnostics should be shown
@@ -422,6 +374,7 @@ func (e *Edge) MaybePhonycycleDiagnostic() bool {
 	return e.IsPhony()
 }
 
+/*
 // EdgeEnv creates a new environment for edge evaluation that includes rule bindings
 func EdgeEnv(parent *eval_env.BindingEnv, edge *Edge) *eval_env.BindingEnv {
 	env := eval_env.NewBindingEnv(parent)
@@ -455,6 +408,7 @@ func EdgeEnv(parent *eval_env.BindingEnv, edge *Edge) *eval_env.BindingEnv {
 
 	return env
 }
+*/
 
 func (e *Edge) Dump(prefix string) {
 	fmt.Printf("%s[ ", prefix)
@@ -485,31 +439,118 @@ type escapeKind int
 
 const (
 	shellEscape escapeKind = iota
-	doNodEscape
+	doNotEscape
 )
 
-/*
 type EdgeEnv struct {
 	// env eval_env.Env
-	lookups []string
-	edge *Edge
+	lookups     []string
+	edge        *Edge
 	escapeInOut escapeKind
-	recursive bool
+	recursive   bool
 }
 
 func NewEdgeEnv(edge *Edge, escape escapeKind) *EdgeEnv {
 	return &EdgeEnv{
-		edge: edge,
+		edge:        edge,
 		escapeInOut: escape,
-		recursive: false,
+		recursive:   false,
 	}
 }
 
-func (e *EdgeEnv) MakePathList(node
+func (e *EdgeEnv) MakePathList(span []*Node, sep rune) string {
+	var result strings.Builder
+
+	for i, node := range span {
+		if i > 0 {
+			result.WriteRune(sep)
+		}
+		path := node.PathDecanonicalized()
+
+		if e.escapeInOut == shellEscape {
+			if runtime.GOOS == "windows" {
+				path = util.GetWin32EscapedString(path)
+			} else {
+				path = util.GetShellEscapedString(path)
+			}
+		} else {
+			result.WriteString(path)
+		}
+	}
+	return result.String()
+}
+
 func (e *EdgeEnv) LookupVariable(v string) string {
-	if var == "in" || var == "in_newline" {
+	if v == "in" || v == "in_newline" {
+		sep := '\n'
+		if v == "in" {
+			sep = ' '
+		}
+		explicitDepsCount := len(e.edge.inputs) - e.edge.implicitDeps - e.edge.orderOnlyDeps
+		return e.MakePathList(e.edge.Inputs()[:explicitDepsCount], sep)
+	} else if v == "out" {
+		explicitOutsCount := len(e.edge.outputs) - e.edge.implicitOuts
+		return e.MakePathList(e.edge.Outputs()[:explicitOutsCount], ' ')
+	}
 
-		explicitDepsCount := len(edge.inputs) - edge.implicitDeps - edge.orderOnlyDeps
-		return makePathList(edge.Inputs(), explicitDepsCount)
+	// Technical note about the lookups_ vector.
+	//
+	// This is used to detect cycles during recursive variable expansion
+	// which can be seen as a graph traversal problem. Consider the following
+	// example:
+	//
+	//    rule something
+	//      command = $foo $foo $var1
+	//      var1 = $var2
+	//      var2 = $var3
+	//      var3 = $var1
+	//      foo = FOO
+	//
+	// Each variable definition can be seen as a node in a graph that looks
+	// like the following:
+	//
+	//   command --> foo
+	//      |
+	//      v
+	//    var1 <-----.
+	//      |        |
+	//      v        |
+	//    var2 ---> var3
+	//
+	// The lookups_ vector is used as a stack of visited nodes/variables
+	// during recursive expansion. Entering a node adds an item to the
+	// stack, leaving the node removes it.
+	//
+	// The recursive_ flag is used as a small performance optimization
+	// to never record the starting node in the stack when beginning a new
+	// expansion, since in most cases, expansions are not recursive
+	// at all.
+	//
+	if e.recursive {
+		i := sort.SearchStrings(e.lookups, v)
+		if i != len(e.lookups) {
+			cycle := ""
+			for _, s := range e.lookups[i:] {
+				cycle += s + " -> "
+			}
+			cycle += v
+			log.Fatal("cycle in rule variables: " + cycle)
+		}
+	}
 
-*/
+	// See notes on BindingEnv::LookupWithFallback.
+	eval, ok := e.edge.rule.GetBinding(v)
+	recordVarname := e.recursive && ok && eval != nil
+	if recordVarname {
+		e.lookups = append(e.lookups, v)
+	}
+
+	// In practice, variables defined on rules never use another rule variable.
+	// For performance, only start checking for cycles after the first lookup.
+	e.recursive = true
+	result := e.edge.env.LookupWithFallback(v, eval, e)
+	if recordVarname {
+		e.lookups = e.lookups[:len(e.lookups)-1]
+	}
+	return result
+}
