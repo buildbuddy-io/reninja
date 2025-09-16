@@ -75,7 +75,7 @@ func (es *EvalString) AddSpecial(varName string) {
 }
 
 // Evaluate expands variables using the given environment
-func (es *EvalString) Evaluate(env *BindingEnv) string {
+func (es *EvalString) Evaluate(env Env) string {
 	if len(es.parsed) == 0 {
 		return es.singleToken
 	}
@@ -235,6 +235,21 @@ func (env *BindingEnv) LookupVariable(key string) string {
 
 func (env *BindingEnv) GetRules() map[string]*Rule {
 	return env.rules
+}
+
+func (env *BindingEnv) LookupWithFallback(v string, eval *EvalString, otherEnv Env) string {
+	if v, ok := env.Bindings[v]; ok {
+		return v
+	}
+
+	if eval != nil {
+		return eval.Evaluate(otherEnv)
+	}
+
+	if env.parent != nil {
+		return env.parent.LookupVariable(v)
+	}
+	return ""
 }
 
 func (env *BindingEnv) LookupRuleCurrentScope(name string) (*Rule, bool) {
