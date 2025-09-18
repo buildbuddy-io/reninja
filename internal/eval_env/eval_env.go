@@ -210,16 +210,6 @@ func (env *BindingEnv) AddRule(rule *Rule) {
 
 // LookupVariable looks up a variable value, checking parent scopes
 func (env *BindingEnv) LookupVariable(key string) string {
-	// TODO(tylerw): this seems dumb, why is this here?
-	switch key {
-	case "in":
-		return env.getBuiltinIn()
-	case "out":
-		return env.getBuiltinOut()
-	case "in_newline":
-		return env.getBuiltinInNewline()
-	}
-
 	// Check local bindings
 	if value, ok := env.Bindings[key]; ok {
 		return value
@@ -237,8 +227,8 @@ func (env *BindingEnv) GetRules() map[string]*Rule {
 	return env.rules
 }
 
-func (env *BindingEnv) LookupWithFallback(v string, eval *EvalString, otherEnv Env) string {
-	if v, ok := env.Bindings[v]; ok {
+func (env *BindingEnv) LookupWithFallback(k string, eval *EvalString, otherEnv Env) string {
+	if v, ok := env.Bindings[k]; ok {
 		return v
 	}
 
@@ -247,7 +237,7 @@ func (env *BindingEnv) LookupWithFallback(v string, eval *EvalString, otherEnv E
 	}
 
 	if env.parent != nil {
-		return env.parent.LookupVariable(v)
+		return env.parent.LookupVariable(k)
 	}
 	return ""
 }
