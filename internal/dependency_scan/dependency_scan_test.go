@@ -1,13 +1,14 @@
 package dependency_scan_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/buildbuddy-io/gin/internal/dependency_scan"
 	"github.com/buildbuddy-io/gin/internal/depfile_parser"
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/explanations"
+	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/manifest_parser"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/test"
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,8 @@ func TestMissingImplicit(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
+	require.NoError(t, err)
 
 	// A missing implicit dep *should* make the output dirty.
 	// (In fact, a build will fail.)
@@ -48,7 +50,8 @@ func TestModifiedImplicit(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
+	require.NoError(t, err)
 
 	// A modified implicit dep should make the output dirty.
 	assert.True(t, s.GetNode("out").Dirty())
@@ -74,7 +77,8 @@ build out.o: catdep foo.cc
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.o"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
+	require.NoError(t, err)
 
 	// implicit.h has changed, though our depfile refers to it with a
 	// non-canonical path; we should still find it.
@@ -104,7 +108,8 @@ build out.o: catdep foo.cc || implicit.h
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.o"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
+	require.NoError(t, err)
 
 	// We have both an implicit and an explicit dep on implicit.h.
 	// The implicit dep should "win" (in the sense that it should cause
@@ -137,7 +142,8 @@ func TestImplicitOutputMissing(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
+	require.NoError(t, err)
 
 	assert.True(t, s.GetNode("out").Dirty())
 	assert.True(t, s.GetNode("out.imp").Dirty())
@@ -157,7 +163,8 @@ func TestImplicitOutputOutOfDate(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
+	require.NoError(t, err)
 
 	assert.True(t, s.GetNode("out").Dirty())
 	assert.True(t, s.GetNode("out.imp").Dirty())
@@ -186,7 +193,8 @@ func TestImplicitOutputOnlyMissing(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.imp"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out.imp"), nil)
+	require.NoError(t, err)
 
 	assert.True(t, s.GetNode("out.imp").Dirty())
 }
@@ -204,7 +212,8 @@ func TestImplicitOutputOnlyOutOfDate(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.imp"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out.imp"), nil)
+	require.NoError(t, err)
 
 	assert.True(t, s.GetNode("out.imp").Dirty())
 }
@@ -227,7 +236,8 @@ build ./out.o: catdep ./foo.cc
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.o"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
+	require.NoError(t, err)
 
 	assert.False(t, s.GetNode("out.o").Dirty())
 }
@@ -280,7 +290,8 @@ build ./out.o: catdep ./foo.cc
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.o"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
+	require.NoError(t, err)
 
 	assert.False(t, s.GetNode("out.o").Dirty())
 }
@@ -305,12 +316,14 @@ build ./out.o: catdep ./foo.cc
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.o"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
+	require.NoError(t, err)
 	assert.False(t, s.GetNode("out.o").Dirty())
 
 	s.Reset()
 	fs.RemoveFile("out.o.d")
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("out.o"), nil))
+	_, err = scan.RecomputeDirty(s.GetNode("out.o"), nil)
+	require.NoError(t, err)
 	assert.True(t, s.GetNode("out.o").Dirty())
 }
 
@@ -347,12 +360,10 @@ func TestDepfileOverrideParent(t *testing.T) {
 build out: r in
   depfile = y
 `, s)
-	s.Dump()
 	edge := s.GetNode("out").InEdge()
 	assert.Equal(t, "depfile is y", edge.GetBinding("command"))
 }
 
-/*
 func TestNestedPhonyPrintsDone(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
@@ -363,7 +374,8 @@ build n2: phony n1
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(s.GetNode("n2"), nil))
+	_, err := scan.RecomputeDirty(s.GetNode("n2"), nil)
+	require.NoError(t, err)
 
 	// Test Plan functionality would go here if Plan was implemented
 	// For now we just verify the nodes exist
@@ -374,14 +386,16 @@ build n2: phony n1
 func TestPhonySelfReferenceError(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	// Assuming the parser options support phony cycle action
-	test.AssertParse(t, "build a: phony a\n", s)
+	mpOpts := manifest_parser.ManifestParserOptions{
+		PhonyCycleAction: manifest_parser.PhonyCycleActionError,
+	}
+	test.AssertParseWithOptions(t, "build a: phony a\n", s, fs, mpOpts)
 
-	opts := depfile_parser.DepfileParserOptions{}
+	dpOpts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
-	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("a"), nil)
-	assert.Error(t, err)
+	scan := dependency_scan.New(s, nil, nil, fs, dpOpts, exp)
+	_, err := scan.RecomputeDirty(s.GetNode("a"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 }
 
@@ -398,8 +412,8 @@ build pre: cat out
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("out"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 }
 
@@ -412,8 +426,8 @@ func TestCycleInEdgesButNotInNodes1(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("b"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("b"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 }
 
@@ -426,8 +440,8 @@ func TestCycleInEdgesButNotInNodes2(t *testing.T) {
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("b"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("b"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 }
 
@@ -442,8 +456,8 @@ build c: cat a
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("b"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("b"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 }
 
@@ -461,8 +475,8 @@ build f: cat e
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("f"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("f"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 }
 
@@ -480,8 +494,8 @@ build a b: deprule
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("a"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("a"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 
 	// Despite the depfile causing edge to be a cycle, the deps should have been loaded only once
@@ -507,8 +521,8 @@ build c: r b
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("a"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("a"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 
 	edge := s.GetNode("a").InEdge()
@@ -534,8 +548,8 @@ build d: r a
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	err := scan.RecomputeDirty(s.GetNode("d"), nil)
-	assert.Error(t, err)
+	_, err := scan.RecomputeDirty(s.GetNode("d"), nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
 
 	edge := s.GetNode("a").InEdge()
@@ -557,10 +571,10 @@ build validate: cat in
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
 
-	var validationNodes []*state.Node
-	require.NoError(t, scan.RecomputeDirtyWithValidation(s.GetNode("out"), &validationNodes))
+	validationNodes, err := scan.RecomputeDirty(s.GetNode("out"), []*graph.Node{})
+	require.NoError(t, err)
 
-	assert.Equal(t, 1, len(validationNodes))
+	require.Equal(t, 1, len(validationNodes))
 	assert.Equal(t, "validate", validationNodes[0].Path())
 
 	assert.True(t, s.GetNode("out").Dirty())
@@ -571,28 +585,28 @@ func TestPhonyDepsMtimes(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
 	test.AssertParse(t, `rule touch
-  command = touch $out
+ command = touch $out
 build in_ph: phony in1
 build out1: touch in_ph
 `, s)
 
 	require.NoError(t, fs.WriteFile("in1", nil))
 	require.NoError(t, fs.WriteFile("out1", nil))
-
 	out1 := s.GetNode("out1")
 	in1 := s.GetNode("in1")
 
 	opts := depfile_parser.DepfileParserOptions{}
 	exp := explanations.NewOptional(nil)
 	scan := dependency_scan.New(s, nil, nil, fs, opts, exp)
-	require.NoError(t, scan.RecomputeDirty(out1, nil))
+	_, err := scan.RecomputeDirty(out1, nil)
+	require.NoError(t, err)
 	assert.False(t, out1.Dirty())
 
 	// Get the mtime of out1
 	require.NoError(t, in1.Stat(fs))
 	require.NoError(t, out1.Stat(fs))
-	out1Mtime1 := out1.MTime()
-	in1Mtime1 := in1.MTime()
+	out1Mtime1 := out1.Mtime()
+	in1Mtime1 := in1.Mtime()
 
 	// Touch in1. This should cause out1 to be dirty
 	s.Reset()
@@ -600,11 +614,11 @@ build out1: touch in_ph
 	require.NoError(t, fs.WriteFile("in1", nil))
 
 	require.NoError(t, in1.Stat(fs))
-	assert.Greater(t, in1.MTime(), in1Mtime1)
+	assert.Greater(t, in1.Mtime(), in1Mtime1)
 
-	require.NoError(t, scan.RecomputeDirty(out1, nil))
-	assert.Greater(t, in1.MTime(), in1Mtime1)
-	assert.Equal(t, out1.MTime(), out1Mtime1)
+	_, err = scan.RecomputeDirty(out1, nil)
+	require.NoError(t, err)
+	assert.Greater(t, in1.Mtime(), in1Mtime1)
+	assert.Equal(t, out1.Mtime(), out1Mtime1)
 	assert.True(t, out1.Dirty())
 }
-*/

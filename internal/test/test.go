@@ -61,7 +61,6 @@ func AssertParseWithOptions(t *testing.T, input string, s *state.State, diskInte
 	VerifyGraph(t, s)
 }
 
-
 func AssertParse(t *testing.T, input string, s *state.State) {
 	t.Helper()
 	AssertParseWithOptions(t, input, s, disk.NewMockDiskInterface(), manifest_parser.DefaultOptions())

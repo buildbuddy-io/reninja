@@ -64,12 +64,13 @@ type Edge struct {
 
 // NewEdge creates a new Edge
 func NewEdge() *Edge {
-	return &Edge{
+	e := &Edge{
 		mark:                  VisitNone,
 		id:                    0,
 		criticalPathWeight:    -1,
 		prevElapsedTimeMillis: -1,
 	}
+	return e
 }
 
 // Rule returns the edge's rule
@@ -265,10 +266,16 @@ func (e *Edge) AddInput(node *Node) {
 	e.inputs = append(e.inputs, node)
 }
 
-func (e *Edge) RemoveInput(node *Node) {
+func (e *Edge) RemoveInput(node *Node) bool {
+	deletedSomething := false
 	e.inputs = slices.DeleteFunc(e.inputs, func(n *Node) bool {
-		return n == node
+		match := n == node
+		if match {
+			deletedSomething = true
+		}
+		return match
 	})
+	return deletedSomething
 }
 
 // AddOutput adds an output node

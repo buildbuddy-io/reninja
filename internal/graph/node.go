@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
 
@@ -82,6 +83,37 @@ func NewNode(path string, slashBits uint64) *Node {
 		dyndepPending:        false,
 		generatedByDepLoader: true, // Default to true like C++ version
 		id:                   -1,
+	}
+}
+
+func (n *Node) Dump(prefix string) {
+	existStr := " (:missing)"
+	if n.Exists() {
+		existStr = ""
+	}
+
+	dirtyStr := " clean"
+	if n.Dirty() {
+		dirtyStr = " dirty"
+	}
+
+	fmt.Printf("%s <%s %p> mtime: %d %s, (:%s), ", prefix, n.path, n, n.mtime, existStr, dirtyStr)
+	if in := n.InEdge(); in != nil {
+		in.Dump("in-edge: ")
+	} else {
+		fmt.Printf("no in-edge\n")
+	}
+
+	fmt.Printf(" out edges:\n")
+	for _, e := range n.OutEdges() {
+		e.Dump(" +- ")
+	}
+
+	if validationOutEdges := n.ValidationOutEdges(); len(validationOutEdges) > 0 {
+		fmt.Printf(" validation out edges:\n")
+		for _, e := range validationOutEdges {
+			e.Dump(" +- ")
+		}
 	}
 }
 
@@ -242,15 +274,8 @@ func (n *Node) UpdatePhonyMtime(mtime timestamp.TimeStamp) {
 }
 
 // Stat updates the node's status from disk
-func (n *Node) Stat(diskInterface interface{}) error {
-	di, ok := diskInterface.(interface {
-		Stat(string) (timestamp.TimeStamp, error)
-	})
-	if !ok {
-		return fmt.Errorf("invalid disk interface")
-	}
-
-	mtime, err := di.Stat(n.path)
+func (n *Node) Stat(diskInterface disk.Interface) error {
+	mtime, err := diskInterface.Stat(n.path)
 	if err != nil {
 		if IsNotExist(err) {
 			n.mtime = timestamp.TimeStampMissing
@@ -266,7 +291,7 @@ func (n *Node) Stat(diskInterface interface{}) error {
 }
 
 // StatIfNecessary stats the file if not already done
-func (n *Node) StatIfNecessary(diskInterface interface{}) error {
+func (n *Node) StatIfNecessary(diskInterface disk.Interface) error {
 	if n.StatusKnown() {
 		return nil
 	}

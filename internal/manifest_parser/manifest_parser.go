@@ -357,10 +357,10 @@ func (p *ManifestParser) parseEdge() error {
 		// build graph but that has since been fixed.  Filter them out to
 		// support users of those old CMake versions.
 		out := edge.Outputs()[0]
-		edge.RemoveInput(out)
-		edge.RemoveOutput(out)
-		if !p.quiet {
-			log.Printf("phony target '%s' names itself as an input; ignoring [-w phonycycle=warn]", out.Path())
+		if edge.RemoveInput(out) {
+			if !p.quiet {
+				log.Printf("phony target '%s' names itself as an input; ignoring [-w phonycycle=warn]", out.Path())
+			}
 		}
 	}
 

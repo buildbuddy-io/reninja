@@ -127,7 +127,6 @@ func (s *State) AddEdge(rule *eval_env.Rule) *graph.Edge {
 	edge.SetEnv(s.bindings)
 	edge.SetID(len(s.edges))
 	s.edges = append(s.edges, edge)
-
 	return edge
 }
 
@@ -178,8 +177,7 @@ func (s *State) AddIn(canonicalPath string, edge *graph.Edge) {
 
 func (s *State) AddOut(canonicalPath string, edge *graph.Edge) error {
 	node := s.GetNode(canonicalPath)
-	other := node.InEdge()
-	if other != nil {
+	if other := node.InEdge(); other != nil {
 		if other == edge {
 			return fmt.Errorf("%s is defined as an output multiple times", canonicalPath)
 		} else {
