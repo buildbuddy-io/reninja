@@ -476,9 +476,9 @@ func (e *EdgeEnv) MakePathList(span []*Node, sep rune) string {
 
 		if e.escapeInOut == shellEscape {
 			if runtime.GOOS == "windows" {
-				path = util.GetWin32EscapedString(path)
+				result.WriteString(util.GetWin32EscapedString(path))
 			} else {
-				path = util.GetShellEscapedString(path)
+				result.WriteString(util.GetShellEscapedString(path))
 			}
 		} else {
 			result.WriteString(path)
