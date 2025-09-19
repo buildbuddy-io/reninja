@@ -20,6 +20,7 @@ type ImplicitDepLoader struct {
 	diskInterface        disk.Interface
 	depfileParserOptions depfile_parser.DepfileParserOptions
 	explanations         *explanations.OptionalExplanations
+	processDepfileDepsFn ProcessDepfileDepsFn
 }
 
 func New(state *state.State, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, explanations *explanations.OptionalExplanations) *ImplicitDepLoader {
@@ -97,7 +98,17 @@ func (l *ImplicitDepLoader) LoadDepFile(edge *graph.Edge, path string) (bool, er
 	return true, l.ProcessDepfileDeps(edge, depfile.Ins())
 }
 
+type ProcessDepfileDepsFn func(edge *graph.Edge, ins []string) error
+
+func (l *ImplicitDepLoader) SetProcessDepfileDepsFn(fn ProcessDepfileDepsFn) {
+	l.processDepfileDepsFn = fn
+}
+
 func (l *ImplicitDepLoader) ProcessDepfileDeps(edge *graph.Edge, ins []string) error {
+	if l.processDepfileDepsFn != nil {
+		return l.processDepfileDepsFn(edge, ins)
+	}
+
 	// TODO(tylerw): preallocate space in edge.inputs
 	for _, in := range ins {
 		in, _ = util.CanonicalizePath(in)
@@ -136,4 +147,31 @@ func (l *ImplicitDepLoader) LoadDepsFromLog(edge *graph.Edge) (bool, error) {
 		node.AddOutEdge(edge)
 	}
 	return true, nil
+}
+
+type NodeStoringImplicitDepLoader struct {
+	*ImplicitDepLoader
+	depNodesOutput []*graph.Node
+}
+
+func (l *NodeStoringImplicitDepLoader) DepNodesOutput() []*graph.Node {
+	return l.depNodesOutput
+}
+
+func NewNodeStoringImplicitDepLoader(state *state.State, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, explanations *explanations.OptionalExplanations) *NodeStoringImplicitDepLoader {
+	l := &NodeStoringImplicitDepLoader{
+		depNodesOutput: make([]*graph.Node, 0),
+	}
+	idl := New(state, depsLog, diskInterface, depfileParserOptions, explanations)
+
+	idl.SetProcessDepfileDepsFn(func(edge *graph.Edge, depfileIns []string) error {
+		for _, in := range depfileIns {
+			in, _ = util.CanonicalizePath(in)
+			node := idl.state.GetNode(in)
+			l.depNodesOutput = append(l.depNodesOutput, node)
+		}
+		return nil
+	})
+	l.ImplicitDepLoader = idl
+	return l
 }
