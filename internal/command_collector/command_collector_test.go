@@ -22,7 +22,7 @@ build all: phony out1 out2 out3
 `, s)
 	{
 		collector := command_collector.New()
-		
+
 		// Start visit from out2; this should add `build mid1` and `build out2` to
 		// the edge list.
 		collector.CollectFrom(s.GetNode("out2"))

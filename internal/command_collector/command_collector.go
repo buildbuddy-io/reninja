@@ -8,14 +8,14 @@ import (
 type CommandCollector struct {
 	visitedNodes map[*graph.Node]struct{}
 	visitedEdges map[*graph.Edge]struct{}
-	inEdges []*graph.Edge
+	inEdges      []*graph.Edge
 }
 
 func New() *CommandCollector {
 	return &CommandCollector{
 		visitedNodes: make(map[*graph.Node]struct{}, 0),
 		visitedEdges: make(map[*graph.Edge]struct{}, 0),
-		inEdges: make([]*graph.Edge, 0),
+		inEdges:      make([]*graph.Edge, 0),
 	}
 }
 func (c *CommandCollector) InEdges() []*graph.Edge {
@@ -54,5 +54,3 @@ func (c *CommandCollector) CollectFrom(node *graph.Node) {
 		c.inEdges = append(c.inEdges, edge)
 	}
 }
-
-	
