@@ -4,6 +4,7 @@ package jobserver
 
 import (
 	"fmt"
+	"runtime"
 	"syscall"
 )
 
@@ -62,6 +63,11 @@ func (c *unixClient) Release(slot Slot) {
 	}
 }
 
+type fdPair struct {
+        readFD          int
+        writeFD         int
+}
+
 func (c *unixClient) InitWithFifo(fifoPath string) error {
 	if fifoPath == "" {
 		return fmt.Errorf("Empty fifo path")
@@ -84,6 +90,16 @@ func (c *unixClient) InitWithFifo(fifoPath string) error {
 	c.readFD = readFD
 	c.writeFD = writeFD
 	c.hasImplicitSlot = true
+
+	runtime.AddCleanup(c, func(p fdPair) {
+		if p.readFD >= 0 {
+			syscall.Close(p.readFD)
+		}
+		if p.writeFD >= 0 {
+			syscall.Close(p.writeFD)
+		}
+	}, fdPair{readFD, writeFD})
+
 	return nil
 }
 
@@ -96,5 +112,6 @@ func (c *unixClient) Create(config *Config) error {
 }
 
 func NewClient() Client {
-	return &unixClient{}
+	c := &unixClient{}
+	return c
 }
