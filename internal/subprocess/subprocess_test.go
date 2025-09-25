@@ -174,7 +174,7 @@ func TestSetWithMulti(t *testing.T) {
 		require.NotNil(t, processes[i])
 	}
 
-	require.Equal(t, 3, len(subprocs.TestGetRunningSubprocesses()))
+	require.Equal(t, 3, len(subprocs.RunningSubprocesses()))
 
 	for i := range 3 {
 		require.False(t, processes[i].Done())
@@ -182,13 +182,13 @@ func TestSetWithMulti(t *testing.T) {
 	}
 
 	for !processes[0].Done() || !processes[1].Done() || !processes[2].Done() {
-		require.Greater(t, len(subprocs.TestGetRunningSubprocesses()), 0)
+		require.Greater(t, len(subprocs.RunningSubprocesses()), 0)
 		subprocs.DoWork()
 	}
 	subprocs.DoWork() // required b/c subproc can be Done and doWork not know it yet.
 
-	require.Equal(t, 0, len(subprocs.TestGetRunningSubprocesses()))
-	require.Equal(t, 3, len(subprocs.TestGetFinishedSubprocesses()))
+	require.Equal(t, 0, len(subprocs.RunningSubprocesses()))
+	require.Equal(t, 3, len(subprocs.FinishedSubprocesses()))
 	
 	for i := range 3 {
 		assert.Equal(t, exit_status.ExitStatusType(0), processes[i].Finish())
@@ -206,7 +206,6 @@ func TestSetWithLots(t *testing.T) {
 			fmt.Printf("Raise [ulimit -n] above %d (currently %d) to make this test go\n", maxProcs, rLimit.Cur)
 			return
 		}
-		fmt.Printf("cur: %d, maxProxs: %d\n", int(rLimit.Cur), maxProcs)
 	}
 	
 	processes := make([]*subprocess.Subprocess, 0)
@@ -217,7 +216,7 @@ func TestSetWithLots(t *testing.T) {
 		processes = append(processes, subproc)
 	}
 
-	for len(subprocs.TestGetRunningSubprocesses()) > 0 {
+	for len(subprocs.RunningSubprocesses()) > 0 {
 		subprocs.DoWork()
 	}
 
@@ -226,7 +225,7 @@ func TestSetWithLots(t *testing.T) {
 		assert.NotEqual(t, "", processes[i].GetOutput())
 	}
 	
-	require.Equal(t, maxProcs, len(subprocs.TestGetFinishedSubprocesses()))
+	require.Equal(t, maxProcs, len(subprocs.FinishedSubprocesses()))
 }
 
 func TestReadStdin(t *testing.T) {
@@ -240,5 +239,5 @@ func TestReadStdin(t *testing.T) {
 	subprocs.DoWork()
 
         assert.Equal(t, exit_status.ExitStatusType(0), subproc.Finish())
-	require.Equal(t, 1, len(subprocs.TestGetFinishedSubprocesses()))
+	require.Equal(t, 1, len(subprocs.FinishedSubprocesses()))
 }
