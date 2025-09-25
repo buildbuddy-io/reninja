@@ -155,11 +155,11 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 	return sub, nil
 }
 
-func (s *Set) RunningSubprocesses() []*Subprocess {
+func (s *Set) Running() []*Subprocess {
 	return s.running
 }
 
-func (s *Set) FinishedSubprocesses() []*Subprocess {
+func (s *Set) Finished() []*Subprocess {
 	return s.finished
 }
 
