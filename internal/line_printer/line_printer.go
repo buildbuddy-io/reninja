@@ -11,6 +11,7 @@ import (
 )
 
 type LineType int
+
 const (
 	Full LineType = iota
 	Elide
@@ -20,19 +21,19 @@ const (
 // Profile and fix.
 type LinePrinter struct {
 	out io.Writer
-	
+
 	smartTerminal bool
 	supportsColor bool
 	haveBlankLine bool
 	consoleLocked bool
-	lineBuffer string
-	lineType LineType
-	outputBuffer string
+	lineBuffer    string
+	lineType      LineType
+	outputBuffer  string
 }
 
 func New() *LinePrinter {
 	return &LinePrinter{
-		out: os.Stdout,
+		out:           os.Stdout,
 		smartTerminal: isatty.IsTerminal(os.Stdout.Fd()),
 		supportsColor: supportscolor.Stdout().SupportsColor,
 	}
@@ -115,5 +116,3 @@ func (p *LinePrinter) SetConsoleLocked(locked bool) {
 		p.lineBuffer = ""
 	}
 }
-
-

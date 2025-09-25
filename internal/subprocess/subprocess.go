@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	once sync.Once
+	once        sync.Once
 	interrupted atomic.Bool
 )
 
@@ -25,16 +25,16 @@ func handleSignals() {
 		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
 		go func() {
 			<-signalChannel
-			interrupted.Store(true)		
+			interrupted.Store(true)
 		}()
 	})
 }
 
 type Subprocess struct {
-	ctx context.Context
+	ctx        context.Context
 	cancelFunc context.CancelFunc
 
-	cmd *exec.Cmd
+	cmd          *exec.Cmd
 	stdOutAndErr *bytes.Buffer
 
 	mu        *sync.Mutex
@@ -44,16 +44,16 @@ type Subprocess struct {
 
 func NewSubprocess(command string, useConsole bool) (*Subprocess, error) {
 	handleSignals()
-	
+
 	ctx, cancelFunc := context.WithCancel(context.TODO())
 	s := &Subprocess{
-		ctx: ctx,
+		ctx:        ctx,
 		cancelFunc: cancelFunc,
-		cmd: exec.CommandContext(ctx, "/bin/sh", "-c", command),
-		done: make(chan struct{}),
-		mu: &sync.Mutex{},
+		cmd:        exec.CommandContext(ctx, "/bin/sh", "-c", command),
+		done:       make(chan struct{}),
+		mu:         &sync.Mutex{},
 	}
-	
+
 	if useConsole {
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = os.Stdout
@@ -109,7 +109,7 @@ func (s *Subprocess) TryFinish(wait bool) bool {
 // Returns ExitSuccess on successful process exit, ExitInterrupted if
 // the process was interrupted, ExitFailure if it otherwise failed.
 func (s *Subprocess) Finish() exit_status.ExitStatusType {
-	s.TryFinish(true/*=wait*/)
+	s.TryFinish(true /*=wait*/)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.exitError == nil {
@@ -135,13 +135,13 @@ func (s *Subprocess) Done() bool {
 }
 
 type Set struct {
-	running []*Subprocess
+	running  []*Subprocess
 	finished []*Subprocess
 }
 
 func NewSet() *Set {
 	return &Set{
-		running: make([]*Subprocess, 0),
+		running:  make([]*Subprocess, 0),
 		finished: make([]*Subprocess, 0),
 	}
 }

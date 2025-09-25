@@ -6,8 +6,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/subprocess"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
+	"github.com/buildbuddy-io/gin/internal/subprocess"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,7 +51,7 @@ func TestInterruptChild(t *testing.T) {
 	}
 	subprocs.DoWork()
 
-	assert.Equal(t, exit_status.ExitStatusType(130), subproc.Finish())	
+	assert.Equal(t, exit_status.ExitStatusType(130), subproc.Finish())
 }
 
 func TestInterruptParent(t *testing.T) {
@@ -62,7 +62,7 @@ func TestInterruptParent(t *testing.T) {
 
 	for !subproc.Done() {
 		interrupted := subprocs.DoWork()
-		if (interrupted) {
+		if interrupted {
 			return
 		}
 	}
@@ -81,7 +81,7 @@ func TestInterruptChildWithSigterm(t *testing.T) {
 	}
 	subprocs.DoWork()
 
-	assert.Equal(t, exit_status.ExitStatusType(130), subproc.Finish())	
+	assert.Equal(t, exit_status.ExitStatusType(130), subproc.Finish())
 }
 
 func TestInterruptParentWithSigterm(t *testing.T) {
@@ -92,7 +92,7 @@ func TestInterruptParentWithSigterm(t *testing.T) {
 
 	for !subproc.Done() {
 		interrupted := subprocs.DoWork()
-		if (interrupted) {
+		if interrupted {
 			return
 		}
 	}
@@ -111,7 +111,7 @@ func TestInterruptChildWithSighup(t *testing.T) {
 	}
 	subprocs.DoWork()
 
-	assert.Equal(t, exit_status.ExitStatusType(130), subproc.Finish())	
+	assert.Equal(t, exit_status.ExitStatusType(130), subproc.Finish())
 }
 
 func TestInterruptParentWithSighup(t *testing.T) {
@@ -122,7 +122,7 @@ func TestInterruptParentWithSighup(t *testing.T) {
 
 	for !subproc.Done() {
 		interrupted := subprocs.DoWork()
-		if (interrupted) {
+		if interrupted {
 			return
 		}
 	}
@@ -139,23 +139,23 @@ func getSimpleCommand() string {
 }
 
 func TestSetWithSingle(t *testing.T) {
-        subprocs := subprocess.NewSet()
+	subprocs := subprocess.NewSet()
 	subproc, err := subprocs.Add(getSimpleCommand(), false /*=useConsole*/)
-        require.NoError(t, err)
-        require.NotNil(t, subproc)
+	require.NoError(t, err)
+	require.NotNil(t, subproc)
 
-        for !subproc.Done() {
-                subprocs.DoWork()
-        }
+	for !subproc.Done() {
+		subprocs.DoWork()
+	}
 	subprocs.DoWork()
 
-        assert.Equal(t, exit_status.ExitStatusType(0), subproc.Finish())
+	assert.Equal(t, exit_status.ExitStatusType(0), subproc.Finish())
 	assert.NotEqual(t, "", subproc.GetOutput())
 }
 
 func TestSetWithMulti(t *testing.T) {
 	subprocs := subprocess.NewSet()
-	
+
 	processes := make([]*subprocess.Subprocess, 3)
 	commands := make([]string, 3)
 	commands[0] = getSimpleCommand()
@@ -189,7 +189,7 @@ func TestSetWithMulti(t *testing.T) {
 
 	require.Equal(t, 0, len(subprocs.Running()))
 	require.Equal(t, 3, len(subprocs.Finished()))
-	
+
 	for i := range 3 {
 		assert.Equal(t, exit_status.ExitStatusType(0), processes[i].Finish())
 		assert.NotEqual(t, "", processes[i].GetOutput())
@@ -207,7 +207,7 @@ func TestSetWithLots(t *testing.T) {
 			return
 		}
 	}
-	
+
 	processes := make([]*subprocess.Subprocess, 0)
 	for range maxProcs {
 		subproc, err := subprocs.Add("/bin/echo", false /*=useConsole*/)
@@ -220,24 +220,24 @@ func TestSetWithLots(t *testing.T) {
 		subprocs.DoWork()
 	}
 
-	for i := range maxProcs {	
+	for i := range maxProcs {
 		assert.Equal(t, exit_status.ExitStatusType(0), processes[i].Finish())
 		assert.NotEqual(t, "", processes[i].GetOutput())
 	}
-	
+
 	require.Equal(t, maxProcs, len(subprocs.Finished()))
 }
 
 func TestReadStdin(t *testing.T) {
-        subprocs := subprocess.NewSet()
+	subprocs := subprocess.NewSet()
 	subproc, err := subprocs.Add("cat -", false /*=useConsole*/)
 	require.NoError(t, err)
-	
-        for !subproc.Done() {
-                subprocs.DoWork()
-        }
+
+	for !subproc.Done() {
+		subprocs.DoWork()
+	}
 	subprocs.DoWork()
 
-        assert.Equal(t, exit_status.ExitStatusType(0), subproc.Finish())
+	assert.Equal(t, exit_status.ExitStatusType(0), subproc.Finish())
 	require.Equal(t, 1, len(subprocs.Finished()))
 }

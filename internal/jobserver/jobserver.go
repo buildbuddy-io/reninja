@@ -15,32 +15,32 @@ const (
 	implicitValue = 256
 )
 
-/// A Jobserver::Slot models a single job slot that can be acquired from.
-/// or released to a jobserver pool. This class is move-only, and can
-/// wrap three types of values:
-///
-/// - An "invalid" value (the default), used to indicate errors, e.g.
-///   that no slot could be acquired from the pool.
-///
-/// - The "implicit" value, used to model the job slot that is implicitly
-///   assigned to a jobserver client by the parent process that spawned
-///   it.
-///
-/// - The "explicit" values, which correspond to an actual byte read from
-///   the slot pool's pipe (for Posix), or a semaphore decrement operation
-///   (for Windows).
-///
-/// Use IsValid(), IsImplicit(), HasValue() to test for categories.
-///
-/// TECHNICAL NOTE: This design complies with the requirements laid out
-/// on https://www.gnu.org/software/make/manual/html_node/POSIX-Jobserver.html
-/// which requires clients to write back the exact token values they
-/// received from a Posix pipe.
-///
-/// Note that *currently* all pool implementations write the same token
-/// values to the pipe ('+' for GNU Make, and '|' for the Rust jobserver),
-/// and do not care about the values written back by clients.
-///
+// / A Jobserver::Slot models a single job slot that can be acquired from.
+// / or released to a jobserver pool. This class is move-only, and can
+// / wrap three types of values:
+// /
+// / - An "invalid" value (the default), used to indicate errors, e.g.
+// /   that no slot could be acquired from the pool.
+// /
+// / - The "implicit" value, used to model the job slot that is implicitly
+// /   assigned to a jobserver client by the parent process that spawned
+// /   it.
+// /
+// / - The "explicit" values, which correspond to an actual byte read from
+// /   the slot pool's pipe (for Posix), or a semaphore decrement operation
+// /   (for Windows).
+// /
+// / Use IsValid(), IsImplicit(), HasValue() to test for categories.
+// /
+// / TECHNICAL NOTE: This design complies with the requirements laid out
+// / on https://www.gnu.org/software/make/manual/html_node/POSIX-Jobserver.html
+// / which requires clients to write back the exact token values they
+// / received from a Posix pipe.
+// /
+// / Note that *currently* all pool implementations write the same token
+// / values to the pipe ('+' for GNU Make, and '|' for the Rust jobserver),
+// / and do not care about the values written back by clients.
+// /
 type Slot int16
 
 func NewSlot() Slot {

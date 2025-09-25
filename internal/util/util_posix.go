@@ -13,4 +13,3 @@ func GetLoadAverage() float64 {
 	const siLoadShift = 16
 	return float64(info.Loads[0]) / float64(1<<siLoadShift)
 }
-

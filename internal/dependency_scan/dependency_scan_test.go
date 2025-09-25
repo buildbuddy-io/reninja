@@ -24,7 +24,7 @@ func TestMissingImplicit(t *testing.T) {
 	require.NoError(t, fs.WriteFile("out", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
 	require.NoError(t, err)
 
@@ -46,7 +46,7 @@ func TestModifiedImplicit(t *testing.T) {
 	require.NoError(t, fs.WriteFile("implicit", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
 	require.NoError(t, err)
 
@@ -72,7 +72,7 @@ build out.o: catdep foo.cc
 	require.NoError(t, fs.WriteFile("implicit.h", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
 	require.NoError(t, err)
 
@@ -102,7 +102,7 @@ build out.o: catdep foo.cc || implicit.h
 	require.NoError(t, fs.WriteFile("data", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
 	require.NoError(t, err)
 
@@ -135,7 +135,7 @@ func TestImplicitOutputMissing(t *testing.T) {
 	require.NoError(t, fs.WriteFile("out", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
 	require.NoError(t, err)
 
@@ -155,7 +155,7 @@ func TestImplicitOutputOutOfDate(t *testing.T) {
 	require.NoError(t, fs.WriteFile("out", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
 	require.NoError(t, err)
 
@@ -184,7 +184,7 @@ func TestImplicitOutputOnlyMissing(t *testing.T) {
 	require.NoError(t, fs.WriteFile("in", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out.imp"), nil)
 	require.NoError(t, err)
 
@@ -202,7 +202,7 @@ func TestImplicitOutputOnlyOutOfDate(t *testing.T) {
 	require.NoError(t, fs.WriteFile("in", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out.imp"), nil)
 	require.NoError(t, err)
 
@@ -225,7 +225,7 @@ build ./out.o: catdep ./foo.cc
 	require.NoError(t, fs.WriteFile("out.o", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
 	require.NoError(t, err)
 
@@ -278,7 +278,7 @@ build ./out.o: catdep ./foo.cc
 	require.NoError(t, fs.WriteFile("out.o", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
 	require.NoError(t, err)
 
@@ -303,7 +303,7 @@ build ./out.o: catdep ./foo.cc
 	require.NoError(t, fs.WriteFile("out.o", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out.o"), nil)
 	require.NoError(t, err)
 	assert.False(t, s.GetNode("out.o").Dirty())
@@ -360,7 +360,7 @@ build n2: phony n1
 `, s)
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("n2"), nil)
 	require.NoError(t, err)
 
@@ -379,7 +379,7 @@ func TestPhonySelfReferenceError(t *testing.T) {
 	test.AssertParseWithOptions(t, "build a: phony a\n", s, fs, mpOpts)
 
 	dpOpts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, dpOpts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, dpOpts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("a"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -396,7 +396,7 @@ build pre: cat out
 `, s)
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("out"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -409,7 +409,7 @@ func TestCycleInEdgesButNotInNodes1(t *testing.T) {
 	test.AssertParse(t, "build a b: cat a\n", s)
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("b"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -422,7 +422,7 @@ func TestCycleInEdgesButNotInNodes2(t *testing.T) {
 	test.AssertParse(t, "build b a: cat a\n", s)
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("b"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -437,7 +437,7 @@ build c: cat a
 `, s)
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("b"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -455,7 +455,7 @@ build f: cat e
 `, s)
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("f"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -473,7 +473,7 @@ build a b: deprule
 	require.NoError(t, fs.WriteFile("dep.d", []byte("a: b\n")))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("a"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -499,7 +499,7 @@ build c: r b
 	require.NoError(t, fs.WriteFile("dep.d", []byte("a: c\n")))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("a"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -525,7 +525,7 @@ build d: r a
 	require.NoError(t, fs.WriteFile("dep.d", []byte("a: c\n")))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(s.GetNode("d"), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dependency cycle")
@@ -546,7 +546,7 @@ build validate: cat in
 	require.NoError(t, fs.WriteFile("in", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 
 	validationNodes, err := scan.RecomputeDirty(s.GetNode("out"), []*graph.Node{})
 	require.NoError(t, err)
@@ -573,7 +573,7 @@ build out1: touch in_ph
 	in1 := s.GetNode("in1")
 
 	opts := depfile_parser.DepfileParserOptions{}
-	scan := dependency_scan.New(s, nil, nil, fs, opts, nil/*=exp*/)
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
 	_, err := scan.RecomputeDirty(out1, nil)
 	require.NoError(t, err)
 	assert.False(t, out1.Dirty())

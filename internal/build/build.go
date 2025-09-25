@@ -20,9 +20,8 @@ func (r Result) Success() bool {
 }
 
 type Builder struct {
-	state *state.State
-	config build_config.Config
+	state    *state.State
+	config   build_config.Config
 	buildLog *build_log.BuildLog
-	depsLog *deps_log.DepsLog
+	depsLog  *deps_log.DepsLog
 }
-	

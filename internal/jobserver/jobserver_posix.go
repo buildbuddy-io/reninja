@@ -64,8 +64,8 @@ func (c *unixClient) Release(slot Slot) {
 }
 
 type fdPair struct {
-        readFD          int
-        writeFD         int
+	readFD  int
+	writeFD int
 }
 
 func (c *unixClient) InitWithFifo(fifoPath string) error {

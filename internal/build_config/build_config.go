@@ -24,4 +24,3 @@ type Config struct {
 	MaxLoadAverage         float64
 	DepfileParserOptions   depfile_parser.DepfileParserOptions
 }
-
