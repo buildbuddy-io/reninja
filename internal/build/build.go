@@ -1,30 +1,13 @@
 package build
 
 import (
-	"github.com/buildbuddy-io/gin/internal/depfile_parser"
+	"github.com/buildbuddy-io/gin/internal/build_config"
+	"github.com/buildbuddy-io/gin/internal/build_log"
+	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/state"
 )
-
-type VerbosityLevel int
-
-const (
-	Quiet VerbosityLevel = iota
-	NoStatusUpdate
-	Normal
-	Verbose
-)
-
-// Config represents build configuration
-type Config struct {
-	Verbosity              VerbosityLevel
-	DryRun                 bool
-	Parallelism            int
-	DisableJobserverClient bool
-	FailuresAllowed        int
-	MaxLoadAverage         float64
-	DepfileParserOptions   depfile_parser.DepfileParserOptions
-}
 
 type Result struct {
 	Edge   *graph.Edge
@@ -35,3 +18,11 @@ type Result struct {
 func (r Result) Success() bool {
 	return r.Status == exit_status.ExitSuccess
 }
+
+type Builder struct {
+	state *state.State
+	config build_config.Config
+	buildLog *build_log.BuildLog
+	depsLog *deps_log.DepsLog
+}
+	

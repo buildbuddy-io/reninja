@@ -23,13 +23,13 @@ type ImplicitDepLoader struct {
 	processDepfileDepsFn ProcessDepfileDepsFn
 }
 
-func New(state *state.State, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, explanations *explanations.OptionalExplanations) *ImplicitDepLoader {
+func New(state *state.State, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, exp *explanations.Explanations) *ImplicitDepLoader {
 	return &ImplicitDepLoader{
 		state:                state,
 		depsLog:              depsLog,
 		diskInterface:        diskInterface,
 		depfileParserOptions: depfileParserOptions,
-		explanations:         explanations,
+		explanations:         explanations.NewOptional(exp),
 	}
 }
 
@@ -158,7 +158,7 @@ func (l *NodeStoringImplicitDepLoader) DepNodesOutput() []*graph.Node {
 	return l.depNodesOutput
 }
 
-func NewNodeStoringImplicitDepLoader(state *state.State, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, explanations *explanations.OptionalExplanations) *NodeStoringImplicitDepLoader {
+func NewNodeStoringImplicitDepLoader(state *state.State, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, explanations *explanations.Explanations) *NodeStoringImplicitDepLoader {
 	l := &NodeStoringImplicitDepLoader{
 		depNodesOutput: make([]*graph.Node, 0),
 	}

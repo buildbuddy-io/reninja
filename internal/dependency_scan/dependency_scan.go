@@ -25,14 +25,14 @@ type DependencyScan struct {
 	explanations         *explanations.OptionalExplanations
 }
 
-func New(state *state.State, buildLog *build_log.BuildLog, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, explanations *explanations.OptionalExplanations) *DependencyScan {
+func New(state *state.State, buildLog *build_log.BuildLog, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, exp *explanations.Explanations) *DependencyScan {
 	return &DependencyScan{
 		buildLog:             buildLog,
 		diskInterface:        diskInterface,
-		depLoader:            implicit_dep_loader.New(state, depsLog, diskInterface, depfileParserOptions, explanations),
+		depLoader:            implicit_dep_loader.New(state, depsLog, diskInterface, depfileParserOptions, exp),
 		depfileParserOptions: depfileParserOptions,
 		dyndepLoader:         dyndep.NewDyndepLoader(state, diskInterface),
-		explanations:         explanations,
+		explanations:         explanations.NewOptional(exp),
 	}
 }
 
