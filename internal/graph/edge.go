@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/buildbuddy-io/gin/internal/eval_env"
+	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
 	"github.com/buildbuddy-io/gin/internal/util"
 )
@@ -49,7 +50,7 @@ type Edge struct {
 	commandStartTime     timestamp.TimeStamp
 
 	// Job server slot
-	jobSlot interface{} // Will be properly typed when we implement jobserver
+	jobSlot jobserver.Slot
 
 	// Historical timing info from ninja log
 	prevElapsedTimeMillis int64
@@ -81,6 +82,14 @@ func (e *Edge) Rule() *eval_env.Rule {
 // SetRule sets the edge's rule
 func (e *Edge) SetRule(rule *eval_env.Rule) {
 	e.rule = rule
+}
+
+func (e *Edge) JobSlot() jobserver.Slot {
+	return e.jobSlot
+}
+
+func (e *Edge) SetJobSlot(slot jobserver.Slot) {
+	e.jobSlot = slot
 }
 
 // Pool returns the edge's pool
