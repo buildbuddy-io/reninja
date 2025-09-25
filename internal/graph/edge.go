@@ -92,6 +92,14 @@ func (e *Edge) SetJobSlot(slot jobserver.Slot) {
 	e.jobSlot = slot
 }
 
+func (e *Edge) PrevElapsedTimeMillis() int64 {
+	return e.prevElapsedTimeMillis
+}
+
+func (e *Edge) SetPrevElapsedTimeMillis(i int64) {
+	e.prevElapsedTimeMillis = i
+}
+
 // Pool returns the edge's pool
 func (e *Edge) Pool() *Pool {
 	return e.pool
