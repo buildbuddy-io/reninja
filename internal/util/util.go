@@ -1,6 +1,8 @@
 package util
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -170,4 +172,28 @@ func StripAnsiEscapeCodes(in string) string {
 		}
 	}
 	return stripped.String()
+}
+
+func Warning(msg string) {
+	fmt.Fprintf(os.Stderr, "ninja: warning: %s\n", msg)
+}
+
+func Warningf(format string, args ...interface{}) {
+	Warning(fmt.Sprintf(format, args...))
+}
+
+func Error(msg string) {
+	fmt.Fprintf(os.Stderr, "ninja: err: %s\n", msg)
+}
+
+func Errorf(format string, args ...interface{}) {
+	Error(fmt.Sprintf(format, args...))
+}
+
+func Info(msg string) {
+	fmt.Fprintf(os.Stdout, "ninja: %s\n", msg)
+}
+
+func Infof(format string, args ...interface{}) {
+	Info(fmt.Sprintf(format, args...))
 }
