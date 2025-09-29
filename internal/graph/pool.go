@@ -2,6 +2,9 @@ package graph
 
 import (
 	"fmt"
+	"sort"
+
+	"github.com/buildbuddy-io/gin/internal/priority_queue"
 )
 
 // Pool represents a resource pool for limiting parallel execution
@@ -70,17 +73,56 @@ func (p *Pool) Release() {
 
 // DelayEdge adds an edge to the delayed queue
 func (p *Pool) DelayEdge(edge *Edge) {
-	p.delayed = append(p.delayed, edge)
+	// Go does not have a std::set that can be used with a comparator,
+	// so instead, keep delayed edges in a sorted slice, and do not insert
+	// dupes.
+	insertIndex := sort.Search(len(p.delayed), func(i int) bool {
+		b := p.delayed[i]
+		a := edge
+		weightDiff := a.Weight() - b.Weight()
+		if weightDiff != 0 {
+			return weightDiff < 0
+		}
+		return EdgePriorityGreater(a, b)
+	})
+	existingElementIndex := insertIndex - 1
+	if len(p.delayed) > 0 && existingElementIndex >= 0 {
+		if p.delayed[existingElementIndex] == edge {
+			return
+		}
+	}
+	if insertIndex >= len(p.delayed) {
+		p.delayed = append(p.delayed, edge)
+	} else {
+		p.delayed = append(p.delayed[:insertIndex+1], p.delayed[insertIndex:]...)
+		p.delayed[insertIndex] = edge
+	}
 }
 
-// PopDelayedEdge removes and returns the first delayed edge
-func (p *Pool) PopDelayedEdge() *Edge {
-	if len(p.delayed) == 0 {
-		return nil
+func (p *Pool) EdgeScheduled(edge *Edge) {
+	if p.depth != 0 {
+		p.currentUse += edge.Weight()
 	}
-	edge := p.delayed[0]
-	p.delayed = p.delayed[1:]
-	return edge
+}
+
+func (p *Pool) EdgeFinished(edge *Edge) {
+	if p.depth != 0 {
+		p.currentUse -= edge.Weight()
+	}
+}
+
+func (p *Pool) RetrieveReadyEdges(readyQueue *priority_queue.ThreadSafePriorityQueue[*Edge]) {
+	i := 0
+	for i < len(p.delayed) {
+		edge := p.delayed[i]
+		if p.currentUse+edge.Weight() > p.depth {
+			break
+		}
+		readyQueue.Push(edge)
+		p.EdgeScheduled(edge)
+		i++
+	}
+	p.delayed = p.delayed[i:]
 }
 
 // HasDelayedEdges returns whether there are delayed edges
@@ -99,4 +141,8 @@ func (p *Pool) Dump() {
 		fmt.Printf("\t")
 		edge.Dump("")
 	}
+}
+
+func (p *Pool) ShouldDelayEdge() bool {
+	return p.depth != 0
 }

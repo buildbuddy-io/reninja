@@ -365,3 +365,7 @@ func (s *DependencyScan) LoadDyndeps(node *graph.Node) error {
 	ddf := dyndep_parser.NewDyndepFile()
 	return s.dyndepLoader.LoadDyndeps(node, ddf)
 }
+
+func (s *DependencyScan) LoadDyndepsInto(node *graph.Node, ddf dyndep_parser.DyndepFile) error {
+	return s.dyndepLoader.LoadDyndeps(node, ddf)
+}

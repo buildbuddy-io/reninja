@@ -1,81 +1,64 @@
-// This is https://github.com/buildbuddy-io/buildbuddy/blob/master/server/util/priority_queue/priority_queue.go
 package priority_queue
 
 import (
 	"container/heap"
-	"slices"
 	"sync"
-	"time"
 )
 
 // Item is an element managed by a priority queue.
 type Item[V any] struct {
-	value      V
-	index      int // The index of the item in the heap
-	priority   float64
-	insertTime time.Time
+	value V
+	index int // The index of the item in the heap
 }
 
 func (i *Item[V]) Value() V {
 	return i.value
 }
-func NewItem[V any](v V, priority float64) *Item[V] {
+
+func NewItem[V any](v V) *Item[V] {
 	return &Item[V]{
-		value:      v,
-		insertTime: time.Now(),
-		priority:   priority,
+		value: v,
 	}
 }
 
 // PriorityQueue implements heap.Interface and holds items.
-type PriorityQueue[V any] []*Item[V]
+type PriorityQueue[V any] struct {
+	items    []*Item[V]
+	lessFunc func(i, j V) bool
+}
 
-func (pq PriorityQueue[V]) Len() int { return len(pq) }
+func (pq PriorityQueue[V]) Len() int { return len(pq.items) }
 func (pq PriorityQueue[V]) Less(i, j int) bool {
-	return pq[i].priority > pq[j].priority ||
-		(pq[i].priority == pq[j].priority && pq[i].insertTime.Before(pq[j].insertTime))
+	// swap i and j because this is a priority queue not
+	// a heap.
+	return pq.lessFunc(pq.items[j].value, pq.items[i].value)
 }
 func (pq PriorityQueue[V]) Swap(i, j int) {
-	pq[i], pq[j] = pq[j], pq[i]
-	pq[i].index = i
-	pq[j].index = j
+	pq.items[i], pq.items[j] = pq.items[j], pq.items[i]
+	pq.items[i].index = i
+	pq.items[j].index = j
 }
 func (pq *PriorityQueue[V]) Push(x any) {
-	n := len(*pq)
+	n := len(pq.items)
 	item := x.(*Item[V])
 	item.index = n
-	*pq = append(*pq, item)
+	pq.items = append(pq.items, item)
 }
 func (pq *PriorityQueue[V]) Pop() any {
-	old := *pq
+	old := pq.items
 	n := len(old)
 	item := old[n-1]
 	old[n-1] = nil  // avoid memory leak
 	item.index = -1 // for safety
-	*pq = old[0 : n-1]
+	pq.items = old[0 : n-1]
 	return item
 }
-func (pq *PriorityQueue[V]) Update(item *Item[V], priority float64) {
-	item.priority = priority
-	heap.Fix(pq, item.index)
-}
 
-// RemoveItemWithMinPriority removes the item with the minimum priority and
-// returns the removed item's value.
-func (pq *PriorityQueue[V]) RemoveItemWithMinPriority() *Item[V] {
-	old := *pq
-	n := len(old)
-
-	// The min item can only be at the leaf nodes; so we only need to scan the
-	// right half of the array.
-	minIndex := n / 2
-
-	for i := n/2 + 1; i < n; i++ {
-		if pq.Less(minIndex, i) {
-			minIndex = i
-		}
+func newPriorityQueue[V any](lessFunc func(i, j V) bool) PriorityQueue[V] {
+	return PriorityQueue[V]{
+		items:    make([]*Item[V], 0),
+		lessFunc: lessFunc,
 	}
-	return heap.Remove(pq, minIndex).(*Item[V])
 }
 
 // ThreadSafePriorityQueue implements a thread safe priority queue for type V.
@@ -86,15 +69,10 @@ type ThreadSafePriorityQueue[V any] struct {
 	inner PriorityQueue[V]
 }
 
-func New[V any]() *ThreadSafePriorityQueue[V] {
-	return &ThreadSafePriorityQueue[V]{}
-}
-
-func (pq *ThreadSafePriorityQueue[V]) Clone() *ThreadSafePriorityQueue[V] {
-	pq.mu.Lock()
-	defer pq.mu.Unlock()
+func New[V any](lessFunc func(i, j V) bool) *ThreadSafePriorityQueue[V] {
 	return &ThreadSafePriorityQueue[V]{
-		inner: slices.Clone(pq.inner),
+		mu:    sync.Mutex{},
+		inner: newPriorityQueue[V](lessFunc),
 	}
 }
 
@@ -103,16 +81,16 @@ func (pq *ThreadSafePriorityQueue[V]) zeroValue() V {
 	return zero
 }
 
-func (pq *ThreadSafePriorityQueue[V]) Push(v V, priority float64) {
+func (pq *ThreadSafePriorityQueue[V]) Push(v V) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
-	heap.Push(&pq.inner, NewItem(v, priority))
+	heap.Push(&pq.inner, NewItem(v))
 }
 
 func (pq *ThreadSafePriorityQueue[V]) Pop() (V, bool) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
-	if len(pq.inner) == 0 {
+	if len(pq.inner.items) == 0 {
 		return pq.zeroValue(), false
 	}
 	item := heap.Pop(&pq.inner).(*Item[V])
@@ -122,58 +100,15 @@ func (pq *ThreadSafePriorityQueue[V]) Pop() (V, bool) {
 func (pq *ThreadSafePriorityQueue[V]) Peek() (V, bool) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
-	if len(pq.inner) == 0 {
+	if len(pq.inner.items) == 0 {
 		return pq.zeroValue(), false
 	}
-	return (pq.inner)[0].value, true
-}
-
-// RemoveAt removes the item with the (i+1)'th highest priority from the queue.
-//
-// RemoveAt(0) removes the highest priority item, and is equivalent to Pop().
-// RemoveAt(1) removes the item with the second highest priority, and so on.
-//
-// Ties in priority are broken by insertion time.
-//
-// It has complexity O(index * log(n)) where n is the number of elements in the
-// queue.
-func (pq *ThreadSafePriorityQueue[V]) RemoveAt(index int) (V, bool) {
-	pq.mu.Lock()
-	defer pq.mu.Unlock()
-	if index >= len(pq.inner) {
-		return pq.zeroValue(), false
-	}
-
-	// Pop `index` elements
-	removed := make([]any, index) // TODO: reuse this buffer?
-	for i := range index {
-		removed[i] = heap.Pop(&pq.inner)
-	}
-
-	// Pop one more element to get the item to remove
-	item := heap.Pop(&pq.inner)
-
-	// Add the removed elements back to the queue
-	for _, v := range removed {
-		heap.Push(&pq.inner, v)
-	}
-
-	return item.(*Item[V]).value, true
-}
-
-func (pq *ThreadSafePriorityQueue[V]) GetAll() []V {
-	pq.mu.Lock()
-	defer pq.mu.Unlock()
-	allValues := make([]V, len(pq.inner))
-	for i, v := range pq.inner {
-		allValues[i] = v.value
-	}
-	return allValues
+	item := pq.inner.items[0]
+	return item.value, true
 }
 
 func (pq *ThreadSafePriorityQueue[V]) Len() int {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
-	return len(pq.inner)
+	return pq.inner.Len()
 }
-

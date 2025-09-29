@@ -26,6 +26,20 @@ const (
 	VisitDone
 )
 
+func EdgePriorityLess(e1, e2 *Edge) bool {
+	cw1 := e1.CriticalPathWeight()
+	cw2 := e2.CriticalPathWeight()
+
+	if cw1 != cw2 {
+		return cw1 < cw2
+	}
+	return e1.ID() > e2.ID()
+}
+
+func EdgePriorityGreater(e1, e2 *Edge) bool {
+	return EdgePriorityLess(e2, e1)
+}
+
 // Edge represents a build rule connecting input and output nodes
 type Edge struct {
 	rule          *eval_env.Rule
@@ -259,6 +273,10 @@ func (e *Edge) OrderOnlyInputs() []*Node {
 		return nil
 	}
 	return e.inputs[len(e.inputs)-e.orderOnlyDeps:]
+}
+
+func (e *Edge) NonOrderOnlyInputs() []*Node {
+	return e.inputs[:len(e.inputs)-e.orderOnlyDeps]
 }
 
 // ExplicitOutputs returns only the explicit output nodes

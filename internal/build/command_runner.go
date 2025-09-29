@@ -6,7 +6,6 @@ import (
 	"slices"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
-	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/subprocess"
@@ -21,46 +20,6 @@ type CommandRunner interface {
 	Abort()
 	ClearJobTokens()
 }
-
-type DryCommandRunner struct {
-	finished []*graph.Edge
-}
-
-func NewDryCommandRunner() *DryCommandRunner {
-	return &DryCommandRunner{}
-}
-
-// CanRunMore always returns true for dry run
-func (d *DryCommandRunner) CanRunMore() int {
-	return math.MaxInt
-}
-
-// StartCommand simulates starting a command
-func (d *DryCommandRunner) StartCommand(edge *graph.Edge) bool {
-	d.finished = append(d.finished, edge)
-	return true
-}
-
-func (d *DryCommandRunner) WaitForCommand() *Result {
-	if len(d.finished) == 0 {
-		return nil
-	}
-
-	front := d.finished[0]
-	d.finished = d.finished[1:]
-
-	r := &Result{
-		Status: exit_status.ExitSuccess,
-		Edge:   front,
-	}
-	return r
-}
-
-func (d *DryCommandRunner) GetActiveEdges() []*graph.Edge {
-	return nil
-}
-
-func (d *DryCommandRunner) Abort() {}
 
 type RealCommandRunner struct {
 	config        build_config.Config

@@ -210,6 +210,16 @@ func (m *MockDiskInterface) Tick() timestamp.TimeStamp {
 	return t2
 }
 
+func (m *MockDiskInterface) Now() timestamp.TimeStamp {
+	return m.now
+}
+
+func (m *MockDiskInterface) SetMtime(path string, mtime timestamp.TimeStamp) {
+	val := m.files[path]
+	val.mtime = mtime
+	m.files[path] = val
+}
+
 // FileReader provides an interface for reading files
 type FileReader interface {
 	ReadFile(path string) ([]byte, error)
