@@ -16,7 +16,7 @@ func itemLessFn(i, j item) bool {
 	// "lesser" items sort first, so if we want higher
 	// priority items to pop first, they should sort as
 	// less than lower priority items.
-	return i.priority > j.priority
+	return i.priority < j.priority
 }
 
 func TestPushPop(t *testing.T) {
