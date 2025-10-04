@@ -44,6 +44,9 @@ func EdgePriorityGreater(e1, e2 *Edge) bool {
 type Edge struct {
 	rule          *eval_env.Rule
 	pool          *Pool
+
+	// These should be stored in separate lists by type.
+	// It's error prone and confusing to do it this way.
 	inputs        []*Node
 	outputs       []*Node
 	validations   []*Node

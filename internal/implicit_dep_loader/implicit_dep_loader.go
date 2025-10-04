@@ -116,6 +116,7 @@ func (l *ImplicitDepLoader) ProcessDepfileDeps(edge *graph.Edge, ins []string) e
 		edge.AddInput(node)
 		node.AddOutEdge(edge)
 	}
+	edge.SetImplicitDeps(edge.GetImplicitDeps() + len(ins))
 	return nil
 }
 
