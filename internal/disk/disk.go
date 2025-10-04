@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,7 +33,7 @@ type Interface interface {
 	Stat(path string) (timestamp.TimeStamp, error)
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, contents []byte) error
-	MakeDir(path string) error
+	MakeDirs(path string) error
 	RemoveFile(path string) error
 }
 
@@ -111,8 +113,8 @@ func (d *RealDiskInterface) WriteFile(path string, contents []byte) error {
 }
 
 // MakeDir creates a directory and all necessary parents
-func (d *RealDiskInterface) MakeDir(path string) error {
-	return os.MkdirAll(path, 0755)
+func (d *RealDiskInterface) MakeDirs(path string) error {
+	return os.MkdirAll(filepath.Dir(path), 0755)
 }
 
 // RemoveFile removes a file
@@ -127,38 +129,45 @@ func (d *RealDiskInterface) ClearStatCache() {
 	d.statCache = make(map[string]statCacheEntry)
 }
 
-// MockDiskInterface provides a mock implementation for testing
-type MockDiskInterface struct {
-	files     map[string]mockFile
-	filesRead []string
-	now       timestamp.TimeStamp
+type entry struct {
+	mtime    timestamp.TimeStamp
+	statErr  error // if mtime is -1
+	contents []byte
 }
 
-type mockFile struct {
-	contents []byte
-	mtime    timestamp.TimeStamp
+// MockDiskInterface provides a mock implementation for testing
+type MockDiskInterface struct {
+	directoriesMade map[string]struct{}
+	filesRead       map[string]struct{}
+	files           map[string]entry
+	filesRemoved    map[string]struct{}
+	filesCreated    map[string]struct{}
+	now             timestamp.TimeStamp
 }
 
 // NewMockDiskInterface creates a new MockDiskInterface
 func NewMockDiskInterface() *MockDiskInterface {
 	return &MockDiskInterface{
-		files:     make(map[string]mockFile),
-		filesRead: make([]string, 0),
-		now:       timestamp.TimeStamp(1),
+		directoriesMade: make(map[string]struct{}, 0),
+		filesRead:       make(map[string]struct{}, 0),
+		files:           make(map[string]entry),
+		filesRemoved:    make(map[string]struct{}, 0),
+		filesCreated:    make(map[string]struct{}, 0),
+		now:             timestamp.TimeStamp(1),
 	}
 }
 
 // Stat returns the modification time of a mock file
 func (m *MockDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
-	if file, ok := m.files[path]; ok {
-		return file.mtime, nil
+	if entry, ok := m.files[path]; ok {
+		return entry.mtime, nil
 	}
 	return timestamp.TimeStampMissing, os.ErrNotExist
 }
 
 // ReadFile reads the contents of a mock file
 func (m *MockDiskInterface) ReadFile(path string) ([]byte, error) {
-	m.filesRead = append(m.filesRead, path)
+	m.filesRead[path] = struct{}{}
 	if file, ok := m.files[path]; ok {
 		return file.contents, nil
 	}
@@ -167,41 +176,49 @@ func (m *MockDiskInterface) ReadFile(path string) ([]byte, error) {
 
 // WriteFile writes contents to a mock file
 func (m *MockDiskInterface) WriteFile(path string, contents []byte) error {
-	m.files[path] = mockFile{
+	m.files[path] = entry{
 		contents: contents,
 		mtime:    m.now,
 	}
+	m.filesCreated[path] = struct{}{}
 	return nil
 }
 
 // MakeDir creates a mock directory
-func (m *MockDiskInterface) MakeDir(path string) error {
-	// Just mark it as existing with no contents
-	m.files[path+"/"] = mockFile{
-		mtime: m.now,
+func (m *MockDiskInterface) MakeDirs(path string) error {
+	for d := filepath.Dir(path); d != "." && d != "/"; d = filepath.Dir(d) {
+		m.directoriesMade[d] = struct{}{}
 	}
 	return nil
 }
 
 // RemoveFile removes a mock file
 func (m *MockDiskInterface) RemoveFile(path string) error {
+	if _, ok := m.directoriesMade[path]; ok {
+		return fmt.Errorf("%s is a directory", path)
+	}
 	if _, ok := m.files[path]; !ok {
 		return os.ErrNotExist
 	}
 	delete(m.files, path)
+	m.filesRemoved[path] = struct{}{}
 	return nil
 }
 
 // AddFile adds a file to the mock file system
 func (m *MockDiskInterface) AddFile(path string, contents []byte, mtime timestamp.TimeStamp) {
-	m.files[path] = mockFile{
+	m.files[path] = entry{
 		contents: contents,
 		mtime:    mtime,
 	}
 }
 
 func (m *MockDiskInterface) FilesRead() []string {
-	return m.filesRead
+	return slices.Sorted(maps.Keys(m.filesRead))
+}
+
+func (m *MockDiskInterface) DirectoriesMade() []string {
+	return slices.Sorted(maps.Keys(m.directoriesMade))
 }
 
 func (m *MockDiskInterface) Tick() timestamp.TimeStamp {

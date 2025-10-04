@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
+	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/subprocess"
@@ -14,12 +15,54 @@ import (
 
 type CommandRunner interface {
 	CanRunMore() int
-	StartCommand(edge *graph.Edge) bool
-	WaitForCommand(result *Result) *graph.Edge
+	StartCommand(edge *graph.Edge) error
+	WaitForCommand() *Result
 	GetActiveEdges() []*graph.Edge
 	Abort()
 	ClearJobTokens()
 }
+
+type DryCommandRunner struct {
+	finished []*graph.Edge
+}
+
+func NewDryCommandRunner() *DryCommandRunner {
+	return &DryCommandRunner{}
+}
+
+// CanRunMore always returns true for dry run
+func (d *DryCommandRunner) CanRunMore() int {
+	return math.MaxInt
+}
+
+func (r *DryCommandRunner) ClearJobTokens() {}
+
+// StartCommand simulates starting a command
+func (d *DryCommandRunner) StartCommand(edge *graph.Edge) error {
+	d.finished = append(d.finished, edge)
+	return nil
+}
+
+func (d *DryCommandRunner) WaitForCommand() *Result {
+	if len(d.finished) == 0 {
+		return nil
+	}
+
+	front := d.finished[0]
+	d.finished = d.finished[1:]
+
+	r := &Result{
+		Status: exit_status.ExitSuccess,
+		Edge:   front,
+	}
+	return r
+}
+
+func (d *DryCommandRunner) GetActiveEdges() []*graph.Edge {
+	return nil
+}
+
+func (d *DryCommandRunner) Abort() {}
 
 type RealCommandRunner struct {
 	config        build_config.Config

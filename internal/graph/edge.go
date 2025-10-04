@@ -114,6 +114,14 @@ func (e *Edge) SetPrevElapsedTimeMillis(i int64) {
 	e.prevElapsedTimeMillis = i
 }
 
+func (e *Edge) CommandStartTime() timestamp.TimeStamp {
+	return e.commandStartTime
+}
+
+func (e *Edge) SetCommandStartTime(t timestamp.TimeStamp) {
+	e.commandStartTime = t
+}
+
 // Pool returns the edge's pool
 func (e *Edge) Pool() *Pool {
 	return e.pool
@@ -416,42 +424,6 @@ func (e *Edge) MaybePhonycycleDiagnostic() bool {
 	return e.IsPhony()
 }
 
-/*
-// EdgeEnv creates a new environment for edge evaluation that includes rule bindings
-func EdgeEnv(parent *eval_env.BindingEnv, edge *Edge) *eval_env.BindingEnv {
-	env := eval_env.NewBindingEnv(parent)
-
-	// Add edge-specific built-in variables
-	var inputs []string
-	for _, input := range edge.ExplicitInputs() {
-		inputs = append(inputs, input.Path())
-	}
-	env.AddBinding("in", strings.Join(inputs, " "))
-
-	var outputs []string
-	for _, output := range edge.ExplicitOutputs() {
-		outputs = append(outputs, output.Path())
-	}
-	env.AddBinding("out", strings.Join(outputs, " "))
-
-	// Add all rule bindings to the environment
-	// This makes them available for variable expansion
-	if edge.Rule() != nil {
-		for name, evalStr := range edge.Rule().Bindings() {
-			// Skip command binding to avoid recursion
-			if name != "command" {
-				// Evaluate rule binding with current environment
-				// This allows $rspfile to reference $out
-				value := evalStr.Evaluate(env)
-				env.AddBinding(name, value)
-			}
-		}
-	}
-
-	return env
-}
-*/
-
 func (e *Edge) Dump(prefix string) {
 	fmt.Printf("%s[ ", prefix)
 	for _, node := range e.inputs {
@@ -485,7 +457,6 @@ const (
 )
 
 type EdgeEnv struct {
-	// env eval_env.Env
 	lookups     []string
 	edge        *Edge
 	escapeInOut escapeKind

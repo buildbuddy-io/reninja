@@ -18,6 +18,7 @@ import (
 
 type DependencyScan struct {
 	buildLog             *build_log.BuildLog
+	depsLog              *deps_log.DepsLog
 	diskInterface        disk.Interface
 	depLoader            *implicit_dep_loader.ImplicitDepLoader
 	depfileParserOptions depfile_parser.DepfileParserOptions
@@ -28,6 +29,7 @@ type DependencyScan struct {
 func New(state *state.State, buildLog *build_log.BuildLog, depsLog *deps_log.DepsLog, diskInterface disk.Interface, depfileParserOptions depfile_parser.DepfileParserOptions, exp *explanations.Explanations) *DependencyScan {
 	return &DependencyScan{
 		buildLog:             buildLog,
+		depsLog:              depsLog,
 		diskInterface:        diskInterface,
 		depLoader:            implicit_dep_loader.New(state, depsLog, diskInterface, depfileParserOptions, exp),
 		depfileParserOptions: depfileParserOptions,
@@ -368,4 +370,12 @@ func (s *DependencyScan) LoadDyndeps(node *graph.Node) error {
 
 func (s *DependencyScan) LoadDyndepsInto(node *graph.Node, ddf dyndep_parser.DyndepFile) error {
 	return s.dyndepLoader.LoadDyndeps(node, ddf)
+}
+
+func (s *DependencyScan) BuildLog() *build_log.BuildLog {
+	return s.buildLog
+}
+
+func (s *DependencyScan) DepsLog() *deps_log.DepsLog {
+	return s.depsLog
 }

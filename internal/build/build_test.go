@@ -3,12 +3,14 @@ package build_test
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/buildbuddy-io/gin/internal/build"
 	"github.com/buildbuddy-io/gin/internal/build_config"
+	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
@@ -601,6 +603,8 @@ func newFakeCommandRunner(t *testing.T, vfs *disk.MockDiskInterface) *FakeComman
 	}
 }
 
+func (d *FakeCommandRunner) ClearJobTokens() {}
+
 func (d *FakeCommandRunner) CanRunMore() int {
 	if len(d.activeEdges) < d.maxActiveEdges {
 		return math.MaxInt
@@ -608,9 +612,9 @@ func (d *FakeCommandRunner) CanRunMore() int {
 	return 0
 }
 
-func (d *FakeCommandRunner) StartCommand(edge *graph.Edge) bool {
+func (d *FakeCommandRunner) StartCommand(edge *graph.Edge) error {
 	require.True(d.t, len(d.activeEdges) < d.maxActiveEdges)
-	require.Contains(d.t, d.activeEdges, edge)
+	require.NotContains(d.t, d.activeEdges, edge)
 	d.commandsRan = append(d.commandsRan, edge.EvaluateCommand(false))
 	switch edge.Rule().Name() {
 	case "cat", "cat_rsp", "cat_rsp_out", "cc", "cp_multi_msvc", "cp_multi_gcc", "touch", "touch-interrupt", "touch-fail-tick2":
@@ -670,14 +674,14 @@ func (d *FakeCommandRunner) StartCommand(edge *graph.Edge) bool {
 		}
 	default:
 		fmt.Printf("unknown command\n")
-		return false
+		return fmt.Errorf("unknown command\n")
 	}
 
 	d.activeEdges = append(d.activeEdges, edge)
 
 	// Allow tests to control the order by the name of the first output.
 	slices.SortFunc(d.activeEdges, CompareEdgesByOutput)
-	return true
+	return nil
 }
 
 func (d *FakeCommandRunner) WaitForCommand() *build.Result {
@@ -777,22 +781,370 @@ type buildTestHelper struct {
 }
 
 func makeConfig() build_config.Config {
-	return build_config.Config{
-		Verbosity: build_config.Quiet,
-	}
+	config := build_config.Create()
+	config.Verbosity = build_config.Quiet
+	return config
 }
 
-func newBuildTestHelper(t *testing.T, log *deps_log.DepsLog) *buildTestHelper {
+func newBuildTestHelper(t *testing.T) *buildTestHelper {
+	return newBuildTestHelperWithDepsLog(t, nil)
+}
+
+func newBuildTestHelperWithDepsLog(t *testing.T, log *deps_log.DepsLog) *buildTestHelper {
 	t.Helper()
 
+	planHelper := newStateTestWithBuiltinRulesHelper(t)
 	conf := makeConfig()
 	fs := disk.NewMockDiskInterface()
-	return &buildTestHelper{
-		stateTestWithBuiltinRulesHelper: newStateTestWithBuiltinRulesHelper(t),
+	st := status.NewPrinter(conf)
+	th := &buildTestHelper{
+		stateTestWithBuiltinRulesHelper: planHelper,
 		config:                          conf,
 		commandRunner:                   newFakeCommandRunner(t, fs),
 		fs:                              fs,
-		status:                          status.NewPrinter(conf),
-		// TODO( builder )
+		status:                          st,
+		builder:                         build.NewBuilder(planHelper.state, conf, nil, log, fs, st, 0),
 	}
+	th.SetUp()
+	return th
+}
+
+func (h *buildTestHelper) SetUp() {
+	h.builder.TestOnlySetCommandRunner(h.commandRunner)
+	test.AssertParse(h.t, `
+build cat1: cat in1
+build cat2: cat in1 in2
+build cat12: cat cat1 cat2
+`, h.stateTestWithBuiltinRulesHelper.state)
+
+	h.fs.WriteFile("in1", []byte{})
+	h.fs.WriteFile("in2", []byte{})
+}
+
+func (h *buildTestHelper) IsPathDead(_ string) bool {
+	return false
+}
+
+func (h *buildTestHelper) RebuildTarget(target, manifest, logPath, depsPath string, st *state.State) {
+	t := h.stateTestWithBuiltinRulesHelper.t
+	pstate := state.New()
+	if st != nil {
+		pstate = st
+	}
+
+	test.AddCatRule(t, pstate)
+	test.AssertParse(t, manifest, pstate)
+
+	var pbuildLog *build_log.BuildLog
+	if logPath != "" {
+		buildLog := build_log.NewBuildLog()
+		assert.NoError(t, buildLog.Load(logPath))
+		assert.NoError(t, buildLog.OpenForWrite(logPath, h))
+		pbuildLog = buildLog
+	}
+
+	var pdepsLog *deps_log.DepsLog
+	if depsPath != "" {
+		depsLog := deps_log.NewDepsLog()
+		assert.NoError(t, depsLog.Load(depsPath, pstate))
+		assert.NoError(t, depsLog.OpenForWrite(depsPath))
+		pdepsLog = depsLog
+	}
+
+	builder := build.NewBuilder(pstate, h.config, pbuildLog, pdepsLog, h.fs, h.status, 0)
+	_, err := builder.AddTargetByName(target)
+	require.NoError(t, err)
+
+	h.commandRunner.commandsRan = h.commandRunner.commandsRan[:0]
+	builder.TestOnlySetCommandRunner(h.commandRunner)
+	if !builder.AlreadyUpToDate() {
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+	}
+}
+
+func (h *buildTestHelper) Dirty(path string) {
+	node := h.stateTestWithBuiltinRulesHelper.state.GetNode(path)
+	node.MarkDirty()
+
+	// If it's an input file, mark that we've already stat()ed it and
+	// it's missing.
+	if node.InEdge() == nil {
+		node.MarkMissing()
+	}
+}
+
+func TestNoWork(t *testing.T) {
+	th := newBuildTestHelper(t)
+	require.True(t, th.builder.AlreadyUpToDate())
+}
+
+func TestOneStep(t *testing.T) {
+	// Given a dirty target with one ready input,
+	// we should rebuild the target.
+	th := newBuildTestHelper(t)
+	th.Dirty("cat1")
+
+	_, err := th.builder.AddTargetByName("cat1")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
+	require.Equal(t, "cat in1 > cat1", th.commandRunner.commandsRan[0])
+}
+
+func TestOneStep2(t *testing.T) {
+	// Given a target with one dirty input,
+	// we should rebuild the target.
+	th := newBuildTestHelper(t)
+	th.Dirty("cat1")
+
+	_, err := th.builder.AddTargetByName("cat1")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
+	require.Equal(t, "cat in1 > cat1", th.commandRunner.commandsRan[0])
+}
+
+func TestTwoStep(t *testing.T) {
+	th := newBuildTestHelper(t)
+	_, err := th.builder.AddTargetByName("cat12")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+	assert.Equal(t, 3, len(th.commandRunner.commandsRan))
+
+	// Depending on how the pointers work out, we could've ran
+	// the first two commands in either order.
+	require.Contains(t, th.commandRunner.commandsRan[:2], "cat in1 > cat1")
+	require.Contains(t, th.commandRunner.commandsRan[:2], "cat in1 in2 > cat2")
+
+	require.Equal(t, th.commandRunner.commandsRan[2], "cat cat1 cat2 > cat12")
+
+	th.fs.Tick()
+
+	// Modifying in2 requires rebuilding one intermediate file
+	// and the final file.
+	th.fs.WriteFile("in2", []byte{})
+	th.state.Reset()
+
+	_, err = th.builder.AddTargetByName("cat12")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 5, len(th.commandRunner.commandsRan))
+	require.Equal(t, th.commandRunner.commandsRan[3], "cat in1 in2 > cat2")
+	require.Equal(t, th.commandRunner.commandsRan[4], "cat cat1 cat2 > cat12")
+}
+
+func TestTwoOutputs(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule touch
+  command = touch $out
+build out1 out2: touch in.txt
+`, th.state)
+	th.fs.WriteFile("in.txt", []byte{})
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
+	require.Equal(t, th.commandRunner.commandsRan[0], "touch out1 out2")
+}
+
+func TestImplicitOutput(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule touch
+  command = touch $out $out.imp
+build out | out.imp: touch in.txt
+`, th.state)
+	th.fs.WriteFile("in.txt", []byte{})
+
+	_, err := th.builder.AddTargetByName("out.imp")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
+	require.Equal(t, "touch out out.imp", th.commandRunner.commandsRan[0])
+}
+
+func TestMultiOutIn(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule touch
+  command = touch $out
+build in1 otherfile: touch in
+build out: touch in | in1
+`, th.state)
+
+	th.fs.WriteFile("in", []byte{})
+	th.fs.Tick()
+	th.fs.WriteFile("in1", []byte{})
+
+	_, err := th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+}
+
+func TestChain(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+build c2: cat c1
+build c3: cat c2
+build c4: cat c3
+build c5: cat c4
+`, th.state)
+
+	th.fs.WriteFile("c1", []byte{})
+
+	_, err := th.builder.AddTargetByName("c5")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 4, len(th.commandRunner.commandsRan))
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("c5")
+	require.NoError(t, err)
+	assert.True(t, th.builder.AlreadyUpToDate())
+
+	th.fs.Tick()
+
+	th.fs.WriteFile("c3", []byte{})
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("c5")
+	require.NoError(t, err)
+	assert.False(t, th.builder.AlreadyUpToDate())
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 2, len(th.commandRunner.commandsRan)) // 3->4, 4->5
+}
+
+func TestMissingInput(t *testing.T) {
+	// Input is referenced by build file, but no rule for it.
+	th := newBuildTestHelper(t)
+	th.Dirty("in1")
+	_, err := th.builder.AddTargetByName("cat1")
+	require.Error(t, err)
+	assert.Equal(t, "'in1', needed by 'cat1', missing and no known rule to make it", err.Error())
+}
+
+func TestMissingTarget(t *testing.T) {
+	// Target is not referenced by build file.
+	th := newBuildTestHelper(t)
+	_, err := th.builder.AddTargetByName("meow")
+	require.Error(t, err)
+	assert.Equal(t, "unknown target: 'meow'", err.Error())
+}
+
+func TestMakeDirs(t *testing.T) {
+	th := newBuildTestHelper(t)
+	if runtime.GOOS == "windows" {
+		test.AssertParse(t, "build subdir\\dir2\\file: cat in1\n", th.state)
+	} else {
+		test.AssertParse(t, "build subdir/dir2/file: cat in1\n", th.state)
+	}
+
+	_, err := th.builder.AddTargetByName("subdir/dir2/file")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Equal(t, 2, len(th.fs.DirectoriesMade()))
+	assert.Equal(t, "subdir", th.fs.DirectoriesMade()[0])
+	assert.Equal(t, "subdir/dir2", th.fs.DirectoriesMade()[1])
+}
+
+func TestDepFileMissing(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule cc
+  command = cc $in
+  depfile = $out.d
+build fo$ o.o: cc foo.c
+`, th.state)
+	th.fs.WriteFile("foo.c", []byte{})
+
+	_, err := th.builder.AddTargetByName("fo o.o")
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(th.fs.FilesRead()))
+	assert.Equal(t, "fo o.o.d", th.fs.FilesRead()[0])
+}
+
+func TestDepFileOK(t *testing.T) {
+	th := newBuildTestHelper(t)
+	origEdges := len(th.state.Edges())
+	test.AssertParse(t, `
+rule cc
+  command = cc $in
+  depfile = $out.d
+build foo.o: cc foo.c
+`, th.state)
+	edge := th.state.Edges()[len(th.state.Edges())-1]
+
+	th.fs.WriteFile("foo.c", []byte{})
+	th.state.GetNode("bar.h").MarkDirty() // Mark bar.h as missing.
+	th.fs.WriteFile("foo.o.d", []byte("foo.o: blah.h bar.h\n"))
+	_, err := th.builder.AddTargetByName("foo.o")
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(th.fs.FilesRead()))
+	assert.Equal(t, "foo.o.d", th.fs.FilesRead()[0])
+
+	// Expect one new edge generating foo.o. Loading the depfile should have
+	// added nodes, but not phony edges to the graph.
+	assert.Equal(t, origEdges+1, len(th.state.Edges()))
+
+	// Verify that nodes for blah.h and bar.h were added and that they
+	// are marked as generated by a dep loader.
+	assert.False(t, th.state.LookupNode("foo.o").GeneratedByDepLoader())
+	assert.False(t, th.state.LookupNode("foo.c").GeneratedByDepLoader())
+	assert.NotNil(t, th.state.LookupNode("blah.h"))
+	assert.True(t, th.state.LookupNode("blah.h").GeneratedByDepLoader())
+	assert.NotNil(t, th.state.LookupNode("bar.h"))
+	assert.True(t, th.state.LookupNode("bar.h").GeneratedByDepLoader())
+
+	// Expect our edge to now have three inputs: foo.c and two headers.
+	assert.Equal(t, 3, len(edge.Inputs()))
+
+	edge.Dump("test")
+
+	// Expect the command line we generate to only use the original input.
+	assert.Equal(t, "cc foo.c", edge.EvaluateCommand(false))
+}
+
+func TestDepFileParseError(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule cc
+  command = cc $in
+  depfile = $out.d
+build foo.o: cc foo.c
+`, th.state)
+	th.fs.WriteFile("foo.c", []byte{})
+	th.fs.WriteFile("foo.o.d", []byte("randomtext\n"))
+	_, err := th.builder.AddTargetByName("foo.o")
+	require.Error(t, err)
+	assert.Equal(t, "foo.o.d: expected ':' in depfile", err.Error())
 }

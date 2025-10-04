@@ -24,3 +24,14 @@ type Config struct {
 	MaxLoadAverage         float64
 	DepfileParserOptions   depfile_parser.DepfileParserOptions
 }
+
+func Create() Config {
+	return Config{
+		Verbosity:              Normal,
+		DryRun:                 false,
+		Parallelism:            1,
+		DisableJobserverClient: false,
+		FailuresAllowed:        1,
+		MaxLoadAverage:         0,
+	}
+}

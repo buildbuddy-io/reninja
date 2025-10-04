@@ -2,12 +2,15 @@ package build
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"sort"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/debug_flags"
 	"github.com/buildbuddy-io/gin/internal/dependency_scan"
+	"github.com/buildbuddy-io/gin/internal/depfile_parser"
 	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/dyndep"
@@ -16,9 +19,12 @@ import (
 	"github.com/buildbuddy-io/gin/internal/explanations"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
+	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/priority_queue"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/status"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
+	"github.com/buildbuddy-io/gin/internal/util"
 )
 
 type Result struct {
@@ -566,14 +572,14 @@ func (p *Plan) ScheduleWork(edge *graph.Edge, want Want) {
 	}
 }
 
-type RunningEdgeMap = map[*graph.Edge]int
+type RunningEdgeMap = map[*graph.Edge]int64
 
 type Builder struct {
 	state         *state.State
 	config        build_config.Config
 	plan          *Plan
 	jobserver     jobserver.Client
-	commandRunner *CommandRunner
+	commandRunner CommandRunner
 	status        status.Status
 
 	runningEdges    RunningEdgeMap
@@ -612,8 +618,432 @@ func NewBuilder(state *state.State, config build_config.Config, buildLog *build_
 
 	b.scan = dependency_scan.New(state, buildLog, depsLog, diskInterface, config.DepfileParserOptions, realExp)
 	return b
-
 }
+func (b *Builder) Close() {
+	b.Cleanup()
+	b.explanations = explanations.NewOptional(nil)
+}
+
+func (b *Builder) Cleanup() {
+	if b.commandRunner != nil {
+		activeEdges := b.commandRunner.GetActiveEdges()
+		b.commandRunner.Abort()
+
+		for _, e := range activeEdges {
+			depfile := e.GetUnescapedDepfile()
+			for _, o := range e.Outputs() {
+				// Only delete this output if it was actually modified.  This is
+				// important for things like the generator where we don't want to
+				// delete the manifest file if we can avoid it.  But if the rule
+				// uses a depfile, always delete.  (Consider the case where we
+				// need to rebuild an output because of a modified header file
+				// mentioned in a depfile, and the command touches its depfile
+				// but is interrupted before it touches its output file.)
+				newMtime, err := b.diskInterface.Stat(o.Path())
+				if err != nil {
+					b.status.Error("%s", err.Error())
+				}
+				if depfile != "" || o.Mtime() != newMtime {
+					b.diskInterface.RemoveFile(o.Path())
+				}
+			}
+			if depfile != "" {
+				b.diskInterface.RemoveFile(depfile)
+			}
+		}
+	}
+
+	if lockfileMtime, err := b.diskInterface.Stat(b.lockFilePath); err == nil && lockfileMtime > 0 {
+		b.diskInterface.RemoveFile(b.lockFilePath)
+	}
+}
+
+func (b *Builder) AddTargetByName(name string) (*graph.Node, error) {
+	node := b.state.LookupNode(name)
+	if node == nil {
+		return nil, fmt.Errorf("unknown target: '%s'", name)
+	}
+	added, err := b.AddTarget(node)
+	if err != nil || !added {
+		return nil, err
+	}
+	return node, nil
+}
+
+func (b *Builder) AddTarget(target *graph.Node) (bool, error) {
+	validationNodes, err := b.scan.RecomputeDirty(target, nil)
+	if err != nil {
+		return false, err
+	}
+	inEdge := target.InEdge()
+	if inEdge == nil || !inEdge.OutputsReady() {
+		added, err := b.plan.AddTarget(target)
+		if err != nil || !added {
+			return false, err
+		}
+	}
+
+	// Also add any validation nodes found during RecomputeDirty as top level
+	// targets.
+	for _, n := range validationNodes {
+		if validationInEdge := n.InEdge(); validationInEdge != nil {
+			if outputsReady := validationInEdge.OutputsReady(); !outputsReady {
+				added, err := b.plan.AddTarget(n)
+				if err != nil || !added {
+					return false, err
+				}
+			}
+		}
+	}
+	return true, nil
+}
+
+func (b *Builder) AlreadyUpToDate() bool {
+	return !b.plan.MoreToDo()
+}
+
+func (b *Builder) Build() (exit_status.ExitStatusType, error) {
+	if b.AlreadyUpToDate() {
+		panic("already up to date!")
+	}
+	b.plan.PrepareQueue()
+
+	pendingCommands := 0
+	failuresAllowed := b.config.FailuresAllowed
+
+	// Set up the command runner if we haven't done so already.
+	// TODO(tylerw): why is this happening here? should have happened in New??
+	if b.commandRunner == nil {
+		if b.config.DryRun {
+			b.commandRunner = NewDryCommandRunner()
+		} else {
+			b.commandRunner = NewRealCommandRunner(b.config, b.jobserver)
+		}
+	}
+
+	// We are about to start the build process.
+	b.status.BuildStarted()
+
+	// This main loop runs the entire build process.
+	// It is structured like this:
+	// First, we attempt to start as many commands as allowed by the
+	// command runner.
+	// Second, we attempt to wait for / reap the next finished command.
+	for b.plan.MoreToDo() {
+		// See if we can start any more commands.
+		if failuresAllowed > 0 {
+			capacity := b.commandRunner.CanRunMore()
+			for capacity > 0 {
+				edge := b.plan.FindWork()
+				if edge == nil {
+					break
+				}
+
+				if edge.GetBindingBool("generator") {
+					b.scan.BuildLog().Close()
+				}
+
+				if started, err := b.StartEdge(edge); err != nil || !started {
+					b.Cleanup()
+					b.status.BuildFinished()
+					return exit_status.ExitFailure, err
+				}
+
+				if edge.IsPhony() {
+					finished, err := b.plan.EdgeFinished(edge, EdgeSucceeded)
+					if err != nil || !finished {
+						b.Cleanup()
+						b.status.BuildFinished()
+						return exit_status.ExitFailure, err
+					}
+				} else {
+					pendingCommands += 1
+					capacity -= 1
+
+					// Re-evaluate capacity.
+					currentCapacity := b.commandRunner.CanRunMore()
+					if currentCapacity < capacity {
+						capacity = currentCapacity
+					}
+				}
+			}
+
+			// We are finished with all work items and have no pending
+			// commands. Therefore, break out of the main loop.
+			if pendingCommands == 0 && !b.plan.MoreToDo() {
+				break
+			}
+		}
+
+		// See if we can reap any finished commands.
+		if pendingCommands > 0 {
+			result := b.commandRunner.WaitForCommand()
+			if result == nil || result.Status == exit_status.ExitInterrupted {
+				b.Cleanup()
+				b.status.BuildFinished()
+				return result.Status, fmt.Errorf("interrupted by user")
+			}
+
+			pendingCommands -= 1
+
+			commandFinished, err := b.FinishCommand(result)
+			b.SetFailureCode(result.Status)
+			if !commandFinished {
+				b.Cleanup()
+				b.status.BuildFinished()
+				if result.Success() {
+					// If the command pretend succeeded, the status wasn't set to a proper exit code,
+					// so we set it to ExitFailure.
+					result.Status = exit_status.ExitFailure
+					b.SetFailureCode(result.Status)
+				}
+				return result.Status, err
+			}
+
+			if !result.Success() {
+				if failuresAllowed > 0 {
+					failuresAllowed -= 1
+				}
+			}
+
+			// We made some progress; start the main loop over.
+			continue
+		}
+
+		// If we get here, we cannot make any more progress.
+		b.status.BuildFinished()
+
+		var err error
+		if failuresAllowed == 0 {
+			if b.config.FailuresAllowed > 1 {
+				err = fmt.Errorf("subcommands failed")
+			} else {
+				err = fmt.Errorf("subcommand failed")
+			}
+		} else if failuresAllowed < b.config.FailuresAllowed {
+			err = fmt.Errorf("cannot make progress due to previous errors")
+		} else {
+			err = fmt.Errorf("stuck [this is a bug]")
+		}
+
+		return b.GetExitCode(), err
+	}
+	b.status.BuildFinished()
+	return exit_status.ExitSuccess, nil
+}
+
+func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
+	if edge.IsPhony() {
+		return true, nil
+	}
+	startTimeMillis := metrics.GetTimeMillis() - b.startTimeMillis
+	b.runningEdges[edge] = startTimeMillis
+
+	b.status.BuildEdgeStarted(edge, startTimeMillis)
+
+	var buildStart timestamp.TimeStamp
+	if b.config.DryRun {
+		buildStart = 0
+	} else {
+		buildStart = -1
+	}
+
+	// Create directories necessary for outputs and remember the current
+	// filesystem mtime to record later
+	// XXX: this will block; do we care?
+	for _, o := range edge.Outputs() {
+		if err := b.diskInterface.MakeDirs(o.Path()); err != nil {
+			return false, err
+		}
+		if buildStart == -1 {
+			b.diskInterface.WriteFile(b.lockFilePath, []byte{})
+			if bs, err := b.diskInterface.Stat(b.lockFilePath); err == nil {
+				buildStart = bs
+			} else {
+				buildStart = 0
+			}
+		}
+	}
+	edge.SetCommandStartTime(buildStart)
+
+	// Create depfile directory if needed.
+	// XXX: this may also block; do we care?
+	depfile := edge.GetUnescapedDepfile()
+	if depfile != "" {
+		if err := b.diskInterface.MakeDirs(depfile); err != nil {
+			return false, err
+		}
+	}
+
+	// Create response file, if needed
+	// XXX: this may also block; do we care?
+	rspFile := edge.GetUnescapedRspfile()
+	if rspFile != "" {
+		content := edge.GetBinding("rspfile_content")
+		if err := b.diskInterface.WriteFile(rspFile, []byte(content)); err != nil {
+			return false, err
+		}
+	}
+
+	// start command computing and run it
+	if err := b.commandRunner.StartCommand(edge); err != nil {
+		return false, fmt.Errorf("command '%s' failed.", edge.EvaluateCommand(false))
+	}
+
+	return true, nil
+}
+
+func (b *Builder) FinishCommand(result *Result) (bool, error) {
+	edge := result.Edge
+
+	// First try to extract dependencies from the result, if any.
+	// This must happen first as it filters the command output (we want
+	// to filter /showIncludes output, even on compile failure) and
+	// extraction itself can fail, which makes the command fail from a
+	// build perspective.
+	var depsNodes []*graph.Node
+	depsType := edge.GetBinding("deps")
+	depsPrefix := edge.GetBinding("msvc_deps_prefix")
+	if depsType != "" {
+		dn, err := b.ExtractDeps(result, depsType, depsPrefix)
+		if err != nil && result.Success() {
+			if result.Output != "" {
+				result.Output += "\n"
+			}
+			result.Output += err.Error()
+			result.Status = exit_status.ExitFailure
+		}
+		depsNodes = dn
+	}
+
+	startTimeMillis := b.runningEdges[edge]
+	endTimeMillis := metrics.GetTimeMillis() - startTimeMillis
+	delete(b.runningEdges, edge)
+
+	b.status.BuildEdgeFinished(edge, startTimeMillis, endTimeMillis, result.Status, result.Output)
+
+	// The rest of this function only applies to successful commands.
+	if !result.Success() {
+		return b.plan.EdgeFinished(edge, EdgeFailed)
+	}
+
+	// Restat the edge outputs
+	recordMtime := timestamp.TimeStamp(0)
+	if !b.config.DryRun {
+		restat := edge.GetBindingBool("restat")
+		generator := edge.GetBindingBool("generator")
+		nodeCleaned := false
+		recordMtime = edge.CommandStartTime()
+
+		// restat and generator rules must restat the outputs after the build
+		// has finished. if record_mtime == 0, then there was an error while
+		// attempting to touch/stat the temp file when the edge started and
+		// we should fall back to recording the outputs' current mtime in the
+		// log.
+		if recordMtime == 0 || restat || generator {
+			for _, o := range edge.Outputs() {
+				newMtime, err := b.diskInterface.Stat(o.Path())
+				if err != nil {
+					return false, err
+				}
+				if newMtime > recordMtime {
+					recordMtime = newMtime
+				}
+				if o.Mtime() == newMtime && restat {
+					// The rule command did not change the output.  Propagate the clean
+					// state through the build graph.
+					// Note that this also applies to nonexistent outputs (mtime == 0).
+					if !b.plan.CleanNode(b.scan, o) {
+						return false, nil
+					}
+					nodeCleaned = true
+				}
+			}
+		}
+
+		if nodeCleaned {
+			recordMtime = edge.CommandStartTime()
+		}
+	}
+	if done, err := b.plan.EdgeFinished(edge, EdgeSucceeded); err != nil || !done {
+		return done, err
+	}
+
+	// Delete any left over response file.
+	rspFile := edge.GetUnescapedRspfile()
+	if rspFile != "" && !debug_flags.KeepRsp {
+		b.diskInterface.RemoveFile(rspFile)
+	}
+
+	if b.scan.BuildLog() != nil {
+		if err := b.scan.BuildLog().RecordCommand(edge, startTimeMillis, endTimeMillis, recordMtime); err != nil {
+			return false, fmt.Errorf("Error writing to build log: %s", err)
+		}
+	}
+
+	if depsType != "" && !b.config.DryRun {
+		if len(edge.Outputs()) > 0 {
+			panic("should have been rejected by parser")
+		}
+		for _, o := range edge.Outputs() {
+			depsMtime, err := b.diskInterface.Stat(o.Path())
+			if err != nil {
+				return false, err
+			}
+			if err := b.scan.DepsLog().RecordDeps(o, depsMtime, depsNodes); err != nil {
+				return false, fmt.Errorf("Error writing to deps log: %s", err)
+			}
+		}
+	}
+	return true, nil
+}
+
+func (b *Builder) ExtractDeps(result *Result, depsType, depsPrefix string) ([]*graph.Node, error) {
+	depsNodes := make([]*graph.Node, 0)
+
+	if depsType == "msvc" {
+		// TODO(tylerw): CL PARSER LOGIC GOES HERE
+		return nil, fmt.Errorf("windows support tbd")
+	} else if depsType == "gcc" {
+		depfile := result.Edge.GetUnescapedDepfile()
+		if depfile == "" {
+			return nil, fmt.Errorf("edge with deps=gcc but no depfile makes no sense")
+		}
+		// Read depfile content.  Treat a missing depfile as empty.
+		content, err := b.diskInterface.ReadFile(depfile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				err = nil
+			} else {
+				return nil, err
+			}
+		}
+		if len(content) == 0 {
+			return nil, nil
+		}
+
+		deps := depfile_parser.New(b.config.DepfileParserOptions)
+		if err := deps.Parse(string(content)); err != nil {
+			return nil, err
+		}
+
+		// XXX check depfile matches expected output.
+		for _, in := range deps.Ins() {
+			path, _ := util.CanonicalizePath(in)
+			depsNodes = append(depsNodes, b.state.GetNode(path))
+		}
+		if !debug_flags.KeepDepfile {
+			if err := b.diskInterface.RemoveFile(depfile); err != nil {
+				return nil, fmt.Errorf("deleting depfile: %s", err)
+			}
+		}
+	} else {
+		log.Fatalf("unknown deps type: '%s'", depsType)
+	}
+
+	return depsNodes, nil
+}
+
 func (b *Builder) LoadDyndeps(node *graph.Node) error {
 	ddf := dyndep_parser.NewDyndepFile()
 	if err := b.scan.LoadDyndepsInto(node, ddf); err != nil {
@@ -625,4 +1055,22 @@ func (b *Builder) LoadDyndeps(node *graph.Node) error {
 	}
 
 	return nil
+}
+
+func (b *Builder) TestOnlySetCommandRunner(runner CommandRunner) {
+	b.commandRunner = runner
+}
+
+func (b *Builder) GetExitCode() exit_status.ExitStatusType {
+	return b.exitCode
+}
+
+func (b *Builder) SetFailureCode(code exit_status.ExitStatusType) {
+	if code != exit_status.ExitSuccess {
+		b.exitCode = code
+	}
+}
+
+func (b *Builder) Dump() {
+	b.plan.Dump()
 }

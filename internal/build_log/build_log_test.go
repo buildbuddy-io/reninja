@@ -241,7 +241,7 @@ func (t *testDiskInterface) WriteFile(path string, contents []byte) error {
 	panic("should not be called")
 }
 
-func (t *testDiskInterface) MakeDir(path string) error {
+func (t *testDiskInterface) MakeDirs(path string) error {
 	panic("should not be called")
 }
 
