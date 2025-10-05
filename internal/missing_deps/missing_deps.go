@@ -9,7 +9,6 @@ import (
 	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/eval_env"
-	"github.com/buildbuddy-io/gin/internal/explanations"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/implicit_dep_loader"
 	"github.com/buildbuddy-io/gin/internal/state"
@@ -75,7 +74,7 @@ func (s *MissingDependencyScanner) ProcessNode(node *graph.Node) {
 		}
 	} else {
 		parserOpts := depfile_parser.DepfileParserOptions{}
-		depLoader := implicit_dep_loader.NewNodeStoringImplicitDepLoader(s.state, s.depsLog, s.diskInterface, parserOpts, explanations.NewOptional(nil))
+		depLoader := implicit_dep_loader.NewNodeStoringImplicitDepLoader(s.state, s.depsLog, s.diskInterface, parserOpts, nil)
 		loaded, err := depLoader.LoadDeps(edge)
 		if err != nil {
 			fmt.Printf("LoadDeps err: %s", err)
