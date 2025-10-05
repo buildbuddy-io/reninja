@@ -306,7 +306,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 			outputs += o.Path() + " "
 		}
 
-		failed := fmt.Sprintf("FAILED: [code=%s] ", exitCode)
+		failed := fmt.Sprintf("FAILED: [code=%d] ", exitCode)
 		if p.printer.SupportsColor() {
 			p.printer.PrintOnNewline("\x1B[31m" + failed + "\x1B[0m" + outputs + "\n")
 		} else {
