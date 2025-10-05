@@ -42,8 +42,8 @@ func EdgePriorityGreater(e1, e2 *Edge) bool {
 
 // Edge represents a build rule connecting input and output nodes
 type Edge struct {
-	rule          *eval_env.Rule
-	pool          *Pool
+	rule *eval_env.Rule
+	pool *Pool
 
 	// These should be stored in separate lists by type.
 	// It's error prone and confusing to do it this way.

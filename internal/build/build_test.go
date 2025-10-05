@@ -1128,8 +1128,6 @@ build foo.o: cc foo.c
 	// Expect our edge to now have three inputs: foo.c and two headers.
 	assert.Equal(t, 3, len(edge.Inputs()))
 
-	edge.Dump("test")
-
 	// Expect the command line we generate to only use the original input.
 	assert.Equal(t, "cc foo.c", edge.EvaluateCommand(false))
 }
@@ -1147,4 +1145,132 @@ build foo.o: cc foo.c
 	_, err := th.builder.AddTargetByName("foo.o")
 	require.Error(t, err)
 	assert.Equal(t, "foo.o.d: expected ':' in depfile", err.Error())
+}
+
+func TestEncounterReadyTwice(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule touch
+  command = touch $out
+build c: touch
+build b: touch || c
+build a: touch | b || c
+`, th.state)
+
+	cOut := th.state.GetNode("c").OutEdges()
+	require.Equal(t, 2, len(cOut))
+	assert.Equal(t, "b", cOut[0].Outputs()[0].Path())
+	assert.Equal(t, "a", cOut[1].Outputs()[0].Path())
+
+	th.fs.WriteFile("b", []byte{})
+	_, err := th.builder.AddTargetByName("a")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 2, len(th.commandRunner.commandsRan))
+}
+
+func TestRebuildOrderOnlyDeps(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule cc
+  command = cc $in
+rule true
+  command = true
+build oo.h: cc oo.h.in
+build foo.o: cc foo.c || oo.h
+`, th.state)
+
+	th.fs.WriteFile("foo.c", []byte{})
+	th.fs.WriteFile("oo.h.in", []byte{})
+
+	// foo.o and order-only dep dirty, build both.
+	_, err := th.builder.AddTargetByName("foo.o")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 2, len(th.commandRunner.commandsRan))
+
+	// all clean, no rebuild.
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("foo.o")
+	require.NoError(t, err)
+	assert.True(t, th.builder.AlreadyUpToDate())
+
+	// order-only dep missing, build it only.
+	th.fs.RemoveFile("oo.h")
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("foo.o")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
+	assert.Equal(t, "cc oo.h.in", th.commandRunner.commandsRan[0])
+
+	th.fs.Tick()
+
+	// order-only dep dirty, build it only.
+	th.fs.WriteFile("oo.h.in", []byte{})
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("foo.o")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
+	assert.Equal(t, "cc oo.h.in", th.commandRunner.commandsRan[0])
+}
+
+func TestPhony(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+build out: cat bar.cc
+build all: phony out
+`, th.state)
+	th.fs.WriteFile("bar.cc", []byte{})
+
+	_, err := th.builder.AddTargetByName("all")
+	require.NoError(t, err)
+
+	// Only one command to run, because phony runs no command.
+	assert.False(t, th.builder.AlreadyUpToDate())
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
+}
+
+func TestPhonyNoWork(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+build out: cat bar.cc
+build all: phony out
+`, th.state)
+	th.fs.WriteFile("bar.cc", []byte{})
+	th.fs.WriteFile("out", []byte{})
+
+	_, err := th.builder.AddTargetByName("all")
+	require.NoError(t, err)
+	assert.True(t, th.builder.AlreadyUpToDate())
+}
+
+// Test a self-referencing phony. Ideally this should not work, but
+// ninja 1.7 and below tolerated and CMake 2.8.12.x and 3.0.x both
+// incorrectly produce it. We tolerate it for compatibility.
+func TestPhonySelfReference(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+build a: phony a
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("a")
+	require.NoError(t, err)
+	assert.True(t, th.builder.AlreadyUpToDate())
 }
