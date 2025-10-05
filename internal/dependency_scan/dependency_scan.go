@@ -268,7 +268,7 @@ func (s *DependencyScan) VerifyDAG(node *graph.Node, stack []*graph.Node) error 
 	if start+1 == len(stack) && e.MaybePhonycycleDiagnostic() {
 		errMsg += " [-w phonycycle=err]"
 	}
-	return fmt.Errorf(errMsg)
+	return fmt.Errorf("%s", errMsg)
 }
 
 func (s *DependencyScan) RecomputeOutputsDirty(edge *graph.Edge, mostRecentInput *graph.Node, outputsDirty *bool) bool {
