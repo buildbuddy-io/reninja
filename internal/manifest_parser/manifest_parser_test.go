@@ -1,6 +1,7 @@
 package manifest_parser_test
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/buildbuddy-io/gin/internal/disk"
@@ -203,7 +204,12 @@ build $x: foo y
 `, s)
 	assert.Equal(t, `$dollar`, s.Bindings().LookupVariable("x"))
 	edge := s.Edges()[0]
-	assert.Equal(t, `$dollarbar$baz$blah`, edge.EvaluateCommand(false))
+	edge.Dump("testdollars")
+	if runtime.GOOS == "windows" {
+		assert.Equal(t, "$dollarbar$baz$blah", edge.EvaluateCommand(false))
+	} else {
+		assert.Equal(t, "'$dollar'bar$baz$blah", edge.EvaluateCommand(false))
+	}
 }
 
 func TestRules(t *testing.T) {
