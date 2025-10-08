@@ -237,10 +237,13 @@ func (t *testDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 	return 4, nil
 }
 
-func (t *testDiskInterface) WriteFile(path string, contents []byte) error {
+func (t *testDiskInterface) WriteFile(path string, contents []byte, clrfOnWindows bool) error {
 	panic("should not be called")
 }
 
+func (t *testDiskInterface) MakeDir(path string) error {
+	panic("should not be called")
+}
 func (t *testDiskInterface) MakeDirs(path string) error {
 	panic("should not be called")
 }
@@ -249,7 +252,7 @@ func (t *testDiskInterface) ReadFile(path string) ([]byte, error) {
 	panic("should not be called")
 }
 
-func (t *testDiskInterface) RemoveFile(path string) error {
+func (t *testDiskInterface) RemoveFile(path string) int {
 	panic("should not be called")
 }
 

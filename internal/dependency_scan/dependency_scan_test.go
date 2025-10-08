@@ -20,8 +20,8 @@ func TestMissingImplicit(t *testing.T) {
 	test.AddCatRule(t, s)
 	test.AssertParse(t, "build out: cat in | implicit\n", s)
 
-	require.NoError(t, fs.WriteFile("in", nil))
-	require.NoError(t, fs.WriteFile("out", nil))
+	require.NoError(t, fs.Create("in", nil))
+	require.NoError(t, fs.Create("out", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -40,10 +40,10 @@ func TestModifiedImplicit(t *testing.T) {
 	test.AddCatRule(t, s)
 	test.AssertParse(t, "build out: cat in | implicit\n", s)
 
-	require.NoError(t, fs.WriteFile("in", nil))
-	require.NoError(t, fs.WriteFile("out", nil))
+	require.NoError(t, fs.Create("in", nil))
+	require.NoError(t, fs.Create("out", nil))
 	fs.Tick()
-	require.NoError(t, fs.WriteFile("implicit", nil))
+	require.NoError(t, fs.Create("implicit", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -65,11 +65,11 @@ rule catdep
 build out.o: catdep foo.cc
 `, s)
 
-	require.NoError(t, fs.WriteFile("foo.cc", nil))
-	require.NoError(t, fs.WriteFile("out.o.d", []byte("out.o: ./foo/../implicit.h\n")))
-	require.NoError(t, fs.WriteFile("out.o", nil))
+	require.NoError(t, fs.Create("foo.cc", nil))
+	require.NoError(t, fs.Create("out.o.d", []byte("out.o: ./foo/../implicit.h\n")))
+	require.NoError(t, fs.Create("out.o", nil))
 	fs.Tick()
-	require.NoError(t, fs.WriteFile("implicit.h", nil))
+	require.NoError(t, fs.Create("implicit.h", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -94,12 +94,12 @@ build implicit.h: cat data
 build out.o: catdep foo.cc || implicit.h
 `, s)
 
-	require.NoError(t, fs.WriteFile("implicit.h", nil))
-	require.NoError(t, fs.WriteFile("foo.cc", nil))
-	require.NoError(t, fs.WriteFile("out.o.d", []byte("out.o: implicit.h\n")))
-	require.NoError(t, fs.WriteFile("out.o", nil))
+	require.NoError(t, fs.Create("implicit.h", nil))
+	require.NoError(t, fs.Create("foo.cc", nil))
+	require.NoError(t, fs.Create("out.o.d", []byte("out.o: implicit.h\n")))
+	require.NoError(t, fs.Create("out.o", nil))
 	fs.Tick()
-	require.NoError(t, fs.WriteFile("data", nil))
+	require.NoError(t, fs.Create("data", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -131,8 +131,8 @@ func TestImplicitOutputMissing(t *testing.T) {
 	test.AddCatRule(t, s)
 	test.AssertParse(t, "build out | out.imp: cat in\n", s)
 
-	require.NoError(t, fs.WriteFile("in", nil))
-	require.NoError(t, fs.WriteFile("out", nil))
+	require.NoError(t, fs.Create("in", nil))
+	require.NoError(t, fs.Create("out", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -149,10 +149,10 @@ func TestImplicitOutputOutOfDate(t *testing.T) {
 	test.AddCatRule(t, s)
 	test.AssertParse(t, "build out | out.imp: cat in\n", s)
 
-	require.NoError(t, fs.WriteFile("out.imp", nil))
+	require.NoError(t, fs.Create("out.imp", nil))
 	fs.Tick()
-	require.NoError(t, fs.WriteFile("in", nil))
-	require.NoError(t, fs.WriteFile("out", nil))
+	require.NoError(t, fs.Create("in", nil))
+	require.NoError(t, fs.Create("out", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -181,7 +181,7 @@ func TestImplicitOutputOnlyMissing(t *testing.T) {
 	test.AddCatRule(t, s)
 	test.AssertParse(t, "build | out.imp: cat in\n", s)
 
-	require.NoError(t, fs.WriteFile("in", nil))
+	require.NoError(t, fs.Create("in", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -197,9 +197,9 @@ func TestImplicitOutputOnlyOutOfDate(t *testing.T) {
 	test.AddCatRule(t, s)
 	test.AssertParse(t, "build | out.imp: cat in\n", s)
 
-	require.NoError(t, fs.WriteFile("out.imp", nil))
+	require.NoError(t, fs.Create("out.imp", nil))
 	fs.Tick()
-	require.NoError(t, fs.WriteFile("in", nil))
+	require.NoError(t, fs.Create("in", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -220,9 +220,9 @@ rule catdep
 build ./out.o: catdep ./foo.cc
 `, s)
 
-	require.NoError(t, fs.WriteFile("foo.cc", nil))
-	require.NoError(t, fs.WriteFile("out.o.d", []byte("out.o: foo.cc\n")))
-	require.NoError(t, fs.WriteFile("out.o", nil))
+	require.NoError(t, fs.Create("foo.cc", nil))
+	require.NoError(t, fs.Create("out.o.d", []byte("out.o: foo.cc\n")))
+	require.NoError(t, fs.Create("out.o", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -273,9 +273,9 @@ rule catdep
 build ./out.o: catdep ./foo.cc
 `, s)
 
-	require.NoError(t, fs.WriteFile("foo.cc", nil))
-	require.NoError(t, fs.WriteFile("out.o.d", []byte("out.o: bar/../foo.cc\n")))
-	require.NoError(t, fs.WriteFile("out.o", nil))
+	require.NoError(t, fs.Create("foo.cc", nil))
+	require.NoError(t, fs.Create("out.o.d", []byte("out.o: bar/../foo.cc\n")))
+	require.NoError(t, fs.Create("out.o", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -296,11 +296,11 @@ rule catdep
 build ./out.o: catdep ./foo.cc
 `, s)
 
-	require.NoError(t, fs.WriteFile("foo.h", nil))
-	require.NoError(t, fs.WriteFile("foo.cc", nil))
+	require.NoError(t, fs.Create("foo.h", nil))
+	require.NoError(t, fs.Create("foo.cc", nil))
 	fs.Tick()
-	require.NoError(t, fs.WriteFile("out.o.d", []byte("out.o: foo.h\n")))
-	require.NoError(t, fs.WriteFile("out.o", nil))
+	require.NoError(t, fs.Create("out.o.d", []byte("out.o: foo.h\n")))
+	require.NoError(t, fs.Create("out.o", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -470,7 +470,7 @@ func TestCycleWithLengthZeroFromDepfile(t *testing.T) {
 build a b: deprule
 `, s)
 
-	require.NoError(t, fs.WriteFile("dep.d", []byte("a: b\n")))
+	require.NoError(t, fs.Create("dep.d", []byte("a: b\n")))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -496,7 +496,7 @@ build a b: deprule
 build c: r b
 `, s)
 
-	require.NoError(t, fs.WriteFile("dep.d", []byte("a: c\n")))
+	require.NoError(t, fs.Create("dep.d", []byte("a: c\n")))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -522,7 +522,7 @@ build c: r b
 build d: r a
 `, s)
 
-	require.NoError(t, fs.WriteFile("dep.d", []byte("a: c\n")))
+	require.NoError(t, fs.Create("dep.d", []byte("a: c\n")))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -543,7 +543,7 @@ func TestValidation(t *testing.T) {
 build validate: cat in
 `, s)
 
-	require.NoError(t, fs.WriteFile("in", nil))
+	require.NoError(t, fs.Create("in", nil))
 
 	opts := depfile_parser.DepfileParserOptions{}
 	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
@@ -567,8 +567,8 @@ build in_ph: phony in1
 build out1: touch in_ph
 `, s)
 
-	require.NoError(t, fs.WriteFile("in1", nil))
-	require.NoError(t, fs.WriteFile("out1", nil))
+	require.NoError(t, fs.Create("in1", nil))
+	require.NoError(t, fs.Create("out1", nil))
 	out1 := s.GetNode("out1")
 	in1 := s.GetNode("in1")
 
@@ -587,7 +587,7 @@ build out1: touch in_ph
 	// Touch in1. This should cause out1 to be dirty
 	s.Reset()
 	fs.Tick()
-	require.NoError(t, fs.WriteFile("in1", nil))
+	require.NoError(t, fs.Create("in1", nil))
 
 	require.NoError(t, in1.Stat(fs))
 	assert.Greater(t, in1.Mtime(), in1Mtime1)

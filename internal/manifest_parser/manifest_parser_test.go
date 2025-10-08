@@ -304,7 +304,7 @@ build final: cat out1
 func TestDuplicateEdgeInIncludedFile(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	fs.WriteFile("sub.ninja", []byte(
+	fs.Create("sub.ninja", []byte(
 		`rule cat
   command = cat $in > $out
 build out1 out2: cat in1
@@ -548,7 +548,7 @@ build a.o b.o: cc c.cc
 func TestSubNinja(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	fs.WriteFile("test.ninja", []byte(
+	fs.Create("test.ninja", []byte(
 		`var = inner
 build $builddir/inner: varref
 `))
@@ -589,7 +589,7 @@ func TestDuplicateRuleInDifferentSubninjas(t *testing.T) {
 	// Test that rules are scoped to subninjas.
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	fs.WriteFile("test.ninja", []byte(`rule cat
+	fs.Create("test.ninja", []byte(`rule cat
   command = cat
 `))
 	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
@@ -604,10 +604,10 @@ func TestDuplicateRuleInDifferentSubninjasWithInclude(t *testing.T) {
 	// Test that rules are scoped to subninjas even with includes.
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	fs.WriteFile("rules.ninja", []byte(`rule cat
+	fs.Create("rules.ninja", []byte(`rule cat
   command = cat
 `))
-	fs.WriteFile("test.ninja", []byte(`include rules.ninja
+	fs.Create("test.ninja", []byte(`include rules.ninja
 build x : cat
 `))
 	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
@@ -621,7 +621,7 @@ build y : cat
 func TestInclude(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	fs.WriteFile("include.ninja", []byte("var = inner\n"))
+	fs.Create("include.ninja", []byte("var = inner\n"))
 
 	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	assert.NoError(t, manifestParser.Parse("", `var = outer
@@ -636,7 +636,7 @@ include include.ninja
 func TestBrokenInclude(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()
-	fs.WriteFile("include.ninja", []byte("build\n"))
+	fs.Create("include.ninja", []byte("build\n"))
 	manifestParser := manifest_parser.New(s, fs, manifest_parser.DefaultOptions())
 	err := manifestParser.Parse("", "include include.ninja\n")
 	require.Error(t, err)

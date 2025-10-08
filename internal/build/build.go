@@ -856,7 +856,7 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 			return false, err
 		}
 		if buildStart == -1 {
-			b.diskInterface.WriteFile(b.lockFilePath, []byte{})
+			b.diskInterface.WriteFile(b.lockFilePath, []byte{}, false)
 			if bs, err := b.diskInterface.Stat(b.lockFilePath); err == nil {
 				buildStart = bs
 			} else {
@@ -880,7 +880,7 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 	rspFile := edge.GetUnescapedRspfile()
 	if rspFile != "" {
 		content := edge.GetBinding("rspfile_content")
-		if err := b.diskInterface.WriteFile(rspFile, []byte(content)); err != nil {
+		if err := b.diskInterface.WriteFile(rspFile, []byte(content), true); err != nil {
 			return false, err
 		}
 	}
@@ -1033,8 +1033,8 @@ func (b *Builder) ExtractDeps(result *Result, depsType, depsPrefix string) ([]*g
 			depsNodes = append(depsNodes, b.state.GetNode(path))
 		}
 		if !debug_flags.KeepDepfile {
-			if err := b.diskInterface.RemoveFile(depfile); err != nil {
-				return nil, fmt.Errorf("deleting depfile: %s", err)
+			if e := b.diskInterface.RemoveFile(depfile); e < 0 {
+				return nil, fmt.Errorf("deleting depfile: %d", e)
 			}
 		}
 	} else {

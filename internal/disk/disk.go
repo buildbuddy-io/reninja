@@ -1,17 +1,3 @@
-// Copyright 2024 The Ninja-Go Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package disk
 
 import (
@@ -30,103 +16,87 @@ import (
 
 // Interface provides file system operations
 type Interface interface {
-	Stat(path string) (timestamp.TimeStamp, error)
+	// Read and store in given string.  On success, return Okay.
+	// On error, return another Status and fill |err|.
 	ReadFile(path string) ([]byte, error)
-	WriteFile(path string, contents []byte) error
+
+	// stat() a file, returning the mtime, or 0 if missing and -1 on
+	// other errors.
+	Stat(path string) (timestamp.TimeStamp, error)
+
+	// Create a directory, returning false on failure.
+	MakeDir(path string) error
+
+	// Create a file, with the specified name and contents
+	// If \a crlf_on_windows is true, \n will be converted to \r\n (only on
+	// Windows builds of Ninja).
+	// Returns true on success, false on failure
+	WriteFile(path string, contents []byte, crlfOnWindows bool) error
+
+	// Remove the file named @a path. It behaves like 'rm -f path' so no errors
+	// are reported if it does not exists.
+	// @returns 0 if the file has been removed,
+	//          1 if the file does not exist, and
+	//          -1 if an error occurs.
+	RemoveFile(path string) int
+
+	// Create all the parent directories for path; like mkdir -p
+	// `basename path`.
 	MakeDirs(path string) error
-	RemoveFile(path string) error
 }
 
-// RealDiskInterface implements DiskInterface for real file system operations
-type RealDiskInterface struct {
-	// Cache for stat results to avoid repeated system calls
-	statCache map[string]statCacheEntry
-}
+type RealDiskInterface struct{}
 
-type statCacheEntry struct {
-	mtime  timestamp.TimeStamp
-	exists bool
-	cached time.Time
-}
-
-// NewRealDiskInterface creates a new RealDiskInterface
 func NewRealDiskInterface() *RealDiskInterface {
-	return &RealDiskInterface{
-		statCache: make(map[string]statCacheEntry),
-	}
+	return &RealDiskInterface{}
 }
 
-// Stat returns the modification time of a file
-func (d *RealDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
-	// Check cache first
-	if entry, ok := d.statCache[path]; ok {
-		// Cache entries are valid for a short time during a build
-		if time.Since(entry.cached) < 1*time.Second {
-			if !entry.exists {
-				return timestamp.TimeStampMissing, os.ErrNotExist
-			}
-			return entry.mtime, nil
-		}
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Cache the non-existence
-			d.statCache[path] = statCacheEntry{
-				mtime:  timestamp.TimeStampMissing,
-				exists: false,
-				cached: time.Now(),
-			}
-			return timestamp.TimeStampMissing, err
-		}
-		return timestamp.TimeStampUnknown, err
-	}
-
-	// Convert to milliseconds since epoch
-	mtime := timestamp.TimeStamp(info.ModTime().UnixMilli())
-
-	// Cache the result
-	d.statCache[path] = statCacheEntry{
-		mtime:  mtime,
-		exists: true,
-		cached: time.Now(),
-	}
-
-	return mtime, nil
-}
-
-// ReadFile reads the contents of a file
 func (d *RealDiskInterface) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// WriteFile writes contents to a file
-func (d *RealDiskInterface) WriteFile(path string, contents []byte) error {
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+func (d *RealDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return timestamp.TimeStampMissing, nil
+		}
+		return timestamp.TimeStampUnknown, err
 	}
+	mtime := timestamp.TimeStamp(info.ModTime().UnixMilli())
+	return mtime, nil
+}
 
+func (d *RealDiskInterface) MakeDir(path string) error {
+	err := os.Mkdir(path, 0755)
+	if err != nil && os.IsExist(err) {
+		return nil
+	}
+	return err
+}
+
+func (d *RealDiskInterface) Create(path string, contents []byte) error {
+	return d.WriteFile(path, contents, false)
+}
+
+func (d *RealDiskInterface) WriteFile(path string, contents []byte, crlfOnWindows bool) error {
+	// TODO(tylerw): windows support do something.
 	return os.WriteFile(path, contents, 0644)
 }
 
-// MakeDir creates a directory and all necessary parents
 func (d *RealDiskInterface) MakeDirs(path string) error {
 	return os.MkdirAll(filepath.Dir(path), 0755)
 }
 
-// RemoveFile removes a file
-func (d *RealDiskInterface) RemoveFile(path string) error {
-	// Invalidate cache
-	delete(d.statCache, path)
-	return os.Remove(path)
-}
-
-// ClearStatCache clears the stat cache
-func (d *RealDiskInterface) ClearStatCache() {
-	d.statCache = make(map[string]statCacheEntry)
+func (d *RealDiskInterface) RemoveFile(path string) int {
+	err := os.Remove(path)
+	if err == nil {
+		return 0
+	} else if os.IsNotExist(err) {
+		return 1
+	} else {
+		return -1
+	}
 }
 
 type entry struct {
@@ -174,8 +144,12 @@ func (m *MockDiskInterface) ReadFile(path string) ([]byte, error) {
 	return nil, os.ErrNotExist
 }
 
+func (m *MockDiskInterface) Create(path string, contents []byte) error {
+	return m.WriteFile(path, contents, false)
+}
+
 // WriteFile writes contents to a mock file
-func (m *MockDiskInterface) WriteFile(path string, contents []byte) error {
+func (m *MockDiskInterface) WriteFile(path string, contents []byte, crlfOnWindows bool) error {
 	m.files[path] = entry{
 		contents: contents,
 		mtime:    m.now,
@@ -184,25 +158,32 @@ func (m *MockDiskInterface) WriteFile(path string, contents []byte) error {
 	return nil
 }
 
+func (m *MockDiskInterface) MakeDir(path string) error {
+	m.directoriesMade[path] = struct{}{}
+	return nil
+}
+
 // MakeDir creates a mock directory
 func (m *MockDiskInterface) MakeDirs(path string) error {
 	for d := filepath.Dir(path); d != "." && d != "/"; d = filepath.Dir(d) {
-		m.directoriesMade[d] = struct{}{}
+		if err := m.MakeDir(d); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // RemoveFile removes a mock file
-func (m *MockDiskInterface) RemoveFile(path string) error {
+func (m *MockDiskInterface) RemoveFile(path string) int {
 	if _, ok := m.directoriesMade[path]; ok {
-		return fmt.Errorf("%s is a directory", path)
+		return -1
 	}
 	if _, ok := m.files[path]; !ok {
-		return os.ErrNotExist
+		return 1
 	}
 	delete(m.files, path)
 	m.filesRemoved[path] = struct{}{}
-	return nil
+	return 0
 }
 
 // AddFile adds a file to the mock file system

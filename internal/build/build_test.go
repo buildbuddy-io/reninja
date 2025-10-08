@@ -619,7 +619,7 @@ func (d *FakeCommandRunner) StartCommand(edge *graph.Edge) error {
 	switch edge.Rule().Name() {
 	case "cat", "cat_rsp", "cat_rsp_out", "cc", "cp_multi_msvc", "cp_multi_gcc", "touch", "touch-interrupt", "touch-fail-tick2":
 		for _, out := range edge.Outputs() {
-			d.fs.WriteFile(out.Path(), []byte{})
+			d.fs.Create(out.Path(), []byte{})
 		}
 	case "true", "fail", "interrupt", "console":
 		// don't do anything
@@ -627,37 +627,37 @@ func (d *FakeCommandRunner) StartCommand(edge *graph.Edge) error {
 		require.NotEmpty(d.t, edge.Inputs())
 		require.Len(d.t, edge.Outputs(), 1)
 		if buf, err := d.fs.ReadFile(edge.Inputs()[0].Path()); err == nil {
-			d.fs.WriteFile(edge.Outputs()[0].Path(), buf)
+			d.fs.Create(edge.Outputs()[0].Path(), buf)
 		}
 	case "touch-implicit-dep-out":
 		dep := edge.GetBinding("test_dependency")
 		d.fs.Tick()
-		d.fs.WriteFile(dep, []byte{})
+		d.fs.Create(dep, []byte{})
 		d.fs.Tick()
 		for _, out := range edge.Outputs() {
-			d.fs.WriteFile(out.Path(), []byte{})
+			d.fs.Create(out.Path(), []byte{})
 		}
 	case "touch-out-implicit-dep":
 		dep := edge.GetBinding("test_dependency")
 		for _, out := range edge.Outputs() {
-			d.fs.WriteFile(out.Path(), []byte{})
+			d.fs.Create(out.Path(), []byte{})
 		}
 		d.fs.Tick()
-		d.fs.WriteFile(dep, []byte{})
+		d.fs.Create(dep, []byte{})
 	case "generate-depfile":
 		dep := edge.GetBinding("test_dependency")
 		touchDep := edge.GetBindingBool("touch_dependency")
 		depfile := edge.GetUnescapedDepfile()
 		if touchDep {
 			d.fs.Tick()
-			d.fs.WriteFile(dep, []byte{})
+			d.fs.Create(dep, []byte{})
 		}
 		var contents string
 		for _, out := range edge.Outputs() {
 			contents += out.Path() + ": " + dep + "\n"
-			d.fs.WriteFile(out.Path(), []byte{})
+			d.fs.Create(out.Path(), []byte{})
 		}
-		d.fs.WriteFile(depfile, []byte(contents))
+		d.fs.Create(depfile, []byte(contents))
 	case "long-cc":
 		dep := edge.GetBinding("test_dependency")
 		depfile := edge.GetUnescapedDepfile()
@@ -666,11 +666,11 @@ func (d *FakeCommandRunner) StartCommand(edge *graph.Edge) error {
 			d.fs.Tick()
 			d.fs.Tick()
 			d.fs.Tick()
-			d.fs.WriteFile(out.Path(), []byte{})
+			d.fs.Create(out.Path(), []byte{})
 			contents += out.Path() + ": " + dep + "\n"
 		}
 		if dep != "" && depfile != "" {
-			d.fs.WriteFile(depfile, []byte(contents))
+			d.fs.Create(depfile, []byte(contents))
 		}
 	default:
 		fmt.Printf("unknown command\n")
@@ -817,8 +817,8 @@ build cat2: cat in1 in2
 build cat12: cat cat1 cat2
 `, h.stateTestWithBuiltinRulesHelper.state)
 
-	h.fs.WriteFile("in1", []byte{})
-	h.fs.WriteFile("in2", []byte{})
+	h.fs.Create("in1", []byte{})
+	h.fs.Create("in2", []byte{})
 }
 
 func (h *buildTestHelper) IsPathDead(_ string) bool {
@@ -935,7 +935,7 @@ func TestTwoStep(t *testing.T) {
 
 	// Modifying in2 requires rebuilding one intermediate file
 	// and the final file.
-	th.fs.WriteFile("in2", []byte{})
+	th.fs.Create("in2", []byte{})
 	th.state.Reset()
 
 	_, err = th.builder.AddTargetByName("cat12")
@@ -955,7 +955,7 @@ rule touch
   command = touch $out
 build out1 out2: touch in.txt
 `, th.state)
-	th.fs.WriteFile("in.txt", []byte{})
+	th.fs.Create("in.txt", []byte{})
 
 	_, err := th.builder.AddTargetByName("out1")
 	require.NoError(t, err)
@@ -973,7 +973,7 @@ rule touch
   command = touch $out $out.imp
 build out | out.imp: touch in.txt
 `, th.state)
-	th.fs.WriteFile("in.txt", []byte{})
+	th.fs.Create("in.txt", []byte{})
 
 	_, err := th.builder.AddTargetByName("out.imp")
 	require.NoError(t, err)
@@ -993,9 +993,9 @@ build in1 otherfile: touch in
 build out: touch in | in1
 `, th.state)
 
-	th.fs.WriteFile("in", []byte{})
+	th.fs.Create("in", []byte{})
 	th.fs.Tick()
-	th.fs.WriteFile("in1", []byte{})
+	th.fs.Create("in1", []byte{})
 
 	_, err := th.builder.AddTargetByName("out")
 	require.NoError(t, err)
@@ -1013,7 +1013,7 @@ build c4: cat c3
 build c5: cat c4
 `, th.state)
 
-	th.fs.WriteFile("c1", []byte{})
+	th.fs.Create("c1", []byte{})
 
 	_, err := th.builder.AddTargetByName("c5")
 	require.NoError(t, err)
@@ -1030,7 +1030,7 @@ build c5: cat c4
 
 	th.fs.Tick()
 
-	th.fs.WriteFile("c3", []byte{})
+	th.fs.Create("c3", []byte{})
 	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
 	th.state.Reset()
 	_, err = th.builder.AddTargetByName("c5")
@@ -1085,7 +1085,7 @@ rule cc
   depfile = $out.d
 build fo$ o.o: cc foo.c
 `, th.state)
-	th.fs.WriteFile("foo.c", []byte{})
+	th.fs.Create("foo.c", []byte{})
 
 	_, err := th.builder.AddTargetByName("fo o.o")
 	require.NoError(t, err)
@@ -1104,9 +1104,9 @@ build foo.o: cc foo.c
 `, th.state)
 	edge := th.state.Edges()[len(th.state.Edges())-1]
 
-	th.fs.WriteFile("foo.c", []byte{})
+	th.fs.Create("foo.c", []byte{})
 	th.state.GetNode("bar.h").MarkDirty() // Mark bar.h as missing.
-	th.fs.WriteFile("foo.o.d", []byte("foo.o: blah.h bar.h\n"))
+	th.fs.Create("foo.o.d", []byte("foo.o: blah.h bar.h\n"))
 	_, err := th.builder.AddTargetByName("foo.o")
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(th.fs.FilesRead()))
@@ -1140,8 +1140,8 @@ rule cc
   depfile = $out.d
 build foo.o: cc foo.c
 `, th.state)
-	th.fs.WriteFile("foo.c", []byte{})
-	th.fs.WriteFile("foo.o.d", []byte("randomtext\n"))
+	th.fs.Create("foo.c", []byte{})
+	th.fs.Create("foo.o.d", []byte("randomtext\n"))
 	_, err := th.builder.AddTargetByName("foo.o")
 	require.Error(t, err)
 	assert.Equal(t, "foo.o.d: expected ':' in depfile", err.Error())
@@ -1162,7 +1162,7 @@ build a: touch | b || c
 	assert.Equal(t, "b", cOut[0].Outputs()[0].Path())
 	assert.Equal(t, "a", cOut[1].Outputs()[0].Path())
 
-	th.fs.WriteFile("b", []byte{})
+	th.fs.Create("b", []byte{})
 	_, err := th.builder.AddTargetByName("a")
 	require.NoError(t, err)
 
@@ -1183,8 +1183,8 @@ build oo.h: cc oo.h.in
 build foo.o: cc foo.c || oo.h
 `, th.state)
 
-	th.fs.WriteFile("foo.c", []byte{})
-	th.fs.WriteFile("oo.h.in", []byte{})
+	th.fs.Create("foo.c", []byte{})
+	th.fs.Create("oo.h.in", []byte{})
 
 	// foo.o and order-only dep dirty, build both.
 	_, err := th.builder.AddTargetByName("foo.o")
@@ -1216,7 +1216,7 @@ build foo.o: cc foo.c || oo.h
 	th.fs.Tick()
 
 	// order-only dep dirty, build it only.
-	th.fs.WriteFile("oo.h.in", []byte{})
+	th.fs.Create("oo.h.in", []byte{})
 	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
 	th.state.Reset()
 	_, err = th.builder.AddTargetByName("foo.o")
@@ -1234,7 +1234,7 @@ func TestPhony(t *testing.T) {
 build out: cat bar.cc
 build all: phony out
 `, th.state)
-	th.fs.WriteFile("bar.cc", []byte{})
+	th.fs.Create("bar.cc", []byte{})
 
 	_, err := th.builder.AddTargetByName("all")
 	require.NoError(t, err)
@@ -1253,8 +1253,8 @@ func TestPhonyNoWork(t *testing.T) {
 build out: cat bar.cc
 build all: phony out
 `, th.state)
-	th.fs.WriteFile("bar.cc", []byte{})
-	th.fs.WriteFile("out", []byte{})
+	th.fs.Create("bar.cc", []byte{})
+	th.fs.Create("out", []byte{})
 
 	_, err := th.builder.AddTargetByName("all")
 	require.NoError(t, err)
