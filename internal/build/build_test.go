@@ -1148,7 +1148,6 @@ build foo.o: cc foo.c
 	// Expect our edge to now have three inputs: foo.c and two headers.
 	assert.Equal(t, 3, len(edge.Inputs()))
 
-	edge.Dump("edge")
 	// Expect the command line we generate to only use the original input.
 	assert.Equal(t, "cc foo.c", edge.EvaluateCommand(false))
 }

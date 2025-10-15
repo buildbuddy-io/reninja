@@ -34,6 +34,8 @@ type LinePrinter struct {
 func New() *LinePrinter {
 	return &LinePrinter{
 		out:           os.Stdout,
+		haveBlankLine: true,
+		consoleLocked: false,
 		smartTerminal: isatty.IsTerminal(os.Stdout.Fd()),
 		supportsColor: supportscolor.Stdout().SupportsColor,
 	}
@@ -95,7 +97,7 @@ func (p *LinePrinter) PrintOnNewline(toPrint string) {
 	if toPrint != "" {
 		p.printOrBuffer(toPrint)
 	}
-	p.haveBlankLine = toPrint == "" || toPrint[0] == '\n'
+	p.haveBlankLine = toPrint == "" || toPrint[len(toPrint)-1] == '\n'
 }
 
 func (p *LinePrinter) SetConsoleLocked(locked bool) {
