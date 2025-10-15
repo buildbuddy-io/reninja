@@ -130,6 +130,9 @@ func NewMockDiskInterface() *MockDiskInterface {
 // Stat returns the modification time of a mock file
 func (m *MockDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 	if entry, ok := m.files[path]; ok {
+		if entry.statErr != nil {
+			return timestamp.TimeStampUnknown, entry.statErr
+		}
 		return entry.mtime, nil
 	}
 	return timestamp.TimeStampMissing, nil
@@ -216,6 +219,13 @@ func (m *MockDiskInterface) SetMtime(path string, mtime timestamp.TimeStamp) {
 	val := m.files[path]
 	val.mtime = mtime
 	m.files[path] = val
+}
+
+func (m *MockDiskInterface) SetStatError(path string, err string) {
+	m.files[path] = entry{
+		mtime:   timestamp.TimeStampUnknown,
+		statErr: fmt.Errorf("%s", err),
+	}
 }
 
 // FileReader provides an interface for reading files

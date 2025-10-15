@@ -3,6 +3,7 @@ package build_test
 import (
 	"fmt"
 	"math"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -782,6 +783,7 @@ type buildTestHelper struct {
 	status        *status.StatusPrinter
 	builder       *build.Builder
 	buildLog      *build_log.BuildLog
+	depsLog       *deps_log.DepsLog
 }
 
 func makeConfig() *build_config.Config {
@@ -796,7 +798,20 @@ func newBuildTestHelper(t *testing.T) *buildTestHelper {
 
 func newBuildTestHelperWithBuildLog(t *testing.T) *buildTestHelper {
 	buildLog := build_log.NewBuildLog()
+	t.Cleanup(func() {
+		buildLog.Close()
+	})
 	return newBuildTestHelperWithLogs(t, buildLog, nil)
+}
+
+func newBuildTestHelperWithDepsLog(t *testing.T) *buildTestHelper {
+	depsLog := deps_log.NewDepsLog()
+	t.Cleanup(func() {
+		depsLog.Close()
+	})
+
+	require.NoError(t, depsLog.OpenForWrite(filepath.Join(t.TempDir(), "deps_log")))
+	return newBuildTestHelperWithLogs(t, nil, depsLog)
 }
 
 func newBuildTestHelperWithLogs(t *testing.T, buildLog *build_log.BuildLog, depsLog *deps_log.DepsLog) *buildTestHelper {
@@ -816,6 +831,7 @@ func newBuildTestHelperWithLogs(t *testing.T, buildLog *build_log.BuildLog, deps
 		status:         st,
 		builder:        build.NewBuilder(planHelper.state, conf, buildLog, depsLog, fs, st, 0),
 		buildLog:       buildLog,
+		depsLog:        depsLog,
 	}
 	th.SetUp()
 	return th
@@ -2140,4 +2156,200 @@ build out: cat_rsp in
 	require.NoError(t, err)
 	require.Equal(t, exit_status.ExitSuccess, buildRes)
 	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+func TestInterruptCleanup(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule interrupt
+  command = interrupt
+rule touch-interrupt
+  command = touch-interrupt
+build out1: interrupt in1
+build out2: touch-interrupt in2
+`, th.state)
+
+	th.fs.Create("out1", []byte{})
+	th.fs.Create("out2", []byte{})
+	th.fs.Tick()
+	th.fs.Create("in1", []byte{})
+	th.fs.Create("in2", []byte{})
+
+	// An untouched output of an interrupted command should be retained.
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitInterrupted, buildRes)
+	assert.Equal(t, "interrupted by user", err.Error())
+	th.builder.Cleanup()
+	stat, _ := th.fs.Stat("out1")
+	assert.Greater(t, stat, timestamp.TimeStamp(0))
+
+	// A touched output of an interrupted command should be deleted.
+	_, err = th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitInterrupted, buildRes)
+	assert.Equal(t, "interrupted by user", err.Error())
+	th.builder.Cleanup()
+	stat, _ = th.fs.Stat("out2")
+	assert.Equal(t, timestamp.TimeStamp(0), stat)
+}
+
+func TestStatFailureAbortsBuild(t *testing.T) {
+	th := newBuildTestHelper(t)
+	kTooLongToStat := strings.Repeat("i", 400)
+	test.AssertParse(t, "build "+kTooLongToStat+": cat in\n", th.state)
+	th.fs.Create("in", []byte{})
+
+	// This simulates a stat failure:
+	th.fs.SetStatError(kTooLongToStat, "stat failed")
+
+	_, err := th.builder.AddTargetByName(kTooLongToStat)
+	require.Error(t, err)
+	assert.Equal(t, "stat failed", err.Error())
+}
+
+func TestPhonyWithNoInputs(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+build nonexistent: phony
+build out1: cat || nonexistent
+build out2: cat nonexistent
+`, th.state)
+	th.fs.Create("out1", []byte{})
+	th.fs.Create("out2", []byte{})
+
+	// out1 should be up to date even though its input is dirty, because its
+	// order-only dependency has nothing to do.
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	assert.True(t, th.builder.AlreadyUpToDate())
+
+	// out2 should still be out of date though, because its input is dirty.
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+func TestDepsGccWithEmptyDepfileErrorsOut(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule cc
+  command = cc
+  deps = gcc
+build out: cc
+`, th.state)
+	th.Dirty("out")
+
+	_, err := th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+	assert.False(t, th.builder.AlreadyUpToDate())
+
+	buildRes, err := th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitFailure, buildRes)
+	assert.Equal(t, "subcommand failed", err.Error())
+	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+func TestStatusFormatElapsed_e(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.status.BuildStarted()
+	// Before any task is done, the elapsed time must be zero.
+	assert.Equal(t, "[%/e0.000]", th.status.FormatProgressStatus("[%%/e%e]", 0))
+}
+
+func TestStatusFormatElapsed_w(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.status.BuildStarted()
+	// Before any task is done, the elapsed time must be zero.
+	assert.Equal(t, "[%/e00:00]", th.status.FormatProgressStatus("[%%/e%w]", 0))
+}
+
+func TestStatusFormatETA(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.status.BuildStarted()
+	// Before any task is done, the ETA time must be unknown.
+	assert.Equal(t, "[%/E?]", th.status.FormatProgressStatus("[%%/E%E]", 0))
+}
+
+func TestStatusFormatTimeProgress(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.status.BuildStarted()
+	// Before any task is done, the percentage of elapsed time must be zero.
+	assert.Equal(t, "[%/p  0%]", th.status.FormatProgressStatus("[%%/p%p]", 0))
+}
+
+func TestStatusFormatReplacePlaceholder(t *testing.T) {
+	th := newBuildTestHelper(t)
+	assert.Equal(t, "[%/s0/t0/r0/u0/f0]",
+		th.status.FormatProgressStatus("[%%/s%s/t%t/r%r/u%u/f%f]", 0))
+}
+
+func TestFailedDepsParse(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+build bad_deps.o: cat in1
+  deps = gcc
+  depfile = in1.d
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("bad_deps.o")
+	require.NoError(t, err)
+
+	// These deps will fail to parse, as they should only have one
+	// path to the left of the colon.
+	th.fs.Create("in1.d", []byte("AAA BBB"))
+
+	buildRes, err := th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitFailure, buildRes)
+	assert.Equal(t, "subcommand failed", err.Error())
+}
+
+func TestTwoOutputsDepFileMSVC(t *testing.T) {
+	t.Skip()
+	// TODO(tylerw): windows support
+}
+
+// Test a GCC-style deps log with multiple outputs.
+func TestTwoOutputsDepFileGCCOneLine(t *testing.T) {
+	th := newBuildTestHelperWithDepsLog(t)
+	test.AssertParse(t, `
+rule cp_multi_gcc
+    command = echo '$out: $in' > in.d && for file in $out; do cp in1 $$file; done
+    deps = gcc
+    depfile = in.d
+build out1 out2: cp_multi_gcc in1 in2
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	th.fs.Create("in.d", []byte("out1 out2: in1 in2"))
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+	assert.Len(t, th.commandRunner.commandsRan, 1)
+	assert.Equal(t, "echo 'out1 out2: in1 in2' > in.d && for file in out1 out2; do cp in1 $file; done", th.commandRunner.commandsRan[0])
+
+	out1Node := th.state.LookupNode("out1")
+	out1Deps := th.depsLog.GetDeps(out1Node)
+	require.Len(t, out1Deps.Nodes, 2)
+	require.Equal(t, "in1", out1Deps.Nodes[0].Path())
+	require.Equal(t, "in2", out1Deps.Nodes[1].Path())
+
+	out2Node := th.state.LookupNode("out2")
+	out2Deps := th.depsLog.GetDeps(out2Node)
+	require.Len(t, out2Deps.Nodes, 2)
+	require.Equal(t, "in1", out2Deps.Nodes[0].Path())
+	require.Equal(t, "in2", out2Deps.Nodes[1].Path())
 }
