@@ -2315,6 +2315,144 @@ build bad_deps.o: cat in1
 	assert.Equal(t, "subcommand failed", err.Error())
 }
 
+func TestTwoOutputsDepFileGCCMultiLineInput(t *testing.T) {
+	th := newBuildTestHelperWithDepsLog(t)
+	test.AssertParse(t, `
+rule cp_multi_gcc
+  command = echo '$out: in1\n$out: in2' > in.d && for file in $out; do cp in1 $$file; done
+  deps = gcc
+  depfile = in.d
+build out1 out2: cp_multi_gcc in1 in2
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	th.fs.Create("in.d", []byte("out1 out2: in1\nout1 out2: in2"))
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+	assert.Equal(t, "echo 'out1 out2: in1\\nout1 out2: in2' > in.d && for file in out1 out2; do cp in1 $file; done", th.commandRunner.commandsRan[0])
+
+	out1Node := th.state.LookupNode("out1")
+	out1Deps := th.depsLog.GetDeps(out1Node)
+	require.NotNil(t, out1Deps)
+	require.Len(t, out1Deps.Nodes, 2)
+	assert.Equal(t, "in1", out1Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out1Deps.Nodes[1].Path())
+
+	out2Node := th.state.LookupNode("out2")
+	out2Deps := th.depsLog.GetDeps(out2Node)
+	require.NotNil(t, out2Deps)
+	require.Len(t, out2Deps.Nodes, 2)
+	assert.Equal(t, "in1", out2Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out2Deps.Nodes[1].Path())
+}
+
+func TestTwoOutputsDepFileGCCMultiLineOutput(t *testing.T) {
+	th := newBuildTestHelperWithDepsLog(t)
+	test.AssertParse(t, `
+rule cp_multi_gcc
+  command = echo 'out1: $in\nout2: $in' > in.d && for file in $out; do cp in1 $$file; done
+  deps = gcc
+  depfile = in.d
+build out1 out2: cp_multi_gcc in1 in2
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	th.fs.Create("in.d", []byte("out1: in1 in2\nout2: in1 in2"))
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+	assert.Equal(t, "echo 'out1: in1 in2\\nout2: in1 in2' > in.d && for file in out1 out2; do cp in1 $file; done", th.commandRunner.commandsRan[0])
+
+	out1Node := th.state.LookupNode("out1")
+	out1Deps := th.depsLog.GetDeps(out1Node)
+	require.NotNil(t, out1Deps)
+	require.Len(t, out1Deps.Nodes, 2)
+	assert.Equal(t, "in1", out1Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out1Deps.Nodes[1].Path())
+
+	out2Node := th.state.LookupNode("out2")
+	out2Deps := th.depsLog.GetDeps(out2Node)
+	require.NotNil(t, out2Deps)
+	require.Len(t, out2Deps.Nodes, 2)
+	assert.Equal(t, "in1", out2Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out2Deps.Nodes[1].Path())
+}
+
+func TestTwoOutputsDepFileGCCOnlyMainOutput(t *testing.T) {
+	th := newBuildTestHelperWithDepsLog(t)
+	test.AssertParse(t, `
+rule cp_multi_gcc
+  command = echo 'out1: $in' > in.d && for file in $out; do cp in1 $$file; done
+  deps = gcc
+  depfile = in.d
+build out1 out2: cp_multi_gcc in1 in2
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	th.fs.Create("in.d", []byte("out1: in1 in2"))
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+	assert.Equal(t, "echo 'out1: in1 in2' > in.d && for file in out1 out2; do cp in1 $file; done", th.commandRunner.commandsRan[0])
+
+	out1Node := th.state.LookupNode("out1")
+	out1Deps := th.depsLog.GetDeps(out1Node)
+	require.NotNil(t, out1Deps)
+	require.Len(t, out1Deps.Nodes, 2)
+	assert.Equal(t, "in1", out1Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out1Deps.Nodes[1].Path())
+
+	out2Node := th.state.LookupNode("out2")
+	out2Deps := th.depsLog.GetDeps(out2Node)
+	require.NotNil(t, out2Deps)
+	require.Len(t, out2Deps.Nodes, 2)
+	assert.Equal(t, "in1", out2Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out2Deps.Nodes[1].Path())
+}
+
+func TestTwoOutputsDepFileGCCOnlySecondaryOutput(t *testing.T) {
+	// Note: This ends up short-circuiting the node creation due to the primary
+	// output not being present, but it should still work.
+	th := newBuildTestHelperWithDepsLog(t)
+	test.AssertParse(t, `
+rule cp_multi_gcc
+  command = echo 'out2: $in' > in.d && for file in $out; do cp in1 $$file; done
+  deps = gcc
+  depfile = in.d
+build out1 out2: cp_multi_gcc in1 in2
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	th.fs.Create("in.d", []byte("out2: in1 in2"))
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+	assert.Equal(t, "echo 'out2: in1 in2' > in.d && for file in out1 out2; do cp in1 $file; done", th.commandRunner.commandsRan[0])
+
+	out1Node := th.state.LookupNode("out1")
+	out1Deps := th.depsLog.GetDeps(out1Node)
+	require.NotNil(t, out1Deps)
+	require.Len(t, out1Deps.Nodes, 2)
+	assert.Equal(t, "in1", out1Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out1Deps.Nodes[1].Path())
+
+	out2Node := th.state.LookupNode("out2")
+	out2Deps := th.depsLog.GetDeps(out2Node)
+	require.NotNil(t, out2Deps)
+	require.Len(t, out2Deps.Nodes, 2)
+	assert.Equal(t, "in1", out2Deps.Nodes[0].Path())
+	assert.Equal(t, "in2", out2Deps.Nodes[1].Path())
+}
+
 func TestTwoOutputsDepFileMSVC(t *testing.T) {
 	t.Skip()
 	// TODO(tylerw): windows support
