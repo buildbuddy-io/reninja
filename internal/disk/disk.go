@@ -132,7 +132,7 @@ func (m *MockDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 	if entry, ok := m.files[path]; ok {
 		return entry.mtime, nil
 	}
-	return timestamp.TimeStampMissing, os.ErrNotExist
+	return timestamp.TimeStampMissing, nil
 }
 
 // ReadFile reads the contents of a mock file

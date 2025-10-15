@@ -182,6 +182,7 @@ func (p *Plan) EdgeFinished(edge *graph.Edge, result EdgeResult) (bool, error) {
 
 func (p *Plan) CleanNode(scan *dependency_scan.DependencyScan, node *graph.Node) bool {
 	node.SetDirty(false)
+
 	for _, outEdge := range node.OutEdges() {
 		// Don't process edges that we don't actually want.
 		want, ok := p.want[outEdge]
@@ -576,7 +577,7 @@ type RunningEdgeMap = map[*graph.Edge]int64
 
 type Builder struct {
 	state         *state.State
-	config        build_config.Config
+	config        *build_config.Config
 	plan          *Plan
 	jobserver     jobserver.Client
 	commandRunner CommandRunner
@@ -592,7 +593,7 @@ type Builder struct {
 	exitCode exit_status.ExitStatusType
 }
 
-func NewBuilder(state *state.State, config build_config.Config, buildLog *build_log.BuildLog,
+func NewBuilder(state *state.State, config *build_config.Config, buildLog *build_log.BuildLog,
 	depsLog *deps_log.DepsLog, diskInterface disk.Interface, status status.Status, startTimeMillis int64) *Builder {
 	b := &Builder{
 		state:           state,
@@ -640,8 +641,8 @@ func (b *Builder) Cleanup() {
 				// mentioned in a depfile, and the command touches its depfile
 				// but is interrupted before it touches its output file.)
 				newMtime, err := b.diskInterface.Stat(o.Path())
-				if err != nil {
-					b.status.Error("%s", err.Error())
+				if newMtime == -1 { // Log and ignore Stat() errors.
+					b.status.Error("%s", err)
 				}
 				if depfile != "" || o.Mtime() != newMtime {
 					b.diskInterface.RemoveFile(o.Path())
@@ -857,13 +858,13 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 		}
 		if buildStart == -1 {
 			b.diskInterface.WriteFile(b.lockFilePath, []byte{}, false)
-			if bs, err := b.diskInterface.Stat(b.lockFilePath); err == nil {
-				buildStart = bs
-			} else {
+			buildStart, _ = b.diskInterface.Stat(b.lockFilePath)
+			if buildStart == -1 {
 				buildStart = 0
 			}
 		}
 	}
+
 	edge.SetCommandStartTime(buildStart)
 
 	// Create depfile directory if needed.
@@ -943,7 +944,7 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 		if recordMtime == 0 || restat || generator {
 			for _, o := range edge.Outputs() {
 				newMtime, err := b.diskInterface.Stat(o.Path())
-				if err != nil {
+				if err != nil || newMtime == -1 {
 					return false, err
 				}
 				if newMtime > recordMtime {
@@ -982,12 +983,12 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	}
 
 	if depsType != "" && !b.config.DryRun {
-		if len(edge.Outputs()) > 0 {
+		if len(edge.Outputs()) == 0 {
 			panic("should have been rejected by parser")
 		}
 		for _, o := range edge.Outputs() {
 			depsMtime, err := b.diskInterface.Stat(o.Path())
-			if err != nil {
+			if err != nil || depsMtime == -1 {
 				return false, err
 			}
 			if err := b.scan.DepsLog().RecordDeps(o, depsMtime, depsNodes); err != nil {
@@ -1055,6 +1056,10 @@ func (b *Builder) LoadDyndeps(node *graph.Node) error {
 	}
 
 	return nil
+}
+
+func (b *Builder) TestOnlyPlan() *Plan {
+	return b.plan
 }
 
 func (b *Builder) TestOnlySetCommandRunner(runner CommandRunner) {

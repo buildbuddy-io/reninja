@@ -67,7 +67,7 @@ func (i *SlidingRateInfo) Rate() float64 {
 var _ Status = &StatusPrinter{}
 
 type StatusPrinter struct {
-	config build_config.Config
+	config *build_config.Config
 
 	startedEdges  int
 	finishedEdges int
@@ -106,7 +106,7 @@ type StatusPrinter struct {
 	currentRate *SlidingRateInfo
 }
 
-func NewPrinter(config build_config.Config) *StatusPrinter {
+func NewPrinter(config *build_config.Config) *StatusPrinter {
 	sp := &StatusPrinter{
 		config:               config,
 		printer:              line_printer.New(),

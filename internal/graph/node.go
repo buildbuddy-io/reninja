@@ -277,16 +277,15 @@ func (n *Node) UpdatePhonyMtime(mtime timestamp.TimeStamp) {
 func (n *Node) Stat(diskInterface disk.Interface) error {
 	mtime, err := diskInterface.Stat(n.path)
 	if err != nil {
-		if IsNotExist(err) {
-			n.mtime = timestamp.TimeStampMissing
-			n.exists = ExistenceStatusMissing
-			return nil
-		}
 		return err
 	}
 
 	n.mtime = mtime
-	n.exists = ExistenceStatusExists
+	if mtime != 0 {
+		n.exists = ExistenceStatusExists
+	} else {
+		n.exists = ExistenceStatusMissing
+	}
 	return nil
 }
 

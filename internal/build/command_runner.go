@@ -65,13 +65,13 @@ func (d *DryCommandRunner) GetActiveEdges() []*graph.Edge {
 func (d *DryCommandRunner) Abort() {}
 
 type RealCommandRunner struct {
-	config        build_config.Config
+	config        *build_config.Config
 	subprocs      *subprocess.Set
 	jobserver     jobserver.Client
 	subprocToEdge map[*subprocess.Subprocess]*graph.Edge
 }
 
-func NewRealCommandRunner(config build_config.Config, jobserver jobserver.Client) *RealCommandRunner {
+func NewRealCommandRunner(config *build_config.Config, jobserver jobserver.Client) *RealCommandRunner {
 	return &RealCommandRunner{
 		config:        config,
 		subprocs:      subprocess.NewSet(),

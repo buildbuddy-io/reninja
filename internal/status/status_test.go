@@ -9,7 +9,7 @@ import (
 )
 
 func TestStatusFormatElapsed(t *testing.T) {
-	config := build_config.Config{}
+	config := &build_config.Config{}
 	status := status.NewPrinter(config)
 	status.BuildStarted()
 
@@ -21,7 +21,7 @@ func TestStatusFormatElapsed(t *testing.T) {
 }
 
 func TestStatusFormatReplacePlaceholder(t *testing.T) {
-	config := build_config.Config{}
+	config := &build_config.Config{}
 	status := status.NewPrinter(config)
 
 	assert.Equal(t, "[%/s0/t0/r0/u0/f0]", status.FormatProgressStatus("[%%/s%s/t%t/r%r/u%u/f%f]", 0))

@@ -307,6 +307,11 @@ func (e *Edge) ImplicitOutputs() []*Node {
 	return e.outputs[len(e.outputs)-e.implicitOuts:]
 }
 
+func (e *Edge) PrependInputs(nodes []*Node) {
+	cutoff := len(e.inputs) - e.orderOnlyDeps
+	e.inputs = append(e.inputs[:cutoff], append(nodes, e.inputs[cutoff:]...)...)
+}
+
 // AddInput adds an input node
 func (e *Edge) AddInput(node *Node) {
 	e.inputs = append(e.inputs, node)

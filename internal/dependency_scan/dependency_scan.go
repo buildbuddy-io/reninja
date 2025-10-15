@@ -207,7 +207,7 @@ func (s *DependencyScan) RecomputeNodeDirty(node *graph.Node, stack, validationN
 	// Finally, visit each output and update their dirty state if necessary.
 	for _, o := range edge.Outputs() {
 		if dirty {
-			o.SetDirty(true)
+			o.MarkDirty()
 		}
 	}
 
@@ -354,8 +354,7 @@ func (s *DependencyScan) RecomputeOutputDirty(edge *graph.Edge, mostRecentInput 
 				return true
 			}
 		}
-
-		if entry == nil && generator {
+		if entry == nil && !generator {
 			s.explanations.Record(output, "command line not found in log for %s", output.Path())
 			return true
 		}

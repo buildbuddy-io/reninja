@@ -108,14 +108,15 @@ func (l *ImplicitDepLoader) ProcessDepfileDeps(edge *graph.Edge, ins []string) e
 	if l.processDepfileDepsFn != nil {
 		return l.processDepfileDepsFn(edge, ins)
 	}
-
-	// TODO(tylerw): preallocate space in edge.inputs
-	for _, in := range ins {
+	// TODO(tylerw): preallocate space in edge.inputs?
+	nodes := make([]*graph.Node, len(ins))
+	for i, in := range ins {
 		in, _ = util.CanonicalizePath(in)
 		node := l.state.GetNode(in)
-		edge.AddInput(node)
+		nodes[i] = node
 		node.AddOutEdge(edge)
 	}
+	edge.PrependInputs(nodes)
 	edge.SetImplicitDeps(edge.GetImplicitDeps() + len(ins))
 	return nil
 }

@@ -25,8 +25,8 @@ type Config struct {
 	DepfileParserOptions   depfile_parser.DepfileParserOptions
 }
 
-func Create() Config {
-	return Config{
+func Create() *Config {
+	return &Config{
 		Verbosity:              Normal,
 		DryRun:                 false,
 		Parallelism:            1,

@@ -18,23 +18,24 @@ import (
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/status"
 	"github.com/buildbuddy-io/gin/internal/test"
+	"github.com/buildbuddy-io/gin/internal/timestamp"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type stateTestWithBuiltinRulesHelper struct {
+type planTestHelper struct {
 	t     *testing.T
 	state *state.State
 	plan  *build.Plan
 }
 
-func newStateTestWithBuiltinRulesHelper(t *testing.T) *stateTestWithBuiltinRulesHelper {
+func newPlanTestHelper(t *testing.T) *planTestHelper {
 	t.Helper()
 	s := state.New()
 	test.AddCatRule(t, s)
 
-	return &stateTestWithBuiltinRulesHelper{
+	return &planTestHelper{
 		t:     t,
 		state: s,
 		plan:  build.NewPlan(nil /*=builder*/),
@@ -47,7 +48,7 @@ func CompareEdgesByOutput(a, b *graph.Edge) int {
 	return strings.Compare(aOut0Path, bOut0Path)
 }
 
-func (h *stateTestWithBuiltinRulesHelper) FindWorkSorted(count int) []*graph.Edge {
+func (h *planTestHelper) FindWorkSorted(count int) []*graph.Edge {
 	h.t.Helper()
 	ret := make([]*graph.Edge, 0)
 	for i := 0; i < count; i++ {
@@ -61,7 +62,7 @@ func (h *stateTestWithBuiltinRulesHelper) FindWorkSorted(count int) []*graph.Edg
 	return ret
 }
 
-func (h *stateTestWithBuiltinRulesHelper) PrepareForTarget(nodeName string) {
+func (h *planTestHelper) PrepareForTarget(nodeName string) {
 	h.t.Helper()
 	ok, err := h.plan.AddTarget(h.state.GetNode(nodeName))
 	require.NoError(h.t, err)
@@ -73,7 +74,7 @@ func (h *stateTestWithBuiltinRulesHelper) PrepareForTarget(nodeName string) {
 }
 
 func TestBasic(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	test.AssertParse(t, `
 build out: cat mid
 build mid: cat in
@@ -106,7 +107,7 @@ build mid: cat in
 }
 
 func TestDoubleOutputDirect(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	test.AssertParse(t, `
 build out: cat mid1 mid2
 build mid1 mid2: cat in
@@ -135,7 +136,7 @@ build mid1 mid2: cat in
 }
 
 func TestDoubleOutputIndirect(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	test.AssertParse(t, `
 build out: cat b1 b2
 build b1: cat a1
@@ -182,7 +183,7 @@ build a1 a2: cat in
 }
 
 func TestDoubleDependent(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	test.AssertParse(t, `
 build out: cat a1 a2
 build a1: cat mid
@@ -227,7 +228,7 @@ build mid: cat in
 	assert.Nil(t, edge) // done
 }
 
-func (h *stateTestWithBuiltinRulesHelper) TestPoolWithDepthOne(testCase string) {
+func (h *planTestHelper) TestPoolWithDepthOne(testCase string) {
 	h.t.Helper()
 
 	test.AssertParse(h.t, testCase, h.state)
@@ -272,7 +273,7 @@ func (h *stateTestWithBuiltinRulesHelper) TestPoolWithDepthOne(testCase string) 
 }
 
 func TestPoolWithDepthOne(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	th.TestPoolWithDepthOne(`
 pool foobar
   depth = 1
@@ -285,7 +286,7 @@ build out2: poolcat in
 }
 
 func TestConsolePool(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	th.TestPoolWithDepthOne(`
 rule poolcat
   command = cat $in > $out
@@ -296,7 +297,7 @@ build out2: poolcat in
 }
 
 func TestPoolsWithDepthTwo(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	test.AssertParse(t, `
 pool foobar
   depth = 2
@@ -391,7 +392,7 @@ build allTheThings: cat out1 out2 out3 outb1 outb2 outb3
 }
 
 func TestPoolWithRedundantEdges(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	test.AssertParse(t, `
 pool compile
   depth = 1
@@ -481,7 +482,7 @@ build all: phony libfoo.a
 }
 
 func TestPoolWithFailingEdge(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	test.AssertParse(t, `
 pool foobar
   depth = 1
@@ -535,7 +536,7 @@ build out2: poolcat in
 }
 
 func TestPriorityWithoutBuildLog(t *testing.T) {
-	th := newStateTestWithBuiltinRulesHelper(t)
+	th := newPlanTestHelper(t)
 	// Without a build log, the critical time is equivalent to graph
 	// depth. Test with the following graph:
 	//   a2
@@ -771,39 +772,50 @@ func (d *FakeCommandRunner) Abort() {
 }
 
 type buildTestHelper struct {
-	*stateTestWithBuiltinRulesHelper
+	planTestHelper *planTestHelper
 
-	config        build_config.Config
+	t             *testing.T
+	state         *state.State
+	config        *build_config.Config
 	commandRunner *FakeCommandRunner
 	fs            *disk.MockDiskInterface
 	status        *status.StatusPrinter
 	builder       *build.Builder
+	buildLog      *build_log.BuildLog
 }
 
-func makeConfig() build_config.Config {
+func makeConfig() *build_config.Config {
 	config := build_config.Create()
 	config.Verbosity = build_config.Quiet
 	return config
 }
 
 func newBuildTestHelper(t *testing.T) *buildTestHelper {
-	return newBuildTestHelperWithDepsLog(t, nil)
+	return newBuildTestHelperWithLogs(t, nil, nil)
 }
 
-func newBuildTestHelperWithDepsLog(t *testing.T, log *deps_log.DepsLog) *buildTestHelper {
+func newBuildTestHelperWithBuildLog(t *testing.T) *buildTestHelper {
+	buildLog := build_log.NewBuildLog()
+	return newBuildTestHelperWithLogs(t, buildLog, nil)
+}
+
+func newBuildTestHelperWithLogs(t *testing.T, buildLog *build_log.BuildLog, depsLog *deps_log.DepsLog) *buildTestHelper {
 	t.Helper()
 
-	planHelper := newStateTestWithBuiltinRulesHelper(t)
+	planHelper := newPlanTestHelper(t)
 	conf := makeConfig()
 	fs := disk.NewMockDiskInterface()
 	st := status.NewPrinter(conf)
 	th := &buildTestHelper{
-		stateTestWithBuiltinRulesHelper: planHelper,
-		config:                          conf,
-		commandRunner:                   newFakeCommandRunner(t, fs),
-		fs:                              fs,
-		status:                          st,
-		builder:                         build.NewBuilder(planHelper.state, conf, nil, log, fs, st, 0),
+		t:              t,
+		planTestHelper: planHelper,
+		state:          planHelper.state,
+		config:         conf,
+		commandRunner:  newFakeCommandRunner(t, fs),
+		fs:             fs,
+		status:         st,
+		builder:        build.NewBuilder(planHelper.state, conf, buildLog, depsLog, fs, st, 0),
+		buildLog:       buildLog,
 	}
 	th.SetUp()
 	return th
@@ -815,7 +827,7 @@ func (h *buildTestHelper) SetUp() {
 build cat1: cat in1
 build cat2: cat in1 in2
 build cat12: cat cat1 cat2
-`, h.stateTestWithBuiltinRulesHelper.state)
+`, h.planTestHelper.state)
 
 	h.fs.Create("in1", []byte{})
 	h.fs.Create("in2", []byte{})
@@ -826,7 +838,7 @@ func (h *buildTestHelper) IsPathDead(_ string) bool {
 }
 
 func (h *buildTestHelper) RebuildTarget(target, manifest, logPath, depsPath string, st *state.State) {
-	t := h.stateTestWithBuiltinRulesHelper.t
+	t := h.planTestHelper.t
 	pstate := state.New()
 	if st != nil {
 		pstate = st
@@ -865,7 +877,7 @@ func (h *buildTestHelper) RebuildTarget(target, manifest, logPath, depsPath stri
 }
 
 func (h *buildTestHelper) Dirty(path string) {
-	node := h.stateTestWithBuiltinRulesHelper.state.GetNode(path)
+	node := h.planTestHelper.state.GetNode(path)
 	node.MarkDirty()
 
 	// If it's an input file, mark that we've already stat()ed it and
@@ -873,6 +885,14 @@ func (h *buildTestHelper) Dirty(path string) {
 	if node.InEdge() == nil {
 		node.MarkMissing()
 	}
+}
+
+func assertHash(t *testing.T, expectedCommand string, actualHash uint64) {
+	t.Helper()
+	expectedHash := build_log.HashCommand(expectedCommand)
+	require.Equal(t, expectedHash, actualHash,
+		"Command hash mismatch: expected hash of %q (%x) but got %x",
+		expectedCommand, expectedHash, actualHash)
 }
 
 func TestNoWork(t *testing.T) {
@@ -1128,6 +1148,7 @@ build foo.o: cc foo.c
 	// Expect our edge to now have three inputs: foo.c and two headers.
 	assert.Equal(t, 3, len(edge.Inputs()))
 
+	edge.Dump("edge")
 	// Expect the command line we generate to only use the original input.
 	assert.Equal(t, "cc foo.c", edge.EvaluateCommand(false))
 }
@@ -1273,4 +1294,851 @@ build a: phony a
 	_, err := th.builder.AddTargetByName("a")
 	require.NoError(t, err)
 	assert.True(t, th.builder.AlreadyUpToDate())
+}
+
+// There are 6 different cases for phony rules:
+//
+// 1. output edge does not exist, inputs are not real
+// 2. output edge does not exist, no inputs
+// 3. output edge does not exist, inputs are real, newest mtime is M
+// 4. output edge is real, inputs are not real
+// 5. output edge is real, no inputs
+// 6. output edge is real, inputs are real, newest mtime is M
+//
+// Expected results :
+// 1. Edge is marked as clean, mtime is newest mtime of dependents.
+//     Touching inputs will cause dependents to rebuild.
+// 2. Edge is marked as dirty, causing dependent edges to always rebuild
+// 3. Edge is marked as clean, mtime is newest mtime of dependents.
+//     Touching inputs will cause dependents to rebuild.
+// 4. Edge is marked as clean, mtime is newest mtime of dependents.
+//     Touching inputs will cause dependents to rebuild.
+// 5. Edge is marked as dirty, causing dependent edges to always rebuild
+// 6. Edge is marked as clean, mtime is newest mtime of dependents.
+//     Touching inputs will cause dependents to rebuild.
+
+func (h *buildTestHelper) TestPhonyUseCase(i int) {
+	h.t.Helper()
+
+	test.AssertParse(h.t, `
+rule touch
+  command = touch $out
+build notreal: phony blank
+build phony1: phony notreal
+build phony2: phony
+build phony3: phony blank
+build phony4: phony notreal
+build phony5: phony
+build phony6: phony blank
+
+build test1: touch phony1
+build test2: touch phony2
+build test3: touch phony3
+build test4: touch phony4
+build test5: touch phony5
+build test6: touch phony6
+`, h.state)
+
+	// Set up test.
+	h.fs.Create("blank", []byte{}) // a "real" file
+	_, err := h.builder.AddTargetByName("test1")
+	require.NoError(h.t, err)
+	_, err = h.builder.AddTargetByName("test2")
+	require.NoError(h.t, err)
+	_, err = h.builder.AddTargetByName("test3")
+	require.NoError(h.t, err)
+	_, err = h.builder.AddTargetByName("test4")
+	require.NoError(h.t, err)
+	_, err = h.builder.AddTargetByName("test5")
+	require.NoError(h.t, err)
+	_, err = h.builder.AddTargetByName("test6")
+	require.NoError(h.t, err)
+
+	buildRes, err := h.builder.Build()
+	require.NoError(h.t, err)
+	require.Equal(h.t, exit_status.ExitSuccess, buildRes)
+
+	ci := fmt.Sprintf("%d", i)
+
+	// Tests 1, 3, 4, and 6 should rebuild when the input is updated.
+	if i != 2 && i != 5 {
+		testNode := h.state.GetNode("test" + ci)
+		phonyNode := h.state.GetNode("phony" + ci)
+
+		startTime := h.fs.Now() - 1
+
+		var inputNode *graph.Node
+		if i == 1 || i == 4 {
+			inputNode = h.state.GetNode("notreal")
+		} else {
+			inputNode = h.state.GetNode("blank")
+		}
+
+		h.state.Reset()
+		h.commandRunner.commandsRan = h.commandRunner.commandsRan[:0]
+		h.fs.Tick()
+		h.commandRunner.commandsRan = h.commandRunner.commandsRan[:0]
+		h.fs.Create("blank", []byte{}) // a "real" file
+		_, err = h.builder.AddTargetByName("test" + ci)
+		require.NoError(h.t, err)
+
+		// Second build, expect testN edge to be rebuilt
+		// and phonyN node's mtime to be updated.
+		require.False(h.t, h.builder.AlreadyUpToDate())
+		buildRes, err := h.builder.Build()
+		require.NoError(h.t, err)
+		require.Equal(h.t, exit_status.ExitSuccess, buildRes)
+		require.Len(h.t, h.commandRunner.commandsRan, 1)
+		assert.Equal(h.t, "touch test"+ci, h.commandRunner.commandsRan[0])
+		require.True(h.t, h.builder.AlreadyUpToDate())
+
+		inputTime := inputNode.Mtime()
+
+		assert.False(h.t, phonyNode.Exists())
+		assert.False(h.t, phonyNode.Dirty())
+
+		assert.Greater(h.t, phonyNode.Mtime(), startTime)
+		assert.Equal(h.t, phonyNode.Mtime(), inputTime)
+		err = testNode.Stat(h.fs)
+		require.NoError(h.t, err)
+		assert.True(h.t, testNode.Exists())
+		assert.Greater(h.t, testNode.Mtime(), startTime)
+	} else {
+		// Tests 2 and 5: Expect dependents to always rebuild.
+
+		h.state.Reset()
+		h.commandRunner.commandsRan = h.commandRunner.commandsRan[:0]
+		h.fs.Tick()
+		h.commandRunner.commandsRan = h.commandRunner.commandsRan[:0]
+		_, err = h.builder.AddTargetByName("test" + ci)
+		require.NoError(h.t, err)
+		require.False(h.t, h.builder.AlreadyUpToDate())
+		buildRes, err := h.builder.Build()
+		require.NoError(h.t, err)
+		require.Equal(h.t, exit_status.ExitSuccess, buildRes)
+		require.Len(h.t, h.commandRunner.commandsRan, 1)
+		assert.Equal(h.t, "touch test"+ci, h.commandRunner.commandsRan[0])
+
+		h.state.Reset()
+		h.commandRunner.commandsRan = h.commandRunner.commandsRan[:0]
+		_, err = h.builder.AddTargetByName("test" + ci)
+		require.NoError(h.t, err)
+		require.False(h.t, h.builder.AlreadyUpToDate())
+		buildRes, err = h.builder.Build()
+		require.NoError(h.t, err)
+		require.Equal(h.t, exit_status.ExitSuccess, buildRes)
+		require.Len(h.t, h.commandRunner.commandsRan, 1)
+		assert.Equal(h.t, "touch test"+ci, h.commandRunner.commandsRan[0])
+	}
+}
+
+func TestPhonyUseCase1(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.TestPhonyUseCase(1)
+}
+
+func TestPhonyUseCase2(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.TestPhonyUseCase(2)
+}
+
+func TestPhonyUseCase3(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.TestPhonyUseCase(3)
+}
+
+func TestPhonyUseCase4(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.TestPhonyUseCase(4)
+}
+
+func TestPhonyUseCase5(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.TestPhonyUseCase(5)
+}
+
+func TestPhonyUseCase6(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.TestPhonyUseCase(6)
+}
+
+func TestFail(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule fail
+  command = fail
+build out1: fail
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitFailure, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+	assert.Equal(t, "subcommand failed", err.Error())
+}
+
+func TestSwallowFailures(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule fail
+  command = fail
+build out1: fail
+build out2: fail
+build out3: fail
+build all: phony out1 out2 out3
+`, th.state)
+
+	// Swallow two failures, die on the third.
+	th.config.FailuresAllowed = 3
+
+	_, err := th.builder.AddTargetByName("all")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitFailure, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 3)
+	assert.Equal(t, "subcommands failed", err.Error())
+}
+
+func TestSwallowFailuresLimit(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+rule fail
+  command = fail
+build out1: fail
+build out2: fail
+build out3: fail
+build final: cat out1 out2 out3
+`, th.state)
+
+	// Swallow ten failures; we should stop before building final.
+	th.config.FailuresAllowed = 11
+
+	_, err := th.builder.AddTargetByName("final")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitFailure, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 3)
+	assert.Equal(t, "cannot make progress due to previous errors", err.Error())
+}
+
+func TestSwallowFailuresPool(t *testing.T) {
+	th := newBuildTestHelper(t)
+	test.AssertParse(t, `
+pool failpool
+  depth = 1
+rule fail
+  command = fail
+  pool = failpool
+build out1: fail
+build out2: fail
+build out3: fail
+build final: cat out1 out2 out3
+`, th.state)
+
+	// Swallow ten failures; we should stop before building final.
+	th.config.FailuresAllowed = 11
+
+	_, err := th.builder.AddTargetByName("final")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitFailure, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 3)
+	assert.Equal(t, "cannot make progress due to previous errors", err.Error())
+}
+
+func TestPoolEdgesReadyButNotWanted(t *testing.T) {
+	th := newBuildTestHelper(t)
+	th.fs.Create("x", []byte{})
+
+	manifest := `
+pool some_pool
+  depth = 4
+rule touch
+  command = touch $out
+  pool = some_pool
+rule cc
+  command = touch grit
+
+build B.d.stamp: cc | x
+build C.stamp: touch B.d.stamp
+build final.stamp: touch || C.stamp
+`
+
+	th.RebuildTarget("final.stamp", manifest, "", "", nil)
+
+	th.fs.RemoveFile("B.d.stamp")
+
+	saveState := state.New()
+	th.RebuildTarget("final.stamp", manifest, "", "", saveState)
+	assert.GreaterOrEqual(t, saveState.LookupPool("some_pool").CurrentUse(), 0)
+}
+
+func TestImplicitGeneratedOutOfDate(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule touch
+  command = touch $out
+  generator = 1
+build out.imp: touch | in
+`, th.state)
+	th.fs.Create("out.imp", []byte{})
+	th.fs.Tick()
+	th.fs.Create("in", []byte{})
+
+	_, err := th.builder.AddTargetByName("out.imp")
+	require.NoError(t, err)
+
+	require.False(t, th.builder.AlreadyUpToDate())
+
+	require.True(t, th.state.GetNode("out.imp").Dirty())
+}
+
+func TestImplicitGeneratedOutOfDate2(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule touch-implicit-dep-out
+  command = touch-implicit-dep-out
+  generator = 1
+build out.imp: touch-implicit-dep-out | inimp inimp2
+  test_dependency = inimp
+`, th.state)
+	th.fs.Create("inimp", []byte{})
+	th.fs.Create("out.imp", []byte{})
+	th.fs.Tick()
+	th.fs.Create("inimp2", []byte{})
+	th.fs.Tick()
+
+	_, err := th.builder.AddTargetByName("out.imp")
+	require.NoError(t, err)
+	require.False(t, th.builder.AlreadyUpToDate())
+
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.True(t, th.builder.AlreadyUpToDate())
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	th.builder.Cleanup()
+	th.builder.TestOnlyPlan().Reset()
+
+	_, err = th.builder.AddTargetByName("out.imp")
+	require.NoError(t, err)
+	require.True(t, th.builder.AlreadyUpToDate())
+	require.False(t, th.state.GetNode("out.imp").Dirty())
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	th.builder.Cleanup()
+	th.builder.TestOnlyPlan().Reset()
+
+	th.fs.Tick()
+	th.fs.Create("inimp", []byte{})
+
+	_, err = th.builder.AddTargetByName("out.imp")
+	require.NoError(t, err)
+	require.False(t, th.builder.AlreadyUpToDate())
+
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.True(t, th.builder.AlreadyUpToDate())
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	th.builder.Cleanup()
+	th.builder.TestOnlyPlan().Reset()
+
+	_, err = th.builder.AddTargetByName("out.imp")
+	require.NoError(t, err)
+	require.True(t, th.builder.AlreadyUpToDate())
+	require.False(t, th.state.GetNode("out.imp").Dirty())
+}
+
+func TestNotInLogButOnDisk(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+	test.AssertParse(t, `
+rule cc
+  command = cc
+build out1: cc in
+`, th.state)
+
+	// Create input/output that would be considered up to date when
+	// not considering the command line hash.
+	th.fs.Create("in", []byte{})
+	th.fs.Create("out1", []byte{})
+
+	// Because it's not in the log, it should not be up-to-date until
+	// we build again.
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	require.False(t, th.builder.AlreadyUpToDate())
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+
+	_, err = th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.True(t, th.builder.AlreadyUpToDate())
+}
+
+func TestRebuildAfterFailure(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule touch-fail-tick2
+  command = touch-fail-tick2
+build out1: touch-fail-tick2 in
+`, th.state)
+
+	th.fs.Create("in", []byte{})
+
+	// Run once successfully to get out1 in the log
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	th.builder.Cleanup()
+	th.builder.TestOnlyPlan().Reset()
+
+	th.fs.Tick()
+	th.fs.Create("in", []byte{})
+
+	// Run again with a failure that updates the output file timestamp
+	_, err = th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.Error(t, err)
+	require.Equal(t, exit_status.ExitFailure, buildRes)
+	require.Equal(t, "subcommand failed", err.Error())
+	require.Len(t, th.commandRunner.commandsRan, 1)
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	th.builder.Cleanup()
+	th.builder.TestOnlyPlan().Reset()
+	th.fs.Tick()
+
+	// Run again, should rerun even though the output file is up to date on disk
+	_, err = th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	require.False(t, th.builder.AlreadyUpToDate())
+
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+// TYLER: ALL TESTS AFTER THIS ONE NEED TO BE AUDITED. The tests reference th.plan, which is NOT THE SAME AS builder.plan!!! MAybe make it the same???
+
+func TestRebuildWithNoInputs(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule touch
+  command = touch
+build out1: touch
+build out2: touch in
+`, th.state)
+
+	th.fs.Create("in", []byte{})
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	_, err = th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+
+	th.fs.Tick()
+
+	th.fs.Create("in", []byte{})
+
+	_, err = th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	_, err = th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+func TestRestatTest(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule true
+  command = true
+  restat = 1
+rule cc
+  command = cc
+  restat = 1
+build out1: cc in
+build out2: true out1
+build out3: cat out2
+`, th.state)
+
+	th.fs.Create("out1", []byte{})
+	th.fs.Create("out2", []byte{})
+	th.fs.Create("out3", []byte{})
+
+	th.fs.Tick()
+
+	th.fs.Create("in", []byte{})
+
+	// Do a pre-build so that there's commands in the log for the outputs,
+	// otherwise, the lack of an entry in the build log will cause out3 to rebuild
+	// regardless of restat.
+	_, err := th.builder.AddTargetByName("out3")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 3)
+	require.Equal(t, 3, th.builder.TestOnlyPlan().CommandEdgeCount())
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+
+	th.fs.Tick()
+
+	th.fs.Create("in", []byte{})
+	// "cc" touches out1, so we should build out2.  But because "true" does not
+	// touch out2, we should cancel the build of out3.
+	_, err = th.builder.AddTargetByName("out3")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+
+	// If we run again, it should be a no-op, because the build log has recorded
+	// that we've already built out2 with an input timestamp of 2 (from out1).
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("out3")
+	require.NoError(t, err)
+	require.True(t, th.builder.AlreadyUpToDate())
+
+	th.fs.Tick()
+
+	th.fs.Create("in", []byte{})
+
+	// The build log entry should not, however, prevent us from rebuilding out2
+	// if out1 changes.
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("out3")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+}
+
+func TestRestatMissingFile(t *testing.T) {
+	// If a restat rule doesn't create its output, and the output didn't
+	// exist before the rule was run, consider that behavior equivalent
+	// to a rule that doesn't modify its existent output file.
+	th := newBuildTestHelperWithBuildLog(t)
+	test.AssertParse(t, `
+rule true
+  command = true
+  restat = 1
+rule cc
+  command = cc
+build out1: true in
+build out2: cc out1
+`, th.state)
+
+	th.fs.Create("in", []byte{})
+	th.fs.Create("out2", []byte{})
+
+	// Do a pre-build so that there's commands in the log for the outputs,
+	// otherwise, the lack of an entry in the build log will cause out2 to rebuild
+	// regardless of restat.
+	_, err := th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+
+	th.fs.Tick()
+	th.fs.Create("in", []byte{})
+	th.fs.Create("out2", []byte{})
+
+	// Run a build, expect only the first command to run.
+	// It doesn't touch its output (due to being the "true" command), so
+	// we shouldn't run the dependent build.
+	_, err = th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+func TestRestatSingleDependentOutputDirty(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule true
+  command = true
+  restat = 1
+rule touch
+  command = touch
+build out1: true in
+build out2 out3: touch out1
+build out4: touch out2
+`, th.state)
+
+	// Create the necessary files
+	th.fs.Create("in", []byte{})
+
+	_, err := th.builder.AddTargetByName("out4")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 3)
+
+	th.fs.Tick()
+	th.fs.Create("in", []byte{})
+	th.fs.RemoveFile("out3")
+
+	// Since "in" is missing, out1 will be built. Since "out3" is missing,
+	// out2 and out3 will be built even though "in" is not touched when built.
+	// Then, since out2 is rebuilt, out4 should be rebuilt -- the restat on the
+	// "true" rule should not lead to the "touch" edge writing out2 and out3 being
+	// cleared.
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("out4")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 3)
+}
+
+func TestRestatMissingInput(t *testing.T) {
+	// Test scenario, in which an input file is removed, but output isn't changed
+	// https://github.com/ninja-build/ninja/issues/295
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule true
+  command = true
+  depfile = $out.d
+  restat = 1
+rule cc
+  command = cc
+build out1: true in
+build out2: cc out1
+`, th.state)
+
+	// Create all necessary files
+	th.fs.Create("in", []byte{})
+
+	// The implicit dependencies and the depfile itself
+	// are newer than the output
+	restatMtime := th.fs.Tick()
+	th.fs.Create("out1.d", []byte("out1: will.be.deleted restat.file\n"))
+	th.fs.Create("will.be.deleted", []byte{})
+	th.fs.Create("restat.file", []byte{})
+
+	// Run the build, out1 and out2 get built
+	_, err := th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+
+	// See that an entry in the logfile is created, capturing
+	// the right mtime
+	logEntry := th.buildLog.LookupByOutput("out1")
+	require.NotNil(t, logEntry)
+	require.Equal(t, restatMtime, logEntry.Mtime)
+
+	// Now remove a file, referenced from depfile, so that target becomes
+	// dirty, but the output does not change
+	th.fs.RemoveFile("will.be.deleted")
+
+	// Trigger the build again - only out1 gets built
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("out2")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+
+	// Check that the logfile entry remains correctly set
+	logEntry = th.buildLog.LookupByOutput("out1")
+	require.NotNil(t, logEntry)
+	require.Equal(t, restatMtime, logEntry.Mtime)
+}
+
+func TestRestatInputChangesDueToRule(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule generate-depfile
+  command = generate-depfile
+build out1: generate-depfile || cat1
+  test_dependency = in2
+  touch_dependency = 1
+  restat = 1
+  depfile = out.d
+`, th.state)
+
+	// Perform the first build. out1 is a restat rule, so its recorded mtime in the build
+	// log should be the time the command completes, not the time the command started. One
+	// of out1's discovered dependencies will have a newer mtime than when out1 started
+	// running, due to its command touching the dependency itself.
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+	require.Equal(t, 2, th.builder.TestOnlyPlan().CommandEdgeCount())
+	logEntry := th.buildLog.LookupByOutput("out1")
+	require.NotNil(t, logEntry)
+	require.Equal(t, timestamp.TimeStamp(2), logEntry.Mtime)
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	th.builder.Cleanup()
+	th.builder.TestOnlyPlan().Reset()
+
+	th.fs.Tick()
+	th.fs.Create("in1", []byte{})
+
+	// Touching a dependency of an order-only dependency of out1 should not cause out1 to
+	// rebuild. If out1 were not a restat rule, then it would rebuild here because its
+	// recorded mtime would have been an earlier mtime than its most recent input's (in2)
+	// mtime
+	_, err = th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	require.False(t, th.state.GetNode("out1").Dirty())
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+	require.Equal(t, 1, th.builder.TestOnlyPlan().CommandEdgeCount())
+}
+
+func TestGeneratedPlainDepfileMtime(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule generate-depfile
+  command = generate-depfile
+build out: generate-depfile
+  test_dependency = inimp
+  depfile = out.d
+`, th.state)
+	th.fs.Create("inimp", []byte{})
+	th.fs.Tick()
+
+	_, err := th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+	require.False(t, th.builder.AlreadyUpToDate())
+
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.True(t, th.builder.AlreadyUpToDate())
+
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	th.builder.Cleanup()
+	th.builder.TestOnlyPlan().Reset()
+
+	_, err = th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+	require.True(t, th.builder.AlreadyUpToDate())
+}
+
+func TestRspFileCmdLineChange(t *testing.T) {
+	th := newBuildTestHelperWithBuildLog(t)
+
+	test.AssertParse(t, `
+rule cat_rsp
+  command = cat $rspfile > $out
+  rspfile = $rspfile
+  rspfile_content = $long_command
+build out: cat_rsp in
+  rspfile = out.rsp
+  long_command = Original very long command
+`, th.state)
+
+	th.fs.Create("out", []byte{})
+	th.fs.Tick()
+	th.fs.Create("in", []byte{})
+
+	_, err := th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+
+	// 1. Build for the 1st time (-> populate log)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+
+	// 2. Build again (no change)
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+	require.True(t, th.builder.AlreadyUpToDate())
+
+	// 3. Alter the entry in the logfile
+	// (to simulate a change in the command line between 2 builds)
+	logEntry := th.buildLog.LookupByOutput("out")
+	require.NotNil(t, logEntry)
+	assertHash(t,
+		"cat out.rsp > out;rspfile=Original very long command",
+		logEntry.CommandHash)
+	logEntry.CommandHash++ // Change the command hash to something else.
+	// Now expect the target to be rebuilt
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+	th.state.Reset()
+	_, err = th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+	buildRes, err = th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
 }
