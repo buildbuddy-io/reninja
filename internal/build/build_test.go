@@ -2315,6 +2315,45 @@ build bad_deps.o: cat in1
 	assert.Equal(t, "subcommand failed", err.Error())
 }
 
+func TestTwoOutputsDepFileMSVC(t *testing.T) {
+	t.Skip()
+	// TODO(tylerw): windows support
+}
+
+// Test a GCC-style deps log with multiple outputs.
+func TestTwoOutputsDepFileGCCOneLine(t *testing.T) {
+	th := newBuildTestHelperWithDepsLog(t)
+	test.AssertParse(t, `
+rule cp_multi_gcc
+    command = echo '$out: $in' > in.d && for file in $out; do cp in1 $$file; done
+    deps = gcc
+    depfile = in.d
+build out1 out2: cp_multi_gcc in1 in2
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out1")
+	require.NoError(t, err)
+	th.fs.Create("in.d", []byte("out1 out2: in1 in2"))
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+	assert.Len(t, th.commandRunner.commandsRan, 1)
+	assert.Equal(t, "echo 'out1 out2: in1 in2' > in.d && for file in out1 out2; do cp in1 $file; done", th.commandRunner.commandsRan[0])
+
+	out1Node := th.state.LookupNode("out1")
+	out1Deps := th.depsLog.GetDeps(out1Node)
+	require.Len(t, out1Deps.Nodes, 2)
+	require.Equal(t, "in1", out1Deps.Nodes[0].Path())
+	require.Equal(t, "in2", out1Deps.Nodes[1].Path())
+
+	out2Node := th.state.LookupNode("out2")
+	out2Deps := th.depsLog.GetDeps(out2Node)
+	require.Len(t, out2Deps.Nodes, 2)
+	require.Equal(t, "in1", out2Deps.Nodes[0].Path())
+	require.Equal(t, "in2", out2Deps.Nodes[1].Path())
+}
+
 func TestTwoOutputsDepFileGCCMultiLineInput(t *testing.T) {
 	th := newBuildTestHelperWithDepsLog(t)
 	test.AssertParse(t, `
@@ -2453,41 +2492,68 @@ build out1 out2: cp_multi_gcc in1 in2
 	assert.Equal(t, "in2", out2Deps.Nodes[1].Path())
 }
 
-func TestTwoOutputsDepFileMSVC(t *testing.T) {
-	t.Skip()
-	// TODO(tylerw): windows support
-}
-
-// Test a GCC-style deps log with multiple outputs.
-func TestTwoOutputsDepFileGCCOneLine(t *testing.T) {
+func TestStraightForward(t *testing.T) {
 	th := newBuildTestHelperWithDepsLog(t)
-	test.AssertParse(t, `
-rule cp_multi_gcc
-    command = echo '$out: $in' > in.d && for file in $out; do cp in1 $$file; done
-    deps = gcc
-    depfile = in.d
-build out1 out2: cp_multi_gcc in1 in2
-`, th.state)
+	//buildLogFile := filepath.Join(t.TempDir(), "build_log")
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
 
-	_, err := th.builder.AddTargetByName("out1")
-	require.NoError(t, err)
-	th.fs.Create("in.d", []byte("out1 out2: in1 in2"))
-	buildRes, err := th.builder.Build()
-	require.NoError(t, err)
-	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	manifest := `
+build out: cat in1
+  deps = gcc
+  depfile = in1.d
+`
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
 
-	assert.Len(t, th.commandRunner.commandsRan, 1)
-	assert.Equal(t, "echo 'out1 out2: in1 in2' > in.d && for file in out1 out2; do cp in1 $file; done", th.commandRunner.commandsRan[0])
+		// Run the build once, everything should be ok.
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
 
-	out1Node := th.state.LookupNode("out1")
-	out1Deps := th.depsLog.GetDeps(out1Node)
-	require.Len(t, out1Deps.Nodes, 2)
-	require.Equal(t, "in1", out1Deps.Nodes[0].Path())
-	require.Equal(t, "in2", out1Deps.Nodes[1].Path())
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		th.fs.Create("in1.d", []byte("out: in2"))
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
 
-	out2Node := th.state.LookupNode("out2")
-	out2Deps := th.depsLog.GetDeps(out2Node)
-	require.Len(t, out2Deps.Nodes, 2)
-	require.Equal(t, "in1", out2Deps.Nodes[0].Path())
-	require.Equal(t, "in2", out2Deps.Nodes[1].Path())
+		// The deps file should have been removed
+		stat, _ := th.fs.Stat("in1.d")
+		require.Equal(t, timestamp.TimeStamp(0), stat)
+
+		// Recreate it for the next step.
+		th.fs.Create("in1.d", []byte("out: in2"))
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		// Touch the file only mentioned in the deps.
+		th.fs.Tick()
+		th.fs.Create("in2", []byte{})
+
+		// Run the build again.
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+		assert.Len(t, th.commandRunner.commandsRan, 1)
+		builder.TestOnlySetCommandRunner(nil)
+	}
 }
