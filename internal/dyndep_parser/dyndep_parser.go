@@ -61,7 +61,7 @@ func (d *DyndepParser) ExpectToken(expected lexer.Token) error {
 func (d *DyndepParser) Load(filename string) error {
 	contents, err := d.fileReader.ReadFile(filename)
 	if err != nil {
-		return err
+		return fmt.Errorf("loading '%s': %s", filename, err)
 	}
 	return d.Parse(filename, string(contents))
 }

@@ -43,7 +43,7 @@ func TestEmpty(t *testing.T) {
 	parser := dyndep_parser.New(s, fs, dyndepFile)
 	err := parser.ParseTest("")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "input:1:1: expected 'ninja_dyndep_version = ...")
+	require.Contains(t, err.Error(), "input:1: expected 'ninja_dyndep_version = ...")
 }
 
 func TestVersion1(t *testing.T) {

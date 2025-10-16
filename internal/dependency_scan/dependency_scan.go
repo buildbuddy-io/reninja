@@ -231,24 +231,27 @@ func (s *DependencyScan) RecomputeNodeDirty(node *graph.Node, stack, validationN
 }
 
 func (s *DependencyScan) VerifyDAG(node *graph.Node, stack []*graph.Node) error {
-	e := node.InEdge()
-	if e == nil {
+	edge := node.InEdge()
+	if edge == nil {
 		panic("edge is nil")
 	}
 
 	// If we have no temporary mark on the edge then we do not yet have a cycle.
-	if e.Mark() != graph.VisitInStack {
+	if edge.Mark() != graph.VisitInStack {
 		return nil
 	}
 
 	// We have this edge earlier in the call stack.  Find it.
 	start := 0
 	for i, s := range stack {
-		if s.InEdge() != e {
+		if s.InEdge() != edge {
 			continue
 		}
 		start = i
 		break
+	}
+	if start == len(stack) {
+		panic("did not find edge in stack")
 	}
 
 	// Make the cycle clear by reporting its start as the node at its end
@@ -258,6 +261,7 @@ func (s *DependencyScan) VerifyDAG(node *graph.Node, stack []*graph.Node) error 
 	//   build c: cat a
 	// should report a -> c -> a instead of b -> c -> a.
 	stack = stack[start:]
+	stack[0] = node
 
 	errMsg := "dependency cycle: "
 	for _, s := range stack {
@@ -265,9 +269,10 @@ func (s *DependencyScan) VerifyDAG(node *graph.Node, stack []*graph.Node) error 
 	}
 	errMsg += stack[start].Path()
 
-	if start+1 == len(stack) && e.MaybePhonycycleDiagnostic() {
+	if start+1 == len(stack) && edge.MaybePhonycycleDiagnostic() {
 		errMsg += " [-w phonycycle=err]"
 	}
+
 	return fmt.Errorf("%s", errMsg)
 }
 

@@ -260,8 +260,72 @@ func (p *Plan) PrepareQueue() {
 	p.ScheduleInitialEdges()
 }
 
-func (p *Plan) DyndepsLoaded(scan *dependency_scan.DependencyScan, node *graph.Node, ddf dyndep.DyndepFile) error {
-	return nil
+type oePair struct {
+	first  *graph.Edge
+	second *dyndep.Dyndeps
+}
+
+func (p *Plan) DyndepsLoaded(scan *dependency_scan.DependencyScan, node *graph.Node, ddf dyndep.DyndepFile) (bool, error) {
+	// Recompute the dirty state of all our direct and indirect dependents now
+	// that our dyndep information has been loaded.
+	ok, err := p.RefreshDyndepDependents(scan, node)
+	if err != nil || !ok {
+		return ok, err
+	}
+
+	// We loaded dyndep information for those out_edges of the dyndep node that
+	// specify the node in a dyndep binding, but they may not be in the plan.
+	// Starting with those already in the plan, walk newly-reachable portion
+	// of the graph through the dyndep-discovered dependencies.
+	dyndepRoots := make([]oePair, 0)
+	for edge, dyndeps := range ddf {
+		// If the edge outputs are ready we do not need to consider it here.
+		if edge.OutputsReady() {
+			continue
+		}
+
+		// If the edge has not been encountered before then nothing already in the
+		// plan depends on it so we do not need to consider the edge yet either.
+		_, ok := p.want[edge]
+		if !ok {
+			continue
+		}
+
+		// This edge is already in the plan so queue it for the walk.
+		dyndepRoots = append(dyndepRoots, oePair{first: edge, second: dyndeps})
+	}
+
+	// Walk dyndep-discovered portion of the graph to add it to the build plan.
+	dyndepWalk := make(map[*graph.Edge]struct{}, 0)
+	for _, oe := range dyndepRoots {
+		for _, i := range oe.second.ImplicitInputs {
+			added, err := p.AddSubTarget(i, oe.first.Outputs()[0], dyndepWalk)
+			if err != nil || !added {
+				return false, err
+			}
+		}
+	}
+
+	// Add out edges from this node that are in the plan (just as
+	// Plan::NodeFinished would have without taking the dyndep code path).
+	for _, outEdge := range node.OutEdges() {
+		if _, ok := p.want[outEdge]; ok {
+			dyndepWalk[outEdge] = struct{}{}
+		}
+	}
+
+	// See if any encountered edges are now ready.
+	for wi := range dyndepWalk {
+		want, ok := p.want[wi]
+		if !ok {
+			continue
+		}
+		if ready, err := p.EdgeMaybeReady(wi, want); err != nil || !ready {
+			return false, err
+		}
+	}
+
+	return true, nil
 }
 
 // Heuristic for edge priority weighting.
@@ -341,7 +405,7 @@ func (p *Plan) RefreshDyndepDependents(scan *dependency_scan.DependencyScan, nod
 		// build it if the outputs were not known to be dirty.  With dyndep
 		// information an output is now known to be dirty, so we want the edge.
 		edge := n.InEdge()
-		if edge == nil || !edge.OutputsReady() {
+		if edge == nil || edge.OutputsReady() {
 			panic("already encountered edge not in expected state")
 		}
 		want, ok := p.want[edge]
@@ -1051,10 +1115,13 @@ func (b *Builder) LoadDyndeps(node *graph.Node) error {
 		return err
 	}
 
-	if err := b.plan.DyndepsLoaded(b.scan, node, ddf); err != nil {
+	ok, err := b.plan.DyndepsLoaded(b.scan, node, ddf)
+	if err != nil {
 		return err
 	}
-
+	if !ok {
+		return fmt.Errorf("dyndeps were not loaded")
+	}
 	return nil
 }
 

@@ -3314,3 +3314,173 @@ build out: cat header.h
 	th.RebuildTarget("out", manifest, buildLogFile, depsLog2File, nil)
 	require.Len(t, th.commandRunner.commandsRan, 0)
 }
+
+// TestWrongOutputInDepfileCausesRebuild tests that having the wrong output
+// in a depfile causes a rebuild.
+func TestWrongOutputInDepfileCausesRebuild(t *testing.T) {
+	buildLogFile := filepath.Join(t.TempDir(), "build_log")
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+rule cc
+  command = cc $in
+  depfile = $out.d
+build foo.o: cc foo.c
+`
+
+	th := newBuildTestHelper(t)
+	th.fs.Create("foo.c", []byte{})
+	th.fs.Create("foo.o", []byte{})
+	th.fs.Create("header.h", []byte{})
+	th.fs.Create("foo.o.d", []byte("bar.o.d: header.h\n"))
+
+	th.RebuildTarget("foo.o", manifest, buildLogFile, depsLogFile, nil)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+// TestConsole tests that console pool works correctly.
+func TestConsole(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	test.AssertParse(t, `
+rule console
+  command = console
+  pool = console
+build cons: console in.txt
+`, th.state)
+
+	th.fs.Create("in.txt", []byte{})
+
+	_, err := th.builder.AddTargetByName("cons")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+}
+
+// TestDyndepMissingAndNoRule verifies that we can diagnose when a dyndep
+// file is missing and has no rule to build it.
+func TestDyndepMissingAndNoRule(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	test.AssertParse(t, `
+rule touch
+  command = touch $out
+build out: touch || dd
+  dyndep = dd
+`, th.state)
+
+	_, err := th.builder.AddTargetByName("out")
+	require.Error(t, err)
+	require.Equal(t, "loading 'dd': file does not exist", err.Error())
+}
+
+// TestDyndepReadyImplicitConnection verifies that a dyndep file can be
+// loaded immediately to discover that one edge has an implicit output that
+// is also an implicit input of another edge.
+func TestDyndepReadyImplicitConnection(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	test.AssertParse(t, `
+rule touch
+  command = touch $out $out.imp
+build tmp: touch || dd
+  dyndep = dd
+build out: touch || dd
+  dyndep = dd
+`, th.state)
+
+	th.fs.Create("dd", []byte(`ninja_dyndep_version = 1
+build out | out.imp: dyndep | tmp.imp
+build tmp | tmp.imp: dyndep
+`))
+
+	_, err := th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+	require.Equal(t, "touch tmp tmp.imp", th.commandRunner.commandsRan[0])
+	require.Equal(t, "touch out out.imp", th.commandRunner.commandsRan[1])
+}
+
+// TestDyndepReadySyntaxError verifies that a dyndep file can be loaded
+// immediately to discover and reject a syntax error in it.
+func TestDyndepReadySyntaxError(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	test.AssertParse(t, `
+rule touch
+  command = touch $out
+build out: touch || dd
+  dyndep = dd
+`, th.state)
+
+	th.fs.Create("dd", []byte("build out: dyndep\n"))
+
+	_, err := th.builder.AddTargetByName("out")
+	require.Error(t, err)
+	require.Equal(t, "dd:1: expected 'ninja_dyndep_version = ...'\n", err.Error())
+}
+
+// TestDyndepReadyCircular verifies that a dyndep file can be loaded
+// immediately to discover and reject a circular dependency.
+func TestDyndepReadyCircular(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	test.AssertParse(t, `
+rule r
+  command = unused
+build out: r in || dd
+  dyndep = dd
+build in: r circ
+`, th.state)
+
+	th.fs.Create("dd", []byte(`ninja_dyndep_version = 1
+build out | circ: dyndep
+`))
+	th.fs.Create("out", []byte{})
+
+	_, err := th.builder.AddTargetByName("out")
+	require.Error(t, err)
+	require.Equal(t, "dependency cycle: circ -> in -> circ", err.Error())
+}
+
+// TestDyndepBuild verifies that a dyndep file can be built and loaded
+// to discover nothing.
+func TestDyndepBuild(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	test.AssertParse(t, `
+rule touch
+  command = touch $out
+rule cp
+  command = cp $in $out
+build dd: cp dd-in
+build out: touch || dd
+  dyndep = dd
+`, th.state)
+
+	th.fs.Create("dd-in", []byte(`ninja_dyndep_version = 1
+build out: dyndep
+`))
+
+	_, err := th.builder.AddTargetByName("out")
+	require.NoError(t, err)
+
+	th.builder.Dump()
+	buildRes, err := th.builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+	require.Len(t, th.commandRunner.commandsRan, 2)
+	require.Equal(t, "cp dd-in dd", th.commandRunner.commandsRan[0])
+	require.Equal(t, "touch out", th.commandRunner.commandsRan[1])
+
+	filesRead := th.fs.FilesRead()
+	require.Len(t, filesRead, 2)
+	require.Equal(t, "dd", filesRead[0])
+	require.Equal(t, "dd-in", filesRead[1])
+}

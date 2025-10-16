@@ -1,4 +1,4 @@
-//go:generate re2go $INPUT -o $OUTPUT -i --api generic
+//go:generate re2go -i $GOFILE -o lexer.go --api generic
 package lexer
 
 import (
@@ -141,26 +141,32 @@ func (l *Lexer) Error(message string) error {
 			lineStart = i + 1
 		}
 	}
-	col := l.lastToken - lineStart + 1
+	col := 0
+	if l.lastToken != 0 {
+		col = l.lastToken - lineStart
+	}
 
-	err := fmt.Sprintf("%s:%d:%d: %s", l.filename, line, col, message)
+	errMsg := fmt.Sprintf("%s:%d: %s\n", l.filename, line, message)
 
 	// Add some context to the message
 	const truncateColumn = 72
 	if col > 0 && col < truncateColumn {
-		lineEnd := lineStart
-		for lineEnd < len(l.input) && l.input[lineEnd] != '\n' && lineEnd-lineStart < truncateColumn {
-			lineEnd++
+		truncated := true
+		var length int
+		for length = lineStart; length < truncateColumn; length++ {
+			if length >= len(l.input) || l.input[length] == '\n' {
+				truncated = false
+				break
+			}
 		}
-		truncated := lineEnd-lineStart >= truncateColumn
 
-		err += "\n" + l.input[lineStart:lineEnd]
+		errMsg += l.input[lineStart:length]
 		if truncated {
-			err += "..."
+			errMsg += "..."
 		}
-		err += "\n" + strings.Repeat(" ", col-1) + "^ near here"
+		errMsg += "\n" + strings.Repeat(" ", col) + "^ near here"
 	}
-	return fmt.Errorf("%s", err)
+	return fmt.Errorf("%s", errMsg)
 }
 
 // UnreadToken rewinds to the last read token
