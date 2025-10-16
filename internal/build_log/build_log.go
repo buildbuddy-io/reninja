@@ -158,6 +158,9 @@ func (b *BuildLog) OpenForWriteIfNeeded() error {
 func (b *BuildLog) Load(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	defer f.Close()

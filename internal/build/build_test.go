@@ -2557,3 +2557,442 @@ build out: cat in1
 		builder.TestOnlySetCommandRunner(nil)
 	}
 }
+
+// ObsoleteDeps tests that even when files are in alignment, we should still
+// rebuild if the deps were recorded at an older time than the output.
+//
+// Setup:
+//  1. Run a build that gathers dependencies at time t.
+//  2. Move input/output to time t+1 -- despite files in alignment,
+//     should still need to rebuild due to deps at older time.
+func TestObsoleteDeps(t *testing.T) {
+	th := newBuildTestHelperWithDepsLog(t)
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+build out: cat in1
+  deps = gcc
+  depfile = in1.d
+`
+
+	// Run an ordinary build that gathers dependencies.
+	{
+		th.fs.Create("in1", []byte{})
+		th.fs.Create("in1.d", []byte("out: "))
+
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		// Run the build once, everything should be ok.
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+
+	// Push all files one tick forward so that only the deps are out of date.
+	th.fs.Tick()
+	th.fs.Create("in1", []byte{})
+	th.fs.Create("out", []byte{})
+
+	// The deps file should have been removed, so no need to timestamp it.
+	stat, _ := th.fs.Stat("in1.d")
+	require.Equal(t, timestamp.TimeStamp(0), stat)
+
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+
+		// We expect "out" to be rebuilt since the deps were recorded at an
+		// earlier time than the output file.
+		require.False(t, builder.AlreadyUpToDate())
+
+		builder.TestOnlySetCommandRunner(nil)
+		depsLog.Close()
+	}
+}
+
+// DepsIgnoredInDryRun tests that the deps log is NULL in dry runs,
+// and the build still works correctly.
+func TestDepsIgnoredInDryRun(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	manifest := `
+build out: cat in1
+  deps = gcc
+  depfile = in1.d
+`
+
+	th.fs.Create("out", []byte{})
+	th.fs.Tick()
+	th.fs.Create("in1", []byte{})
+
+	state := state.New()
+	test.AddCatRule(t, state)
+	test.AssertParse(t, manifest, state)
+
+	// The deps log is NULL in dry runs.
+	th.config.DryRun = true
+	builder := build.NewBuilder(state, th.config, nil, nil, th.fs, th.status, 0)
+	builder.TestOnlySetCommandRunner(th.commandRunner)
+	th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+	_, err := builder.AddTargetByName("out")
+	require.NoError(t, err)
+	buildRes, err := builder.Build()
+	require.NoError(t, err)
+	require.Equal(t, exit_status.ExitSuccess, buildRes)
+	require.Len(t, th.commandRunner.commandsRan, 1)
+
+	builder.TestOnlySetCommandRunner(nil)
+}
+
+// TestInputMtimeRaceCondition tests that if an input file is modified
+// while a build command is running, the build system detects it and
+// rebuilds on the next run.
+func TestInputMtimeRaceCondition(t *testing.T) {
+	buildLogFile := filepath.Join(t.TempDir(), "build_log")
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+rule long-cc
+  command = long-cc
+build out: long-cc in1
+  test_dependency = in1
+`
+
+	th := newBuildTestHelper(t)
+
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		// Run the build, out gets built, dep file is created
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.Len(t, th.commandRunner.commandsRan, 1)
+
+		// See that an entry in the logfile is created. The input_mtime is 1 since
+		// that was the mtime of in1 when the command was started.
+		logEntry := buildLog.LookupByOutput("out")
+		require.NotNil(t, logEntry)
+		require.Equal(t, timestamp.TimeStamp(1), logEntry.Mtime)
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		// Trigger the build again - "out" should rebuild despite having a newer mtime
+		// than "in1", since "in1" was touched during the build of out (simulated by
+		// changing its mtime in the test builder's WaitForCommand() which runs before
+		// FinishCommand()).
+		state.Reset()
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.Len(t, th.commandRunner.commandsRan, 1)
+
+		// Check that the logfile entry is still correct
+		logEntry := buildLog.LookupByOutput("out")
+		require.NotNil(t, logEntry)
+		in1Mtime, _ := th.fs.Stat("in1")
+		require.Less(t, in1Mtime, logEntry.Mtime)
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		// And a subsequent run should not have any work to do
+		state.Reset()
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		require.True(t, builder.AlreadyUpToDate())
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+}
+
+// TestInputMtimeRaceConditionWithDepFile tests that if a dependency
+// (discovered via depfile) is modified while a build command is running,
+// the build system detects it and rebuilds on the next run.
+func TestInputMtimeRaceConditionWithDepFile(t *testing.T) {
+	buildLogFile := filepath.Join(t.TempDir(), "build_log")
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+rule long-cc
+  command = long-cc
+build out: long-cc
+  deps = gcc
+  depfile = out.d
+  test_dependency = header.h
+`
+
+	th := newBuildTestHelper(t)
+	th.fs.Create("header.h", []byte{})
+
+	{
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+
+		// Run the build, out gets built, dep file is created
+		th.fs.Create("out.d", []byte("out: header.h"))
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.Len(t, th.commandRunner.commandsRan, 1)
+
+		// See that an entry in the logfile is created. The mtime is 1 due to the
+		// command starting when the file system's mtime was 1.
+		logEntry := buildLog.LookupByOutput("out")
+		require.NotNil(t, logEntry)
+		require.Equal(t, timestamp.TimeStamp(1), logEntry.Mtime)
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+
+	{
+		// Trigger the build again - "out" will rebuild since its newest input mtime
+		// (header.h) is newer than the recorded mtime of out in the build log
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		state.Reset()
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.Len(t, th.commandRunner.commandsRan, 1)
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+
+	{
+		// Trigger the build again - "out" won't rebuild since the file wasn't
+		// updated during the previous build
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		state.Reset()
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		require.True(t, builder.AlreadyUpToDate())
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+
+	// Touch the header to trigger a rebuild
+	th.fs.Create("header.h", []byte{})
+	require.Equal(t, timestamp.TimeStamp(7), th.fs.Now())
+
+	{
+		// Rebuild. This time, long-cc will cause header.h to be updated while the
+		// build is in progress
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		state.Reset()
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.Len(t, th.commandRunner.commandsRan, 1)
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+
+	{
+		// Rebuild. Because header.h is now in the deplog for out, it should be
+		// detectable as a change-while-in-progress and should cause a rebuild of out.
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		state.Reset()
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.Len(t, th.commandRunner.commandsRan, 1)
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+
+	{
+		// Now everything should be up to date
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		buildLog := build_log.NewBuildLog()
+		require.NoError(t, buildLog.Load(buildLogFile))
+		require.NoError(t, buildLog.OpenForWrite(buildLogFile, th))
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+
+		state.Reset()
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		require.True(t, builder.AlreadyUpToDate())
+
+		builder.TestOnlySetCommandRunner(nil)
+		buildLog.Close()
+		depsLog.Close()
+	}
+}

@@ -234,6 +234,9 @@ func (d *DepsLog) RecordDeps(node *graph.Node, mtime timestamp.TimeStamp, nodes 
 func (d *DepsLog) Load(path string, state *state.State) error {
 	f, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	buf := make([]byte, maxRecordSize)
