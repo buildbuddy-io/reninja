@@ -2996,3 +2996,321 @@ build out: long-cc
 		depsLog.Close()
 	}
 }
+
+// TestRestatDepfileDependencyDepsLog checks that a restat rule generating
+// a header cancels compilations correctly, depslog case.
+func TestRestatDepfileDependencyDepsLog(t *testing.T) {
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+rule true
+  command = true
+  restat = 1
+build header.h: true header.in
+build out: cat in1
+  deps = gcc
+  depfile = in1.d
+`
+
+	th := newBuildTestHelper(t)
+
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		// Run the build once, everything should be ok.
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		th.fs.Create("in1.d", []byte("out: header.h"))
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+
+	{
+		state := state.New()
+		test.AddCatRule(t, state)
+		test.AssertParse(t, manifest, state)
+
+		// Touch the input of the restat rule.
+		th.fs.Tick()
+		th.fs.Create("header.in", []byte{})
+
+		// Run the build again.
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		th.commandRunner.commandsRan = th.commandRunner.commandsRan[:0]
+		_, err := builder.AddTargetByName("out")
+		require.NoError(t, err)
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+		// Rule "true" should have run again, but the build of "out" should have
+		// been cancelled due to restat propagating through the depfile header.
+		require.Len(t, th.commandRunner.commandsRan, 1)
+
+		builder.TestOnlySetCommandRunner(nil)
+		depsLog.Close()
+	}
+}
+
+// TestDepFileOKDepsLog tests that depfiles work correctly with deps log.
+func TestDepFileOKDepsLog(t *testing.T) {
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+rule cc
+  command = cc $in
+  depfile = $out.d
+  deps = gcc
+build fo$ o.o: cc foo.c
+`
+
+	th := newBuildTestHelper(t)
+	th.fs.Create("foo.c", []byte{})
+
+	{
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		// Run the build once, everything should be ok.
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		_, err := builder.AddTargetByName("fo o.o")
+		require.NoError(t, err)
+		th.fs.Create("fo o.o.d", []byte("fo\\ o.o: blah.h bar.h\n"))
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+
+	{
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, nil, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+
+		edge := state.Edges()[len(state.Edges())-1]
+
+		state.GetNode("bar.h").MarkDirty() // Mark bar.h as missing.
+		_, err := builder.AddTargetByName("fo o.o")
+		require.NoError(t, err)
+
+		// Expect one new edge generating fo o.o, loading the depfile should
+		// not generate new edges.
+		require.Len(t, state.Edges(), 1)
+		// Expect our edge to now have three inputs: foo.c and two headers.
+		require.Len(t, edge.Inputs(), 3)
+
+		// Expect the command line we generate to only use the original input.
+		require.Equal(t, "cc foo.c", edge.EvaluateCommand(false))
+
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+}
+
+// TestDiscoveredDepDuringBuildChanged tests when a dependency discovered
+// during build changes.
+func TestDiscoveredDepDuringBuildChanged(t *testing.T) {
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+rule touch-out-implicit-dep
+  command = touch $out ; sleep 1 ; touch $test_dependency
+rule generate-depfile
+  command = touch $out ; echo "$out: $test_dependency" > $depfile
+build out1: touch-out-implicit-dep in1
+  test_dependency = inimp
+build out2: generate-depfile in1 || out1
+  test_dependency = inimp
+  depfile = out2.d
+  deps = gcc
+`
+
+	th := newBuildTestHelper(t)
+	th.fs.Create("in1", []byte{})
+	th.fs.Tick()
+
+	buildLog := build_log.NewBuildLog()
+
+	{
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		_, err := builder.AddTargetByName("out2")
+		require.NoError(t, err)
+		require.False(t, builder.AlreadyUpToDate())
+
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.True(t, builder.AlreadyUpToDate())
+
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+
+	th.fs.Tick()
+	th.fs.Create("in1", []byte{})
+
+	{
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		_, err := builder.AddTargetByName("out2")
+		require.NoError(t, err)
+		require.False(t, builder.AlreadyUpToDate())
+
+		buildRes, err := builder.Build()
+		require.NoError(t, err)
+		require.Equal(t, exit_status.ExitSuccess, buildRes)
+		require.True(t, builder.AlreadyUpToDate())
+
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+
+	th.fs.Tick()
+
+	{
+		state := state.New()
+		test.AssertParse(t, manifest, state)
+
+		depsLog := deps_log.NewDepsLog()
+		require.NoError(t, depsLog.Load(depsLogFile, state))
+		require.NoError(t, depsLog.OpenForWrite(depsLogFile))
+
+		builder := build.NewBuilder(state, th.config, buildLog, depsLog, th.fs, th.status, 0)
+		builder.TestOnlySetCommandRunner(th.commandRunner)
+		_, err := builder.AddTargetByName("out2")
+		require.NoError(t, err)
+		require.True(t, builder.AlreadyUpToDate())
+
+		depsLog.Close()
+		builder.TestOnlySetCommandRunner(nil)
+	}
+}
+
+// TestRestatMissingDepfile checks that a restat rule doesn't clear an edge
+// if the depfile is missing.
+// Follows from: https://github.com/ninja-build/ninja/issues/603
+func TestRestatMissingDepfile(t *testing.T) {
+	th := newBuildTestHelper(t)
+
+	manifest := `
+rule true
+  command = true
+  restat = 1
+build header.h: true header.in
+build out: cat header.h
+  depfile = out.d
+`
+
+	th.fs.Create("header.h", []byte{})
+	th.fs.Tick()
+	th.fs.Create("out", []byte{})
+	th.fs.Create("header.in", []byte{})
+
+	// Normally, only 'header.h' would be rebuilt, as
+	// its rule doesn't touch the output and has 'restat=1' set.
+	// But we are also missing the depfile for 'out',
+	// which should force its command to run anyway!
+	th.RebuildTarget("out", manifest, "", "", nil)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+}
+
+// TestRestatMissingDepfileDepslog checks that a restat rule doesn't clear
+// an edge if the deps are missing.
+// https://github.com/ninja-build/ninja/issues/603
+func TestRestatMissingDepfileDepslog(t *testing.T) {
+	th := newBuildTestHelper(t)
+	buildLogFile := filepath.Join(t.TempDir(), "build_log")
+	depsLogFile := filepath.Join(t.TempDir(), "ninja_deps")
+
+	manifest := `
+rule true
+  command = true
+  restat = 1
+build header.h: true header.in
+build out: cat header.h
+  deps = gcc
+  depfile = out.d
+`
+
+	// Build once to populate ninja deps logs from out.d
+	th.fs.Create("header.in", []byte{})
+	th.fs.Create("out.d", []byte("out: header.h"))
+	th.fs.Create("header.h", []byte{})
+
+	th.RebuildTarget("out", manifest, buildLogFile, depsLogFile, nil)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+
+	// Sanity: this rebuild should be NOOP
+	th.RebuildTarget("out", manifest, buildLogFile, depsLogFile, nil)
+	require.Len(t, th.commandRunner.commandsRan, 0)
+
+	// Touch 'header.in', blank dependencies log (create a different one).
+	// Building header.h triggers 'restat' outputs cleanup.
+	// Validate that out is rebuilt nevertheless, as deps are missing.
+	th.fs.Tick()
+	th.fs.Create("header.in", []byte{})
+
+	depsLog2File := filepath.Join(t.TempDir(), "ninja_deps2")
+
+	// (switch to a new blank deps_log "ninja_deps2")
+	th.RebuildTarget("out", manifest, buildLogFile, depsLog2File, nil)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+
+	// Sanity: this build should be NOOP
+	th.RebuildTarget("out", manifest, buildLogFile, depsLog2File, nil)
+	require.Len(t, th.commandRunner.commandsRan, 0)
+
+	// Check that invalidating deps by target timestamp also works here
+	// Repeat the test but touch target instead of blanking the log.
+	th.fs.Tick()
+	th.fs.Create("header.in", []byte{})
+	th.fs.Create("out", []byte{})
+	th.RebuildTarget("out", manifest, buildLogFile, depsLog2File, nil)
+	require.Len(t, th.commandRunner.commandsRan, 2)
+
+	// And this build should be NOOP again
+	th.RebuildTarget("out", manifest, buildLogFile, depsLog2File, nil)
+	require.Len(t, th.commandRunner.commandsRan, 0)
+}
