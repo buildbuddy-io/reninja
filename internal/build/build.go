@@ -470,7 +470,6 @@ func (p *Plan) AddSubTarget(node, dependent *graph.Node, dyndepWalk map[*graph.E
 		p.want[edge] = WantNothing
 		want = WantNothing
 	}
-
 	if dyndepWalk != nil && want == WantToFinish {
 		return false, nil // Don't need to do anything with already-scheduled edge.
 	}
@@ -1115,12 +1114,10 @@ func (b *Builder) LoadDyndeps(node *graph.Node) error {
 		return err
 	}
 
-	ok, err := b.plan.DyndepsLoaded(b.scan, node, ddf)
+	_, err := b.plan.DyndepsLoaded(b.scan, node, ddf)
 	if err != nil {
+		// We don't care about ok here, just error.
 		return err
-	}
-	if !ok {
-		return fmt.Errorf("dyndeps were not loaded")
 	}
 	return nil
 }
