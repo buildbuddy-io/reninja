@@ -38,11 +38,9 @@ func (l *DyndepLoader) LoadDyndeps(node *graph.Node, ddf DyndepFile) error {
 	node.SetDyndepPending(false)
 	l.explanations.Record(node, "loading dyndep file '%s'", node.Path())
 
-	ddf, err := l.LoadDyndepFile(node)
-	if err != nil {
+	if err := l.LoadDyndepFile(node, ddf); err != nil {
 		return err
 	}
-
 	// Update each edge that specified this node as its dyndep binding.
 	for _, edge := range node.OutEdges() {
 		if edge.Dyndep() != node {
@@ -91,9 +89,7 @@ func (l *DyndepLoader) UpdateEdge(edge *graph.Edge, dyndeps *Dyndeps) error {
 	}
 
 	// Add the dyndep-discovered inputs to the edge.
-	for _, implicitIn := range dyndeps.ImplicitInputs {
-		edge.AddInput(implicitIn)
-	}
+	edge.PrependInputs(dyndeps.ImplicitInputs)
 	edge.SetImplicitDeps(len(edge.ImplicitInputs()) + len(dyndeps.ImplicitInputs))
 
 	// Add this edge as outgoing from each new input.
@@ -103,8 +99,7 @@ func (l *DyndepLoader) UpdateEdge(edge *graph.Edge, dyndeps *Dyndeps) error {
 	return nil
 }
 
-func (l *DyndepLoader) LoadDyndepFile(file *graph.Node) (DyndepFile, error) {
-	dyndepFile := make(map[*graph.Edge]*Dyndeps, 0)
-	parser := dyndep_parser.New(l.state, l.diskInterface, dyndepFile)
-	return dyndepFile, parser.Load(file.Path())
+func (l *DyndepLoader) LoadDyndepFile(file *graph.Node, ddf DyndepFile) error {
+	parser := dyndep_parser.New(l.state, l.diskInterface, ddf)
+	return parser.Load(file.Path())
 }
