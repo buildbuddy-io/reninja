@@ -197,6 +197,10 @@ func (m *MockDiskInterface) AddFile(path string, contents []byte, mtime timestam
 	}
 }
 
+func (m *MockDiskInterface) FilesCreated() []string {
+	return slices.Sorted(maps.Keys(m.filesCreated))
+}
+
 func (m *MockDiskInterface) FilesRead() []string {
 	return slices.Sorted(maps.Keys(m.filesRead))
 }
