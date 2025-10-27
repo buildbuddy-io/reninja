@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
 
@@ -56,6 +57,7 @@ func (d *RealDiskInterface) ReadFile(path string) ([]byte, error) {
 }
 
 func (d *RealDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
+	defer metrics.Record("node stat")()
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {

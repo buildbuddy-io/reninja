@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
 )
@@ -232,6 +233,7 @@ func (d *DepsLog) RecordDeps(node *graph.Node, mtime timestamp.TimeStamp, nodes 
 }
 
 func (d *DepsLog) Load(path string, state *state.State) error {
+	defer metrics.Record(".ninja_deps load")()
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -366,6 +368,7 @@ func (d *DepsLog) Load(path string, state *state.State) error {
 }
 
 func (d *DepsLog) Recompact(path string) error {
+	defer metrics.Record(".ninja_deps recompact")()
 	if err := d.Close(); err != nil {
 		return err
 	}

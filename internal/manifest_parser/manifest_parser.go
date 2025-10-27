@@ -10,6 +10,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/eval_env"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/lexer"
+	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/buildbuddy-io/gin/internal/version"
@@ -62,6 +63,7 @@ func New(s *state.State, fileReader disk.FileReader, options ManifestParserOptio
 
 // ParseFile parses a ninja build file
 func (p *ManifestParser) ParseFile(filename string) error {
+	defer metrics.Record(".ninja parse")()
 	content, err := p.fileReader.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("loading '%s': %w", filename, err)

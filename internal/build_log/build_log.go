@@ -10,6 +10,7 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
 	rapidhash "github.com/poiug07/rapidhash_go"
 )
@@ -156,6 +157,7 @@ func (b *BuildLog) OpenForWriteIfNeeded() error {
 // cpp version returns LoadStatus -- we're just returning an error,
 // caller can look at it to determine if it was notfound or something else.
 func (b *BuildLog) Load(path string) error {
+	defer metrics.Record(".ninja_log load")()
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -290,6 +292,7 @@ func (b *BuildLog) Entries() map[string]*LogEntry {
 }
 
 func (b *BuildLog) Recompact(path string, user BuildLogUser) error {
+	defer metrics.Record(".ninja_log recompact")()
 	if err := b.Close(); err != nil {
 		return err
 	}
@@ -334,6 +337,7 @@ func (b *BuildLog) Recompact(path string, user BuildLogUser) error {
 }
 
 func (b *BuildLog) Restat(path string, diskInterface disk.Interface, outputCount int, outputs []string) error {
+	defer metrics.Record(".ninja_log restat")()
 	if err := b.Close(); err != nil {
 		return err
 	}

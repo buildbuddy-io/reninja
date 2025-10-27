@@ -10,6 +10,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/explanations"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/util"
 )
@@ -51,6 +52,7 @@ func (l *ImplicitDepLoader) LoadDeps(edge *graph.Edge) (bool, error) {
 
 // Returns loaded, error
 func (l *ImplicitDepLoader) LoadDepFile(edge *graph.Edge, path string) (bool, error) {
+	defer metrics.Record("depfile load")()
 	content, err := l.diskInterface.ReadFile(path)
 	if err != nil {
 		// file not found is fine, ignore it.

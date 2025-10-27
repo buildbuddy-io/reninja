@@ -338,6 +338,7 @@ func EdgeWeightHeuristic(edge *graph.Edge) int64 {
 }
 
 func (p *Plan) ComputeCriticalPath() {
+	defer metrics.Record("ComputeCriticalPath")()
 	topoSort := NewTopoSort()
 	for _, target := range p.targets {
 		topoSort.VisitTarget(target)
@@ -897,6 +898,7 @@ func (b *Builder) Build() (exit_status.ExitStatusType, error) {
 }
 
 func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
+	defer metrics.Record("StartEdge")()
 	if edge.IsPhony() {
 		return true, nil
 	}
@@ -958,6 +960,7 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 }
 
 func (b *Builder) FinishCommand(result *Result) (bool, error) {
+	defer metrics.Record("FinishCommand")()
 	edge := result.Edge
 
 	// First try to extract dependencies from the result, if any.
