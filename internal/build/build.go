@@ -723,6 +723,10 @@ func (b *Builder) Cleanup() {
 	}
 }
 
+func (b *Builder) SetJobserverClient(jobserver jobserver.Client) {
+	b.jobserver = jobserver
+}
+
 func (b *Builder) AddTargetByName(name string) (*graph.Node, error) {
 	node := b.state.LookupNode(name)
 	if node == nil {

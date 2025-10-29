@@ -1,9 +1,5 @@
 package edit_distance
 
-import (
-	"fmt"
-)
-
 func EditDistance(s1, s2 string, allowReplacements bool, maxEditDistance int) int {
 	m := len(s1)
 	n := len(s2)
@@ -36,7 +32,6 @@ func EditDistance(s1, s2 string, allowReplacements bool, maxEditDistance int) in
 			}
 			previous = oldRow
 			bestThisRow = min(bestThisRow, row[x])
-			fmt.Printf("previous %d, bestThisRow: %d\n", previous, bestThisRow)
 		}
 
 		if maxEditDistance > 0 && bestThisRow > maxEditDistance {

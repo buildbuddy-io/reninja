@@ -5,17 +5,17 @@ import (
 	"time"
 )
 
-var defaultMetrics *Metrics
+var DefaultMetrics *Metrics
 
 func Enable() {
-	defaultMetrics = &Metrics{
+	DefaultMetrics = &Metrics{
 		metricSet: make(map[string]*Metric, 0),
 		metrics:   make([]*Metric, 0),
 	}
 }
 
 func Disable() {
-	defaultMetrics = nil
+	DefaultMetrics = nil
 }
 
 // A single metrics we're tracking, like "depfile load time".
@@ -79,7 +79,7 @@ func Record(name string) DoneFunction {
 
 // A variant of Record that doesn't record anything if condition returns false.
 func RecordIf(name string, condition func() bool) DoneFunction {
-	if defaultMetrics == nil {
+	if DefaultMetrics == nil {
 		return func() {}
 	}
 
@@ -88,7 +88,7 @@ func RecordIf(name string, condition func() bool) DoneFunction {
 		if !condition() {
 			return
 		}
-		m := defaultMetrics.NewMetric(name)
+		m := DefaultMetrics.NewMetric(name)
 		m.count += 1
 		m.sum += time.Now().Sub(start)
 	}

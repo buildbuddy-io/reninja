@@ -14,7 +14,7 @@ func find(haystack, needle string, startOffset int) int {
 	if e == -1 {
 		return len(haystack)
 	}
-	return e
+	return e + startOffset
 }
 
 // TODO(tylerw): use semver or something?

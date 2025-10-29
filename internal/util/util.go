@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/buildbuddy-io/gin/internal/edit_distance"
 )
 
 // CanonicalizePath normalizes a path to use forward slashes and returns slash bits
@@ -172,6 +174,23 @@ func StripAnsiEscapeCodes(in string) string {
 		}
 	}
 	return stripped.String()
+}
+
+func SpellcheckString(text string, words ...string) string {
+	allowReplacements := true
+	maxValidEditDistance := 3
+
+	minDistance := maxValidEditDistance + 1
+	var result string
+	for _, word := range words {
+		w := word
+		distance := edit_distance.EditDistance(w, text, allowReplacements, maxValidEditDistance)
+		if distance < minDistance {
+			minDistance = distance
+			result = w
+		}
+	}
+	return result
 }
 
 func Warning(msg string) {

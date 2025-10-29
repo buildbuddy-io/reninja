@@ -150,6 +150,7 @@ func (r *RealCommandRunner) WaitForCommand() *Result {
 	result := &Result{
 		Status: subproc.Finish(),
 		Output: subproc.GetOutput(),
+		Edge:   r.subprocToEdge[subproc],
 	}
 
 	delete(r.subprocToEdge, subproc)
