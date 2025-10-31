@@ -3,6 +3,7 @@ package state
 import (
 	"fmt"
 
+	"github.com/buildbuddy-io/gin/internal/edit_distance"
 	"github.com/buildbuddy-io/gin/internal/eval_env"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/util"
@@ -102,6 +103,22 @@ func (s *State) GetNode(canonicalPath string) *graph.Node {
 // LookupNode returns a node by path without creating it
 func (s *State) LookupNode(canonicalPath string) *graph.Node {
 	return s.paths[canonicalPath]
+}
+
+func (s *State) SpellcheckNode(path string) *graph.Node {
+	allowReplacements := true
+	maxValidEditDistance := 3
+
+	minDistance := maxValidEditDistance + 1
+	var result *graph.Node
+	for p, n := range s.paths {
+		distance := edit_distance.EditDistance(p, path, allowReplacements, maxValidEditDistance)
+		if distance < minDistance && n != nil {
+			minDistance = distance
+			result = n
+		}
+	}
+	return result
 }
 
 func (s *State) Paths() map[string]*graph.Node {
