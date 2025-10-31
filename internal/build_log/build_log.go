@@ -29,6 +29,8 @@ const (
 	rapidHashSeed uint64 = 0xBDD89AA982704029
 )
 
+type Entries = map[string]*LogEntry
+
 type BuildLogUser interface {
 	IsPathDead(s string) bool
 }
