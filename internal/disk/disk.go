@@ -211,6 +211,16 @@ func (m *MockDiskInterface) DirectoriesMade() []string {
 	return slices.Sorted(maps.Keys(m.directoriesMade))
 }
 
+func (m *MockDiskInterface) FilesRemoved() []string {
+	return slices.Sorted(maps.Keys(m.filesRemoved))
+}
+
+func (m *MockDiskInterface) ClearFilesRemoved() {
+	for key := range m.filesRemoved {
+		delete(m.filesRemoved, key)
+	}
+}
+
 func (m *MockDiskInterface) Tick() timestamp.TimeStamp {
 	t2 := m.now + 1
 	m.now = t2
