@@ -270,7 +270,7 @@ func (c *Cleaner) CleanRuleByName(ruleName string) int {
 	}
 	c.Reset()
 	r, ok := c.state.Bindings().LookupRule(ruleName)
-	if !ok || r != nil {
+	if ok && r != nil {
 		c.CleanRule(r)
 	} else {
 		util.Errorf("unknown rule '%s'", ruleName)
@@ -289,7 +289,7 @@ func (c *Cleaner) CleanRules(ruleNames []string) int {
 	c.LoadDyndeps()
 	for _, ruleName := range ruleNames {
 		rule, ok := c.state.Bindings().LookupRule(ruleName)
-		if !ok || rule != nil {
+		if ok && rule != nil {
 			if c.IsVerbose() {
 				fmt.Printf("Rule %s\n", ruleName)
 			}
