@@ -7,14 +7,18 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 
 	"github.com/buildbuddy-io/gin/internal/build"
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_log"
+	"github.com/buildbuddy-io/gin/internal/clean"
 	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/disk"
+	"github.com/buildbuddy-io/gin/internal/dyndep"
+	"github.com/buildbuddy-io/gin/internal/dyndep_parser"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
@@ -98,11 +102,38 @@ const (
 
 type ToolFunc func(*Options, []string) int
 
+// same as ToolFunc, but accepts an instance as arg0.
+type dispatchFunc func(any, *Options, []string) int
+
+func lookupDispatchFunc(methodName string) dispatchFunc {
+	return func(i any, opts *Options, argv []string) int {
+		instanceValue := reflect.ValueOf(i)
+		method := instanceValue.MethodByName(methodName)
+		if !method.IsValid() {
+			panic(fmt.Sprintf("BUG: %s not found", methodName))
+		}
+		args := []reflect.Value{
+			reflect.ValueOf(opts),
+			reflect.ValueOf(argv),
+		}
+		rvals := method.Call(args)
+		if len(rvals) != 1 {
+			panic("method did not return single int value")
+		}
+		rval := rvals[0]
+		intValue, ok := rval.Interface().(int)
+		if !ok {
+			panic("method did not return single int value")
+		}
+		return intValue
+	}
+}
+
 type Tool struct {
-	name     string
-	desc     string
-	when     toolRunTime
-	toolFunc ToolFunc
+	Name     string
+	Desc     string
+	When     toolRunTime
+	ToolFunc dispatchFunc
 }
 
 func GuessParallelism() int {
@@ -351,8 +382,10 @@ func (m *NinjaMain) CollectTarget(cpath string) (*graph.Node, error) {
 		} else if path == "help" {
 			errMsg += ", did you mean 'ninja -h'?"
 		} else {
-			// TODO(tylerw): implement suggestions.
-			log.Fatalf("TYLER: implement suggestions")
+			suggestion := m.state.SpellcheckNode(path)
+			if suggestion != nil {
+				errMsg += fmt.Sprintf(", did you mean '%s'?", suggestion.Path())
+			}
 		}
 		return nil, fmt.Errorf(errMsg)
 	}
@@ -573,18 +606,113 @@ func (m *NinjaMain) RebuildManifest(inputFile string, status status.Status) (boo
 
 	return true, nil
 }
-func (m *NinjaMain) ToolGraph(*Options, []string) int                         { return 0 }
-func (m *NinjaMain) ToolQuery(*Options, []string) int                         { return 0 }
-func (m *NinjaMain) ToolDeps(*Options, []string) int                          { return 0 }
-func (m *NinjaMain) ToolMissingDeps(*Options, []string) int                   { return 0 }
-func (m *NinjaMain) ToolBrowse(*Options, []string) int                        { return 0 }
-func (m *NinjaMain) ToolMSVC(*Options, []string) int                          { return 0 }
-func (m *NinjaMain) ToolTargets(*Options, []string) int                       { return 0 }
-func (m *NinjaMain) ToolCommands(*Options, []string) int                      { return 0 }
-func (m *NinjaMain) ToolInputs(*Options, []string) int                        { return 0 }
-func (m *NinjaMain) ToolMultiInputs(*Options, []string) int                   { return 0 }
-func (m *NinjaMain) ToolClean(*Options, []string) int                         { return 0 }
-func (m *NinjaMain) ToolCleanDead(*Options, []string) int                     { return 0 }
+func (m *NinjaMain) ToolGraph(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolQuery(opts *Options, args []string) int {
+	if len(args) == 0 {
+		util.Error("expected a target to query")
+		return 1
+	}
+
+	dyndepLoader := dyndep.NewDyndepLoader(m.state, m.diskInterface)
+	for _, arg := range args {
+		node, err := m.CollectTarget(arg)
+		if err != nil {
+			util.Errorf("%s", err)
+			return 1
+		}
+		fmt.Printf("%s:\n", node.Path())
+		edge := node.InEdge()
+		if edge != nil {
+			if edge.Dyndep() != nil && edge.Dyndep().DyndepPending() {
+				ddf := dyndep_parser.NewDyndepFile()
+				if err := dyndepLoader.LoadDyndeps(edge.Dyndep(), ddf); err != nil {
+					util.Warningf("%s\n", err)
+				}
+			}
+			fmt.Printf("  input: %s\n", edge.Rule().Name())
+			for in := 0; in < len(edge.Inputs()); in++ {
+				label := ""
+				if edge.IsImplicit(in) {
+					label = "| "
+				} else if edge.IsOrderOnly(in) {
+					label = "|| "
+				}
+				fmt.Printf("    %s%s\n", label, edge.Inputs()[in].Path())
+			}
+			if len(edge.Validations()) > 0 {
+				fmt.Printf("  validations:\n")
+				for _, validation := range edge.Validations() {
+					fmt.Printf("    %s\n", validation.Path())
+				}
+			}
+		}
+		fmt.Printf("  outputs:\n")
+		for _, edge := range node.OutEdges() {
+			for _, out := range edge.Outputs() {
+				fmt.Printf("    %s\n", out.Path())
+			}
+		}
+		validationEdges := node.ValidationOutEdges()
+		if len(validationEdges) > 0 {
+			fmt.Printf("  validation for:\n")
+			for _, edge := range validationEdges {
+				for _, out := range edge.Outputs() {
+					fmt.Printf("    %s\n", out.Path())
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func (m *NinjaMain) ToolDeps(*Options, []string) int        { return 0 }
+func (m *NinjaMain) ToolMissingDeps(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolBrowse(*Options, []string) int      { return 0 }
+func (m *NinjaMain) ToolMSVC(*Options, []string) int        { return 0 }
+func (m *NinjaMain) ToolTargets(*Options, []string) int     { return 0 }
+func (m *NinjaMain) ToolCommands(*Options, []string) int    { return 0 }
+func (m *NinjaMain) ToolInputs(*Options, []string) int      { return 0 }
+func (m *NinjaMain) ToolMultiInputs(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolClean(opts *Options, args []string) int {
+	printCleanUsage := func() {
+		fmt.Printf(`
+usage: ninja -t clean [options] [targets]
+
+options:
+  -g     also clean files marked as ninja generator output
+  -r     interpret targets as a list of rules to clean instead
+`)
+	}
+	fs := flag.NewFlagSet("ToolClean", flag.ContinueOnError)
+	generator := flag.Bool("g", false, "also clean files marked as ninja generator output")
+	cleanRules := fs.Bool("r", false, "interpret targets as a list of rules to clean instead")
+	if err := fs.Parse(args); err != nil {
+		printCleanUsage()
+		return 1
+	}
+
+	if *cleanRules && len(fs.Args()) == 0 {
+		util.Error("expected a rule to clean")
+		return 1
+	}
+
+	cleaner := clean.NewCleaner(m.state, m.config, m.diskInterface)
+	if len(fs.Args()) > 0 {
+		if *cleanRules {
+			return cleaner.CleanRules(fs.Args())
+		} else {
+			return cleaner.CleanTargets(fs.Args())
+		}
+	} else {
+		return cleaner.CleanAll(*generator)
+	}
+}
+
+func (m *NinjaMain) ToolCleanDead(opts *Options, args []string) int {
+	cleaner := clean.NewCleaner(m.state, m.config, m.diskInterface)
+	return cleaner.CleanDead(m.buildLog.Entries())
+}
+
 func (m *NinjaMain) ToolCompilationDatabase(*Options, []string) int           { return 0 }
 func (m *NinjaMain) ToolCompilationDatabaseForTargets(*Options, []string) int { return 0 }
 func (m *NinjaMain) ToolRecompact(*Options, []string) int                     { return 0 }
@@ -593,17 +721,60 @@ func (m *NinjaMain) ToolUrtle(*Options, []string) int                         { 
 func (m *NinjaMain) ToolRules(*Options, []string) int                         { return 0 }
 func (m *NinjaMain) ToolWinCodePage(*Options, []string) int                   { return 0 }
 
-func (m *NinjaMain) ChooseTool(toolName string) *Tool {
+func ChooseTool(toolName string) *Tool {
 	tools := []*Tool{
-		{"browse", "browse dependency graph in a web browser", runAfterLoad, m.ToolBrowse},
+		{"browse", "browse dependency graph in a web browser", runAfterLoad, lookupDispatchFunc("ToolBrowse")},
+		{"clean", "clean built files", runAfterLoad, lookupDispatchFunc("ToolClean")},
+		{"query", "show inputs/outputs for a path", runAfterLogs, lookupDispatchFunc("ToolQuery")},
+		{"commands", "list all commands required to rebuild given targets", runAfterLoad, lookupDispatchFunc("ToolCommands")},
+		{"inputs", "list all inputs required to rebuild given targets", runAfterLoad, lookupDispatchFunc("ToolInputs")},
+		{"multi-inputs", "print one or more sets of inputs required to build targets", runAfterLoad, lookupDispatchFunc("ToolMultiInputs")},
+		{"deps", "show dependencies stored in the deps log", runAfterLogs, lookupDispatchFunc("ToolDeps")},
+		{"missingdeps", "check deps log dependencies on generated files", runAfterLogs, lookupDispatchFunc("ToolMissingDeps")},
+		{"graph", "output graphviz dot file for targets", runAfterLoad, lookupDispatchFunc("ToolGraph")},
+
+		{"targets", "list targets by their rule or depth in the DAG", runAfterLoad, lookupDispatchFunc("ToolTargets")},
+		{"compdb", "dump JSON compilation database to stdout", runAfterLoad, lookupDispatchFunc("ToolCompilationDatabase")},
+		{"compdb-targets", "dump JSON compilation database for a given list of targets to stdout", runAfterLoad, lookupDispatchFunc("ToolCompilationDatabaseForTargets")},
+		{"recompact", "recompacts ninja-internal data structures", runAfterLoad, lookupDispatchFunc("ToolRecompact")},
+		{"restat", "restats all outputs in the build log", runAfterFlags, lookupDispatchFunc("ToolRestat")},
+		{"rules", "list all rules", runAfterLoad, lookupDispatchFunc("ToolRules")},
+		{"cleandead", "clean built files that are no longer produced by the manifest", runAfterLogs, lookupDispatchFunc("ToolCleanDead")},
+		{"urtle", "", runAfterFlags, lookupDispatchFunc("ToolUrtle")},
 	}
-	_ = tools
-	return nil
+
+	if toolName == "list" {
+		fmt.Printf("ninja subtools:\n")
+		for _, tool := range tools {
+			if tool.Desc != "" {
+				fmt.Printf("%11s  %s\n", tool.Name, tool.Desc)
+			}
+		}
+		return nil
+	}
+
+	for _, tool := range tools {
+		if tool.Name == toolName {
+			return tool
+		}
+	}
+
+	words := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		words = append(words, tool.Name)
+	}
+	suggestion := util.SpellcheckString(toolName, words...)
+	if suggestion != "" {
+		log.Fatalf("unknown tool '%s', did you mean '%s'?", toolName, suggestion)
+	} else {
+		log.Fatalf("unknown tool '%s'", toolName)
+	}
+	return nil // Not reached.
 }
 
 // Parse argv for command-line options.
 // Returns an exit code, or -1 if Ninja should continue.
-func (m *NinjaMain) ReadFlags(args []string, options *Options, config *build_config.Config) int {
+func ReadFlags(args []string, options *Options, config *build_config.Config) int {
 	deferGuessParallelism := NewDeferGuessParallelism(config)
 	defer deferGuessParallelism.Refresh()
 
@@ -642,9 +813,11 @@ func (m *NinjaMain) ReadFlags(args []string, options *Options, config *build_con
 	}
 
 	if *tool != "" {
-		options.Tool = m.ChooseTool(*tool)
+		options.Tool = ChooseTool(*tool)
 		if options.Tool == nil {
 			return 0
+		} else {
+			return -1
 		}
 	}
 
@@ -699,6 +872,87 @@ options:
 `, version.NinjaVersion, config.Parallelism)
 }
 
+// from https://stackoverflow.com/questions/74678438/go-flags-ignore-unknown-input
+// you rule, cardinalby.
+func StripUnknownFlags(flagSet *flag.FlagSet, args []string) ([]string, []string) {
+	formalFlagNames := getFormalFlagNames(flagSet)
+
+	res := make([]string, 0, len(args))
+	stripped := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		isFlag, isTerminator, flagName, hasInlineValue := parseArg(arg)
+		if isTerminator {
+			res = append(res, args[i:]...)
+			break
+		}
+		if !isFlag {
+			res = append(res, arg)
+			continue
+		}
+		isBoolFlag, exists := formalFlagNames[flagName]
+		var appendTo *[]string
+		if exists {
+			appendTo = &res
+		} else {
+			appendTo = &stripped
+		}
+
+		*appendTo = append(*appendTo, arg)
+		if !hasInlineValue && !isBoolFlag {
+			// next arg is supposed to be the flag value
+			if i+1 < len(args) {
+				*appendTo = append(*appendTo, args[i+1])
+			}
+			i++ // skip the flag value
+		}
+	}
+	return res, stripped
+}
+
+func parseArg(arg string) (isFlag bool, isTerminator bool, flagName string, hasInlineValue bool) {
+	if len(arg) < 2 || arg[0] != '-' {
+		return false, false, "", false
+	}
+	numMinuses := 1
+	if arg[1] == '-' {
+		numMinuses++
+		if len(arg) == 2 { // "--" terminates the flags
+			return false, true, "", false
+		}
+	}
+	flagName = arg[numMinuses:]
+
+	if equalsSignIndex := strings.Index(flagName, "="); equalsSignIndex == 0 {
+		// std FlagSet.Parse() will return "bad flag syntax" error
+		return false, false, "", false
+	} else if equalsSignIndex > 0 {
+		flagName = flagName[:equalsSignIndex]
+		hasInlineValue = true
+	}
+	return true, false, flagName, hasInlineValue
+}
+
+// optional interface to indicate boolean flags that can be
+// supplied without "=value" text
+type boolFlag interface {
+	flag.Value
+	IsBoolFlag() bool
+}
+
+// getFormalFlagNames returns a map where key is a flag name and value indicates it's a bool flag
+func getFormalFlagNames(flagSet *flag.FlagSet) map[string]bool {
+	flags := make(map[string]bool)
+	flagSet.VisitAll(func(f *flag.Flag) {
+		isBoolFlag := false
+		if boolFlag, ok := f.Value.(boolFlag); ok {
+			isBoolFlag = boolFlag.IsBoolFlag()
+		}
+		flags[f.Name] = isBoolFlag
+	})
+	return flags
+}
+
 func main() {
 	config := build_config.Create()
 	options := &Options{}
@@ -706,13 +960,19 @@ func main() {
 
 	registerFlags()
 	flag.Usage = func() { Usage(config) }
+
+	// This is a funny little dance we have to do in order to parse flags in roughly
+	// the same way that ninja does. Because we're not using getopt and parsing
+	// iteratively, sub-command flags will throw off the main flag parser. So they
+	// are first stripped, then passed in via the positionalArgs slice.
+	knownFlags, unknownFlags := StripUnknownFlags(flag.CommandLine, os.Args)
+	os.Args = knownFlags
 	flag.Parse()
 
 	ninjaCommand := os.Args[0]
-	positionalArgs := flag.Args()
+	positionalArgs := append(unknownFlags, flag.Args()...)
 
-	ninja := NewNinjaMain(ninjaCommand, config)
-	exitCode := ninja.ReadFlags(positionalArgs, options, config)
+	exitCode := ReadFlags(positionalArgs, options, config)
 	if exitCode >= 0 {
 		os.Exit(exitCode)
 	}
@@ -732,17 +992,17 @@ func main() {
 		}
 	}
 
-	if options.Tool != nil && options.Tool.when == runAfterFlags {
+	if options.Tool != nil && options.Tool.When == runAfterFlags {
 		// None of the RUN_AFTER_FLAGS actually use a NinjaMain, but it's needed
 		// by other tools.
-		fmt.Printf("here\n")
-		os.Exit(options.Tool.toolFunc(options, positionalArgs))
+		ninja := NewNinjaMain(ninjaCommand, config)
+		os.Exit(options.Tool.ToolFunc(ninja, options, positionalArgs))
 	}
 
 	// Limit number of rebuilds, to prevent infinite loops.
 	cycleLimit := 100
 	for cycle := 1; cycle <= cycleLimit; cycle++ {
-		ninja = NewNinjaMain(ninjaCommand, config)
+		ninja := NewNinjaMain(ninjaCommand, config)
 
 		parserOpts := manifest_parser.ManifestParserOptions{}
 		if options.PhonyCycleShouldErr {
@@ -754,9 +1014,8 @@ func main() {
 			os.Exit(1)
 		}
 
-		fmt.Printf("options: %+v", options)
-		if options.Tool != nil && options.Tool.when == runAfterLoad {
-			os.Exit(options.Tool.toolFunc(options, positionalArgs))
+		if options.Tool != nil && options.Tool.When == runAfterLoad {
+			os.Exit(options.Tool.ToolFunc(ninja, options, positionalArgs))
 		}
 
 		if !ninja.EnsureBuildDirExists() {
@@ -767,8 +1026,8 @@ func main() {
 			os.Exit(1)
 		}
 
-		if options.Tool != nil && options.Tool.when == runAfterLogs {
-			os.Exit(options.Tool.toolFunc(options, positionalArgs))
+		if options.Tool != nil && options.Tool.When == runAfterLogs {
+			os.Exit(options.Tool.ToolFunc(ninja, options, positionalArgs))
 		}
 
 		// Attempt to rebuild the manifest before building anything else
