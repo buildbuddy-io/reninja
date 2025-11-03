@@ -21,6 +21,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/dyndep_parser"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/graphviz"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/manifest_parser"
 	"github.com/buildbuddy-io/gin/internal/metrics"
@@ -606,7 +607,23 @@ func (m *NinjaMain) RebuildManifest(inputFile string, status status.Status) (boo
 
 	return true, nil
 }
-func (m *NinjaMain) ToolGraph(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolGraph(opts *Options, args []string) int {
+	nodes, err := m.CollectTargetsFromArgs(args)
+	if err != nil {
+		util.Errorf("%s", err)
+		return 1
+	}
+
+	graph := graphviz.New(m.state, m.diskInterface)
+	graph.Start()
+	for _, n := range nodes {
+		graph.AddTarget(n)
+	}
+	graph.Finish()
+
+	return 0
+}
+
 func (m *NinjaMain) ToolQuery(opts *Options, args []string) int {
 	if len(args) == 0 {
 		util.Error("expected a target to query")

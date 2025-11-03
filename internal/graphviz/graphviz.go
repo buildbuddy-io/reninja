@@ -3,7 +3,7 @@ package graphviz
 import (
 	"fmt"
 	"strings"
-	
+
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/dyndep"
 	"github.com/buildbuddy-io/gin/internal/dyndep_parser"
@@ -11,9 +11,9 @@ import (
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/util"
 )
-	
+
 type Graphviz struct {
-	dyndepLoader         *dyndep.DyndepLoader
+	dyndepLoader *dyndep.DyndepLoader
 	visitedNodes map[*graph.Node]struct{}
 	visitedEdges map[*graph.Edge]struct{}
 }
@@ -88,4 +88,3 @@ func (v *Graphviz) Start() {
 func (v *Graphviz) Finish() {
 	fmt.Printf("}\n")
 }
-
