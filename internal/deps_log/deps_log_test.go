@@ -53,8 +53,8 @@ func TestWriteRead(t *testing.T) {
 	log2 := deps_log.NewDepsLog()
 	require.NoError(t, log2.Load(testFilename, state2))
 
-	require.Equal(t, len(log1.TestingGetNodes()), len(log2.TestingGetNodes()))
-	require.Equal(t, log1.TestingGetNodes(), log2.TestingGetNodes())
+	require.Equal(t, len(log1.Nodes()), len(log2.Nodes()))
+	require.Equal(t, log1.Nodes(), log2.Nodes())
 
 	logDeps := log2.GetDeps(state2.GetNode("out2.o"))
 	require.NotNil(t, logDeps)
@@ -230,7 +230,7 @@ build other_out.o: cc
 		assert.Equal(t, timestamp.TimeStamp(1), deps.Mtime)
 		assert.Equal(t, 1, len(deps.Nodes))
 		assert.Equal(t, "foo.h", deps.Nodes[0].Path())
-		nodes := log.TestingGetNodes()
+		nodes := log.Nodes()
 		assert.Equal(t, out, nodes[out.ID()])
 
 		deps = log.GetDeps(otherOut)
@@ -353,8 +353,8 @@ func TestTruncated(t *testing.T) {
 			break
 		}
 
-		assert.GreaterOrEqual(t, nodeCount, len(log.TestingGetNodes()))
-		nodeCount = len(log.TestingGetNodes())
+		assert.GreaterOrEqual(t, nodeCount, len(log.Nodes()))
+		nodeCount = len(log.Nodes())
 
 		newDepsCount := 0
 		for _, deps := range log.TestingGetDeps() {

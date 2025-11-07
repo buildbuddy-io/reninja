@@ -682,7 +682,47 @@ func (m *NinjaMain) ToolQuery(opts *Options, args []string) int {
 	return 0
 }
 
-func (m *NinjaMain) ToolDeps(*Options, []string) int        { return 0 }
+func (m *NinjaMain) ToolDeps(opts *Options, args []string) int {
+	nodes := make([]*graph.Node, 0)
+	if len(args) == 0 {
+		for _, ni := range m.depsLog.Nodes() {
+			if m.depsLog.IsDepsEntryLiveFor(ni) {
+				nodes = append(nodes, ni)
+			}
+		}
+	} else {
+		targets, err := m.CollectTargetsFromArgs(args)
+		if err != nil {
+			util.Errorf("%s", err)
+			return 1
+		}
+		nodes = targets
+	}
+
+	for _, it := range nodes {
+		deps := m.depsLog.GetDeps(it)
+		if deps == nil {
+			fmt.Printf("%s: deps not found\n", it.Path())
+			continue
+		}
+
+		mtime, err := m.diskInterface.Stat(it.Path())
+		if mtime == -1 {
+			util.Errorf("%s", err) // Log and ignore Stat() errors;
+		}
+		val := "VALID"
+		if mtime == 0 || mtime > deps.Mtime {
+			val = "STALE"
+		}
+		fmt.Printf("%s: #deps %d, deps mtime %d (%s)\n", it.Path(), len(deps.Nodes), deps.Mtime, val)
+		for i := 0; i < len(deps.Nodes); i++ {
+			fmt.Printf("    %s\n", deps.Nodes[i].Path())
+		}
+		fmt.Printf("\n")
+	}
+	return 0
+}
+
 func (m *NinjaMain) ToolMissingDeps(*Options, []string) int { return 0 }
 func (m *NinjaMain) ToolBrowse(*Options, []string) int      { return 0 }
 func (m *NinjaMain) ToolMSVC(*Options, []string) int        { return 0 }
@@ -732,11 +772,71 @@ func (m *NinjaMain) ToolCleanDead(opts *Options, args []string) int {
 
 func (m *NinjaMain) ToolCompilationDatabase(*Options, []string) int           { return 0 }
 func (m *NinjaMain) ToolCompilationDatabaseForTargets(*Options, []string) int { return 0 }
-func (m *NinjaMain) ToolRecompact(*Options, []string) int                     { return 0 }
-func (m *NinjaMain) ToolRestat(*Options, []string) int                        { return 0 }
-func (m *NinjaMain) ToolUrtle(*Options, []string) int                         { return 0 }
-func (m *NinjaMain) ToolRules(*Options, []string) int                         { return 0 }
-func (m *NinjaMain) ToolWinCodePage(*Options, []string) int                   { return 0 }
+func (m *NinjaMain) ToolRecompact(*Options, []string) int {
+	if !m.EnsureBuildDirExists() {
+		return 1
+	}
+
+	if !m.OpenBuildLog(false /*=recompactOnly*/) || !m.OpenDepsLog(false /*=recompactOnly*/) {
+		return 1
+	}
+	return 0
+}
+
+func (m *NinjaMain) ToolRestat(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolUrtle(*Options, []string) int {
+	urtle := " 13 ,3;2!2;\n8 ,;<11!;\n5 `'<10!(2`'2!\n11 ,6;, `\\. `\\9 .,c13$ec,.\n6 " +
+		",2;11!>; `. ,;!2> .e8$2\".2 \"?7$e.\n <:<8!'` 2.3,.2` ,3!' ;,(?7\";2!2'<" +
+		"; `?6$PF ,;,\n2 `'4!8;<!3'`2 3! ;,`'2`2'3!;4!`2.`!;2 3,2 .<!2'`).\n5 3`5" +
+		"'2`9 `!2 `4!><3;5! J2$b,`!>;2!:2!`,d?b`!>\n26 `'-;,(<9!> $F3 )3.:!.2 d\"" +
+		"2 ) !>\n30 7`2'<3!- \"=-='5 .2 `2-=\",!>\n25 .ze9$er2 .,cd16$bc.'\n22 .e" +
+		"14$,26$.\n21 z45$c .\n20 J50$c\n20 14$P\"`?34$b\n20 14$ dbc `2\"?22$?7$c" +
+		"\n20 ?18$c.6 4\"8?4\" c8$P\n9 .2,.8 \"20$c.3 ._14 J9$\n .2,2c9$bec,.2 `?" +
+		"21$c.3`4%,3%,3 c8$P\"\n22$c2 2\"?21$bc2,.2` .2,c7$P2\",cb\n23$b bc,.2\"2" +
+		"?14$2F2\"5?2\",J5$P\" ,zd3$\n24$ ?$3?%3 `2\"2?12$bcucd3$P3\"2 2=7$\n23$P" +
+		"\" ,3;<5!>2;,. `4\"6?2\"2 ,9;, `\"?2$\n"
+	count := 0
+	for i := range len(urtle) {
+		p := urtle[i]
+		if '0' <= p && p <= '9' {
+			count = count*10 + int(p-'0')
+		} else {
+			for j := 0; j < max(count, 1); j++ {
+				fmt.Printf("%c", p)
+			}
+			count = 0
+		}
+	}
+	return 0
+}
+func (m *NinjaMain) ToolRules(*Options, []string) int       { return 0 }
+func (m *NinjaMain) ToolWinCodePage(*Options, []string) int { return 0 }
+
+type PrintCommandMode int
+
+const (
+	PCMSingle PrintCommandMode = iota
+	PCMAll
+)
+
+func PrintCommands(edge *graph.Edge, seen map[*graph.Edge]struct{}, mode PrintCommandMode) {
+	if edge == nil {
+		return
+	}
+	if _, ok := seen[edge]; ok {
+		return
+	}
+	seen[edge] = struct{}{}
+
+	if mode == PCMAll {
+		for _, in := range edge.Inputs() {
+			PrintCommands(in.InEdge(), seen, mode)
+		}
+	}
+	if !edge.IsPhony() {
+		fmt.Printf("%s\n", edge.EvaluateCommand(false))
+	}
+}
 
 func ChooseTool(toolName string) *Tool {
 	tools := []*Tool{

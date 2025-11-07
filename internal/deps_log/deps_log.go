@@ -464,7 +464,7 @@ func (d *DepsLog) OpenForWriteIfNeeded() error {
 	return nil
 }
 
-func (d *DepsLog) TestingGetNodes() []*graph.Node {
+func (d *DepsLog) Nodes() []*graph.Node {
 	return d.nodes
 }
 
