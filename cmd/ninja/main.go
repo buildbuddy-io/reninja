@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/buildbuddy-io/gin/internal/browse"
 	"github.com/buildbuddy-io/gin/internal/build"
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_log"
@@ -742,7 +743,14 @@ func (m *NinjaMain) ToolMissingDeps(opts *Options, args []string) int {
 	return 0
 }
 
-func (m *NinjaMain) ToolBrowse(*Options, []string) int  { return 0 }
+func (m *NinjaMain) ToolBrowse(opts *Options, args []string) int {
+	err := browse.RunBrowsePython(m.state, m.ninjaCommand, opts.InputFile, args)
+	if err != nil {
+		return 1
+	}
+	return 0
+}
+
 func (m *NinjaMain) ToolMSVC(*Options, []string) int    { return 0 }
 func (m *NinjaMain) ToolTargets(*Options, []string) int { return 0 }
 func (m *NinjaMain) ToolCommands(opts *Options, args []string) int {
