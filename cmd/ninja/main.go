@@ -390,7 +390,7 @@ func (m *NinjaMain) CollectTarget(cpath string) (*graph.Node, error) {
 				errMsg += fmt.Sprintf(", did you mean '%s'?", suggestion.Path())
 			}
 		}
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 }
 
@@ -1160,7 +1160,7 @@ func main() {
 		// Don't print this if a tool is being used, so that tool output
 		// can be piped into a file without this string showing up.
 		if options.Tool == nil && config.Verbosity != build_config.NoStatusUpdate {
-			status.Info("Entering directory `&s'", options.WorkingDir)
+			status.Info("Entering directory `%s'", options.WorkingDir)
 		}
 		if err := os.Chdir(options.WorkingDir); err != nil {
 			log.Fatalf("chdir to '%s' - %s", options.WorkingDir, err)
