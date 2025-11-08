@@ -25,6 +25,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/manifest_parser"
 	"github.com/buildbuddy-io/gin/internal/metrics"
+	"github.com/buildbuddy-io/gin/internal/missing_deps"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/status"
 	"github.com/buildbuddy-io/gin/internal/util"
@@ -723,11 +724,60 @@ func (m *NinjaMain) ToolDeps(opts *Options, args []string) int {
 	return 0
 }
 
-func (m *NinjaMain) ToolMissingDeps(*Options, []string) int { return 0 }
-func (m *NinjaMain) ToolBrowse(*Options, []string) int      { return 0 }
-func (m *NinjaMain) ToolMSVC(*Options, []string) int        { return 0 }
-func (m *NinjaMain) ToolTargets(*Options, []string) int     { return 0 }
-func (m *NinjaMain) ToolCommands(*Options, []string) int    { return 0 }
+func (m *NinjaMain) ToolMissingDeps(opts *Options, args []string) int {
+	nodes, err := m.CollectTargetsFromArgs(args)
+	if err != nil {
+		util.Errorf("%s", err)
+		return 1
+	}
+	printer := &missing_deps.MissingDependencyPrinter{}
+	scanner := missing_deps.NewScanner(printer, m.depsLog, m.state, m.diskInterface)
+	for _, node := range nodes {
+		scanner.ProcessNode(node)
+	}
+	scanner.PrintStats()
+	if scanner.HadMissingDeps() {
+		return 3
+	}
+	return 0
+}
+
+func (m *NinjaMain) ToolBrowse(*Options, []string) int  { return 0 }
+func (m *NinjaMain) ToolMSVC(*Options, []string) int    { return 0 }
+func (m *NinjaMain) ToolTargets(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolCommands(opts *Options, args []string) int {
+	printCommandsUsage := func() {
+		fmt.Printf(`
+usage: ninja -t commands [options] [targets]
+
+options:
+  -s     only print the final command to build [target], not the whole chain
+`)
+	}
+
+	fs := flag.NewFlagSet("ToolCommands", flag.ContinueOnError)
+	fs.Usage = printCommandsUsage
+	single := fs.Bool("s", false, "only print the final command to build [target], not the whole chain")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	mode := PCMAll
+	if *single {
+		mode = PCMSingle
+	}
+	nodes, err := m.CollectTargetsFromArgs(fs.Args())
+	if err != nil {
+		util.Errorf("%s", err)
+		return 1
+	}
+
+	seen := make(map[*graph.Edge]struct{}, 0)
+	for _, in := range nodes {
+		PrintCommands(in.InEdge(), seen, mode)
+	}
+	return 0
+}
+
 func (m *NinjaMain) ToolInputs(*Options, []string) int      { return 0 }
 func (m *NinjaMain) ToolMultiInputs(*Options, []string) int { return 0 }
 func (m *NinjaMain) ToolClean(opts *Options, args []string) int {
@@ -741,10 +791,10 @@ options:
 `)
 	}
 	fs := flag.NewFlagSet("ToolClean", flag.ContinueOnError)
+	fs.Usage = printCleanUsage
 	generator := flag.Bool("g", false, "also clean files marked as ninja generator output")
 	cleanRules := fs.Bool("r", false, "interpret targets as a list of rules to clean instead")
 	if err := fs.Parse(args); err != nil {
-		printCleanUsage()
 		return 1
 	}
 
