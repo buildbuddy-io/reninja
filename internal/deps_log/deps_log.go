@@ -300,7 +300,6 @@ func (d *DepsLog) Load(path string, state *state.State) error {
 			mtimeLow := bytesToInt(buf[4:8])
 			mtimeHigh := bytesToInt(buf[8:12])
 			mtime := timestamp.TimeStamp(mtimeLow | (mtimeHigh << 32))
-
 			depsCount := (size / 4) - 3
 			deps := NewDeps(mtime, depsCount)
 
@@ -337,9 +336,9 @@ func (d *DepsLog) Load(path string, state *state.State) error {
 			node := state.GetNode(subPath)
 
 			checksum := bytesToInt(buf[size-4 : size])
-			expectedID := ^checksum
+			expectedID := ^uint32(checksum)
 			id := len(d.nodes)
-			if id != expectedID || node.ID() >= 0 {
+			if uint32(id) != expectedID || node.ID() >= 0 {
 				readFailed = true
 				break
 			}
@@ -480,7 +479,6 @@ func intTo4Bytes(i int) []byte {
 }
 
 func bytesToInt(buf []byte) int {
-	var i int32
-	binary.Decode(buf, binary.NativeEndian, &i)
-	return int(i)
+	v := binary.LittleEndian.Uint32(buf)
+	return int(v)
 }
