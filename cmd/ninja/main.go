@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/buildbuddy-io/gin/internal/browse"
@@ -751,8 +752,108 @@ func (m *NinjaMain) ToolBrowse(opts *Options, args []string) int {
 	return 0
 }
 
-func (m *NinjaMain) ToolMSVC(*Options, []string) int    { return 0 }
-func (m *NinjaMain) ToolTargets(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolMSVC(*Options, []string) int {
+	util.Error("TBD: windows support")
+	return 1
+}
+
+func ToolTargetsList(nodes []*graph.Node, depth, indent int) int {
+	for _, n := range nodes {
+		for range indent {
+			fmt.Printf("  ")
+		}
+		target := n.Path()
+		if n.InEdge() != nil {
+			fmt.Printf("%s: %s\n", target, n.InEdge().Rule().Name())
+			if depth > 1 || depth <= 0 {
+				ToolTargetsList(n.InEdge().Inputs(), depth-1, indent+1)
+			}
+		} else {
+			fmt.Printf("%s\n", target)
+		}
+	}
+	return 0
+}
+
+func ToolTargetsSourceList(state *state.State) int {
+	for _, e := range state.Edges() {
+		for _, inps := range e.Inputs() {
+			if inps.InEdge() == nil {
+				fmt.Printf("%s\n", inps.Path())
+			}
+		}
+	}
+	return 0
+}
+
+func ToolTargetsListStateRule(state *state.State, ruleName string) int {
+	rules := make([]string, 0)
+	for _, e := range state.Edges() {
+		if e.Rule().Name() == ruleName {
+			for _, outNode := range e.Outputs() {
+				rules = append(rules, outNode.Path())
+			}
+		}
+	}
+
+	// Print them.
+	for _, i := range rules {
+		fmt.Printf("%s\n", i)
+	}
+
+	return 0
+}
+
+func ToolTargetsListState(state *state.State) int {
+	for _, e := range state.Edges() {
+		for _, outNode := range e.Outputs() {
+			fmt.Printf("%s: %s\n", outNode.Path(), e.Rule().Name())
+		}
+	}
+
+	return 0
+}
+
+func (m *NinjaMain) ToolTargets(opts *Options, args []string) int {
+	depth := 1
+	if len(args) >= 1 {
+		mode := args[0]
+		if mode == "rule" {
+			var rule string
+			if len(args) > 1 {
+				rule = args[1]
+			}
+			if rule == "" {
+				return ToolTargetsSourceList(m.state)
+			} else {
+				return ToolTargetsListStateRule(m.state, rule)
+			}
+		} else if mode == "depth" {
+			if len(args) > 1 {
+				i, _ := strconv.Atoi(args[1])
+				depth = i
+			}
+		} else if mode == "all" {
+			return ToolTargetsListState(m.state)
+		} else {
+			suggestion := util.SpellcheckString(mode, "rule", "depth", "all")
+			if suggestion != "" {
+				util.Errorf("unknown tool target mode '%s', did you mean '%s'?", mode, suggestion)
+			} else {
+				util.Errorf("unknown target tool mode '%s'", mode)
+			}
+			return 1
+		}
+	}
+
+	rootNodes, err := m.state.RootNodes()
+	if err != nil {
+		util.Errorf("%s", err)
+		return 1
+	}
+	return ToolTargetsList(rootNodes, depth, 0)
+}
+
 func (m *NinjaMain) ToolCommands(opts *Options, args []string) int {
 	printCommandsUsage := func() {
 		fmt.Printf(`
