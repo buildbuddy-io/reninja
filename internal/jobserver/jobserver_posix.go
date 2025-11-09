@@ -1,5 +1,4 @@
 //go:build ((linux && !android) || (darwin && !ios)) && (amd64 || arm64)
-
 package jobserver
 
 import (
