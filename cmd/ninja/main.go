@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -887,7 +888,68 @@ options:
 	return 0
 }
 
-func (m *NinjaMain) ToolInputs(*Options, []string) int      { return 0 }
+func (m *NinjaMain) ToolInputs(opts *Options, args []string) int {
+	printInputsUsage := func() {
+		fmt.Printf(`
+Usage '-t inputs [options] [targets]
+
+List all inputs used for a set of targets, sorted in dependency order.
+Note that by default, results are shell escaped, and sorted alphabetically,
+and never include validation target paths.
+
+Options:"
+  -h, --help          Print this message.
+  -0, --print0            Use \\0, instead of \\n as a line terminator.
+  -E, --no-shell-escape   Do not shell escape the result.
+  -d, --dependency-order  Sort results by dependency order.
+`)
+	}
+	fs := flag.NewFlagSet("ToolInputs", flag.ContinueOnError)
+	fs.Usage = printInputsUsage
+
+	var zero bool
+	fs.BoolVar(&zero, "0", false, "Use \\0, instead of \\n as a line terminator.")
+	fs.BoolVar(&zero, "print0", false, "Use \\0, instead of \\n as a line terminator.")
+
+	var noShellEscape bool
+	fs.BoolVar(&noShellEscape, "E", false, "Do not shell escape the result.")
+	fs.BoolVar(&noShellEscape, "no-shell-escape", false, "Do not shell escape the result.")
+
+	var dependencyOrder bool
+	fs.BoolVar(&dependencyOrder, "d", false, "Sort results by dependency order.")
+	fs.BoolVar(&dependencyOrder, "dependency-order", false, "Sort results by dependency order.")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	nodes, err := m.CollectTargetsFromArgs(fs.Args())
+	if err != nil {
+		util.Errorf("%s", err)
+		return 1
+	}
+
+	collector := graph.NewInputsCollector()
+	for _, node := range nodes {
+		collector.VisitNode(node)
+	}
+	shellEscape := !noShellEscape
+	inputs := collector.GetInputsAsStrings(shellEscape)
+	if !dependencyOrder {
+		sort.Strings(inputs)
+	}
+	if zero {
+		for _, input := range inputs {
+			os.Stdout.Write(append([]byte(input), 0))
+		}
+	} else {
+		for _, input := range inputs {
+			fmt.Printf("%s\n", input)
+		}
+	}
+	return 0
+}
+
 func (m *NinjaMain) ToolMultiInputs(*Options, []string) int { return 0 }
 func (m *NinjaMain) ToolClean(opts *Options, args []string) int {
 	printCleanUsage := func() {
