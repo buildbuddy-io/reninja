@@ -1247,6 +1247,7 @@ func StripUnknownFlags(flagSet *flag.FlagSet, args []string) ([]string, []string
 
 	res := make([]string, 0, len(args))
 	stripped := make([]string, 0, len(args))
+
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		isFlag, isTerminator, flagName, hasInlineValue := parseArg(arg)
@@ -1265,7 +1266,6 @@ func StripUnknownFlags(flagSet *flag.FlagSet, args []string) ([]string, []string
 		} else {
 			appendTo = &stripped
 		}
-
 		*appendTo = append(*appendTo, arg)
 		if !hasInlineValue && !isBoolFlag {
 			// next arg is supposed to be the flag value
@@ -1273,6 +1273,11 @@ func StripUnknownFlags(flagSet *flag.FlagSet, args []string) ([]string, []string
 				*appendTo = append(*appendTo, args[i+1])
 			}
 			i++ // skip the flag value
+
+			if arg == "-t" { // tool args, stop parsing here.
+				stripped = append(stripped, args[i+1:]...)
+				break
+			}
 		}
 	}
 	return res, stripped
