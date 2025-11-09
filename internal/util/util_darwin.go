@@ -1,4 +1,5 @@
-//go:build (darwin && !ios) && (amd64 || arm64)
+//go:build darwin && !ios && (amd64 || arm64)
+
 package util
 
 /*
