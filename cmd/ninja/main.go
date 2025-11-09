@@ -950,7 +950,59 @@ Options:"
 	return 0
 }
 
-func (m *NinjaMain) ToolMultiInputs(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolMultiInputs(opts *Options, args []string) int {
+	printMultiInputsUsage := func() {
+		fmt.Printf(`
+Usage '-t multi-inputs [options] [targets]
+
+Print one or more sets of inputs required to build targets, sorted in dependency order.
+The tool works like inputs tool but with addition of the target for each line.
+The output will be a series of lines with the following elements:
+<target> <delimiter> <input> <terminator>
+Note that a given input may appear for several targets if it is used by more than one targets.
+Options:
+  -h, --help                   Print this message.
+  -d  --delimiter=DELIM        Use DELIM instead of TAB for field delimiter.
+  -0, --print0                 Use \\0, instead of \\n as a line terminator.
+`)
+	}
+	fs := flag.NewFlagSet("ToolMultiInputs", flag.ContinueOnError)
+	fs.Usage = printMultiInputsUsage
+
+	var zero bool
+	fs.BoolVar(&zero, "0", false, "Use \\0, instead of \\n as a line terminator.")
+	fs.BoolVar(&zero, "print0", false, "Use \\0, instead of \\n as a line terminator.")
+
+	var delimiter string
+	fs.StringVar(&delimiter, "d", "\t", "Use DELIM instead of TAB for field delimiter.")
+	fs.StringVar(&delimiter, "delimiter", "\t", "Use DELIM instead of TAB for field delimiter.")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	var terminator byte = '\n'
+	if zero {
+		terminator = 0
+	}
+	nodes, err := m.CollectTargetsFromArgs(fs.Args())
+	if err != nil {
+		util.Errorf("%s", err)
+		return 1
+	}
+
+	for _, node := range nodes {
+		collector := graph.NewInputsCollector()
+		collector.VisitNode(node)
+		inputs := collector.GetInputsAsStrings(false)
+		for _, input := range inputs {
+			fmt.Printf("%s%s%s", node.Path(), delimiter, input)
+			os.Stdout.Write([]byte{terminator})
+		}
+	}
+	return 0
+}
+
 func (m *NinjaMain) ToolClean(opts *Options, args []string) int {
 	printCleanUsage := func() {
 		fmt.Printf(`
