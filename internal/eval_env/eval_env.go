@@ -112,6 +112,25 @@ func (es *EvalString) Serialize() string {
 	return result.String()
 }
 
+// Serialize returns the original string representation
+func (es *EvalString) Unparse() string {
+	var result strings.Builder
+	if len(es.parsed) == 0 && es.singleToken != "" {
+		result.WriteString(es.singleToken)
+	} else {
+		for _, token := range es.parsed {
+			if token.Type == SPECIAL {
+				result.WriteString("${")
+			}
+			result.WriteString(token.Value)
+			if token.Type == SPECIAL {
+				result.WriteByte('}')
+			}
+		}
+	}
+	return result.String()
+}
+
 type Env interface {
 	LookupVariable(key string) string
 }

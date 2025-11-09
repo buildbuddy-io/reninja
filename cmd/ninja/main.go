@@ -963,7 +963,7 @@ options:
 	}
 	fs := flag.NewFlagSet("ToolClean", flag.ContinueOnError)
 	fs.Usage = printCleanUsage
-	generator := flag.Bool("g", false, "also clean files marked as ninja generator output")
+	generator := fs.Bool("g", false, "also clean files marked as ninja generator output")
 	cleanRules := fs.Bool("r", false, "interpret targets as a list of rules to clean instead")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -1030,7 +1030,37 @@ func (m *NinjaMain) ToolUrtle(*Options, []string) int {
 	}
 	return 0
 }
-func (m *NinjaMain) ToolRules(*Options, []string) int       { return 0 }
+func (m *NinjaMain) ToolRules(opts *Options, args []string) int {
+	printRulesUsage := func() {
+		fmt.Printf(`
+usage: ninja -t rules [options]
+
+options:
+  -d     also print the description of the rule
+  -h     print this message
+`)
+	}
+	fs := flag.NewFlagSet("ToolClean", flag.ContinueOnError)
+	fs.Usage = printRulesUsage
+	printDescription := fs.Bool("d", false, "also print the description of the rule")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	rules := m.state.Bindings().GetRules()
+	for ruleName, rule := range rules {
+		fmt.Printf("%s", ruleName)
+		if *printDescription {
+			description, ok := rule.GetBinding("description")
+			if ok && description != nil {
+				fmt.Printf(": %s", description.Unparse())
+			}
+		}
+		fmt.Printf("\n")
+	}
+	return 0
+}
+
 func (m *NinjaMain) ToolWinCodePage(*Options, []string) int { return 0 }
 
 type PrintCommandMode int
