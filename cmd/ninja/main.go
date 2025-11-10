@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -856,7 +858,7 @@ func (m *NinjaMain) ToolTargets(opts *Options, args []string) int {
 }
 
 func (m *NinjaMain) ToolCommands(opts *Options, args []string) int {
-	printCommandsUsage := func() {
+	toolUsage := func() {
 		fmt.Printf(`
 usage: ninja -t commands [options] [targets]
 
@@ -866,7 +868,7 @@ options:
 	}
 
 	fs := flag.NewFlagSet("ToolCommands", flag.ContinueOnError)
-	fs.Usage = printCommandsUsage
+	fs.Usage = toolUsage
 	single := fs.Bool("s", false, "only print the final command to build [target], not the whole chain")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -889,7 +891,7 @@ options:
 }
 
 func (m *NinjaMain) ToolInputs(opts *Options, args []string) int {
-	printInputsUsage := func() {
+	toolUsage := func() {
 		fmt.Printf(`
 Usage '-t inputs [options] [targets]
 
@@ -905,7 +907,7 @@ Options:"
 `)
 	}
 	fs := flag.NewFlagSet("ToolInputs", flag.ContinueOnError)
-	fs.Usage = printInputsUsage
+	fs.Usage = toolUsage
 
 	var zero bool
 	fs.BoolVar(&zero, "0", false, "Use \\0, instead of \\n as a line terminator.")
@@ -951,7 +953,7 @@ Options:"
 }
 
 func (m *NinjaMain) ToolMultiInputs(opts *Options, args []string) int {
-	printMultiInputsUsage := func() {
+	toolUsage := func() {
 		fmt.Printf(`
 Usage '-t multi-inputs [options] [targets]
 
@@ -967,7 +969,7 @@ Options:
 `)
 	}
 	fs := flag.NewFlagSet("ToolMultiInputs", flag.ContinueOnError)
-	fs.Usage = printMultiInputsUsage
+	fs.Usage = toolUsage
 
 	var zero bool
 	fs.BoolVar(&zero, "0", false, "Use \\0, instead of \\n as a line terminator.")
@@ -1004,7 +1006,7 @@ Options:
 }
 
 func (m *NinjaMain) ToolClean(opts *Options, args []string) int {
-	printCleanUsage := func() {
+	toolUsage := func() {
 		fmt.Printf(`
 usage: ninja -t clean [options] [targets]
 
@@ -1014,7 +1016,7 @@ options:
 `)
 	}
 	fs := flag.NewFlagSet("ToolClean", flag.ContinueOnError)
-	fs.Usage = printCleanUsage
+	fs.Usage = toolUsage
 	generator := fs.Bool("g", false, "also clean files marked as ninja generator output")
 	cleanRules := fs.Bool("r", false, "interpret targets as a list of rules to clean instead")
 	if err := fs.Parse(args); err != nil {
@@ -1043,7 +1045,123 @@ func (m *NinjaMain) ToolCleanDead(opts *Options, args []string) int {
 	return cleaner.CleanDead(m.buildLog.Entries())
 }
 
-func (m *NinjaMain) ToolCompilationDatabase(*Options, []string) int           { return 0 }
+type EvaluateCommandMode int
+
+const (
+	EcmNormal EvaluateCommandMode = iota
+	EcmExpandRspfile
+)
+
+func PrintJSONString(in string) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	err := enc.Encode(in)
+	if err == nil {
+		s := buf.String()
+		fmt.Printf("%s", s[:len(s)-1])
+	}
+}
+
+func EvaluateCommandWithRspfile(edge *graph.Edge, mode EvaluateCommandMode) string {
+	command := edge.EvaluateCommand(false)
+	if mode == EcmNormal {
+		return command
+	}
+
+	rspFile := edge.GetUnescapedRspfile()
+	if rspFile == "" {
+		return command
+	}
+
+	index := strings.Index(command, rspFile)
+	if index == 0 || index == -1 || (command[index-1] != '@' && strings.Index(command, "--option-file=") != index-14 && strings.Index(command, "-f ") != index-3) {
+		return command
+	}
+
+	rspfileContent := edge.GetBinding("rspfile_content")
+	newlineIndex := strings.Index(rspfileContent, "\n")
+	for newlineIndex != -1 {
+		newlineIndex = strings.Index(rspfileContent, "\n")
+	}
+
+	commandBytes := []byte(command)
+
+	if command[index-1] == '@' {
+		copy(commandBytes[index-1:index+len(rspfileContent)], rspfileContent)
+	} else if strings.Index(command, "-f ") == index-3 {
+		copy(commandBytes[index-3:index+len(rspfileContent)], rspfileContent)
+	} else { // --option-file syntax
+		copy(commandBytes[index-14:index+len(rspfileContent)], rspfileContent)
+	}
+
+	return string(commandBytes)
+}
+
+func PrintOneCompdbObject(directory string, edge *graph.Edge, mode EvaluateCommandMode) {
+	fmt.Printf("\n  {\n    \"directory\": ")
+	PrintJSONString(directory)
+	fmt.Printf(",\n    \"command\": ")
+	PrintJSONString(EvaluateCommandWithRspfile(edge, mode))
+	fmt.Printf(",\n    \"file\": ")
+	PrintJSONString(edge.Inputs()[0].Path())
+	fmt.Printf(",\n    \"output\": ")
+	PrintJSONString(edge.Outputs()[0].Path())
+	fmt.Printf("\n  }")
+}
+
+func (m *NinjaMain) ToolCompilationDatabase(opts *Options, args []string) int {
+	toolUsage := func() {
+		fmt.Printf(`
+usage: ninja -t compdb [options] [rules]
+
+options:
+  -x     expand @rspfile style response file invocations
+`)
+	}
+	fs := flag.NewFlagSet("ToolCompilationDatabase", flag.ContinueOnError)
+	fs.Usage = toolUsage
+	expand := fs.Bool("x", false, "expand @rspfile style response file invocations")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	evalMode := EcmNormal
+	if *expand {
+		evalMode = EcmExpandRspfile
+	}
+
+	first := true
+	directory, err := disk.GetWorkingDirectory()
+	if err != nil {
+		return 1
+	}
+	fmt.Printf("[")
+	for _, edge := range m.state.Edges() {
+		if len(edge.Inputs()) == 0 {
+			continue
+		}
+		if len(args) == 0 {
+			if !first {
+				fmt.Printf(",")
+			}
+			PrintOneCompdbObject(directory, edge, evalMode)
+			first = false
+		} else {
+			for _, arg := range args {
+				if edge.Rule().Name() == arg {
+					if !first {
+						fmt.Printf(",")
+					}
+					PrintOneCompdbObject(directory, edge, evalMode)
+					first = false
+				}
+			}
+		}
+	}
+	fmt.Printf("\n]\n")
+	return 0
+}
+
 func (m *NinjaMain) ToolCompilationDatabaseForTargets(*Options, []string) int { return 0 }
 func (m *NinjaMain) ToolRecompact(*Options, []string) int {
 	if !m.EnsureBuildDirExists() {
@@ -1083,7 +1201,7 @@ func (m *NinjaMain) ToolUrtle(*Options, []string) int {
 	return 0
 }
 func (m *NinjaMain) ToolRules(opts *Options, args []string) int {
-	printRulesUsage := func() {
+	toolUsage := func() {
 		fmt.Printf(`
 usage: ninja -t rules [options]
 
@@ -1093,7 +1211,7 @@ options:
 `)
 	}
 	fs := flag.NewFlagSet("ToolClean", flag.ContinueOnError)
-	fs.Usage = printRulesUsage
+	fs.Usage = toolUsage
 	printDescription := fs.Bool("d", false, "also print the description of the rule")
 	if err := fs.Parse(args); err != nil {
 		return 1
