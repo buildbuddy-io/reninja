@@ -31,7 +31,6 @@ func (c *CommandCollector) CollectFrom(node *graph.Node) {
 		return
 	}
 	c.visitedNodes[node] = struct{}{}
-	fmt.Printf("first time %s\n", node.Path())
 
 	edge := node.InEdge()
 	if edge == nil {
@@ -43,9 +42,6 @@ func (c *CommandCollector) CollectFrom(node *graph.Node) {
 	}
 	c.visitedEdges[edge] = struct{}{}
 
-	for _, inputNode := range edge.Inputs() {
-		fmt.Printf(" Recursing on %s\n", inputNode.Path())
-	}
 	for _, inputNode := range edge.Inputs() {
 		c.CollectFrom(inputNode)
 	}

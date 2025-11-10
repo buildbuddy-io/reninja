@@ -20,6 +20,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/clean"
+	"github.com/buildbuddy-io/gin/internal/command_collector"
 	"github.com/buildbuddy-io/gin/internal/deps_log"
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/dyndep"
@@ -1162,7 +1163,72 @@ options:
 	return 0
 }
 
-func (m *NinjaMain) ToolCompilationDatabaseForTargets(*Options, []string) int { return 0 }
+func PrintCompdb(directory string, edges []*graph.Edge, mode EvaluateCommandMode) {
+	fmt.Printf("[")
+	first := true
+
+	for _, edge := range edges {
+		if edge.IsPhony() || len(edge.Inputs()) == 0 {
+			continue
+		}
+		if !first {
+			fmt.Printf(",")
+		}
+		PrintOneCompdbObject(directory, edge, mode)
+		first = false
+	}
+	fmt.Printf("\n]\n")
+}
+
+func (m *NinjaMain) ToolCompilationDatabaseForTargets(opts *Options, args []string) int {
+	toolUsage := func() {
+		fmt.Printf(`
+usage: ninja -t compdb [-hx] target [targets]
+
+options:
+  -h     display this help message
+  -x     expand @rspfile style response file invocations
+`)
+	}
+	fs := flag.NewFlagSet("ToolCompilationDatabaseForTargets", flag.ContinueOnError)
+	fs.Usage = toolUsage
+	expand := fs.Bool("x", false, "expand @rspfile style response file invocations")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	if len(args) == 0 {
+		util.Errorf("compdb-targets expects the name of at least one target")
+		toolUsage()
+		return 1
+	}
+
+	evalMode := EcmNormal
+	if *expand {
+		evalMode = EcmExpandRspfile
+	}
+	targets := fs.Args()
+	collector := command_collector.New()
+	for _, targetArg := range targets {
+		node, err := m.CollectTarget(targetArg)
+		if err != nil {
+			log.Fatalf("%s", err)
+			return 1
+		}
+		if node.InEdge() == nil {
+			log.Fatalf("'%s' is not a target (i.e. it is not an output of any `build` statement)", node.Path())
+		}
+		collector.CollectFrom(node)
+	}
+
+	directory, err := disk.GetWorkingDirectory()
+	if err != nil {
+		return 1
+	}
+	PrintCompdb(directory, collector.InEdges(), evalMode)
+	return 0
+}
+
 func (m *NinjaMain) ToolRecompact(*Options, []string) int {
 	if !m.EnsureBuildDirExists() {
 		return 1
@@ -1174,7 +1240,56 @@ func (m *NinjaMain) ToolRecompact(*Options, []string) int {
 	return 0
 }
 
-func (m *NinjaMain) ToolRestat(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolRestat(opts *Options, args []string) int {
+	toolUsage := func() {
+		fmt.Printf(`
+usage: ninja -t restat [outputs]
+`)
+	}
+	fs := flag.NewFlagSet("ToolRestat", flag.ContinueOnError)
+	fs.Usage = toolUsage
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if !m.EnsureBuildDirExists() {
+		return 1
+	}
+
+	logPath := ".ninja_log"
+	if m.buildDir != "" {
+		logPath = filepath.Join(m.buildDir, logPath)
+	}
+
+	// if the file is empty, we're done
+	_, err := os.Stat(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return int(exit_status.ExitSuccess)
+		}
+	}
+
+	err = m.buildLog.Load(logPath)
+	if err != nil {
+		util.Errorf("loading build log %s: %s", logPath, err)
+		return int(exit_status.ExitFailure)
+	}
+
+	err = m.buildLog.Restat(logPath, m.diskInterface, len(args), args)
+	if err != nil {
+		util.Errorf("failed recompaction: %s", err)
+		return int(exit_status.ExitFailure)
+	}
+
+	if !m.config.DryRun {
+		if err := m.buildLog.OpenForWrite(logPath, m); err != nil {
+			util.Errorf("opening build log: %s", err)
+			return int(exit_status.ExitFailure)
+		}
+	}
+
+	return int(exit_status.ExitSuccess)
+}
+
 func (m *NinjaMain) ToolUrtle(*Options, []string) int {
 	urtle := " 13 ,3;2!2;\n8 ,;<11!;\n5 `'<10!(2`'2!\n11 ,6;, `\\. `\\9 .,c13$ec,.\n6 " +
 		",2;11!>; `. ,;!2> .e8$2\".2 \"?7$e.\n <:<8!'` 2.3,.2` ,3!' ;,(?7\";2!2'<" +
@@ -1231,7 +1346,10 @@ options:
 	return 0
 }
 
-func (m *NinjaMain) ToolWinCodePage(*Options, []string) int { return 0 }
+func (m *NinjaMain) ToolWinCodePage(*Options, []string) int {
+	util.Error("TBD: windows support")
+	return 1
+}
 
 type PrintCommandMode int
 
