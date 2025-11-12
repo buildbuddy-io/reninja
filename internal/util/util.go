@@ -9,6 +9,31 @@ import (
 	"github.com/buildbuddy-io/gin/internal/edit_distance"
 )
 
+// StringList implements a flag.Value that accepts an sequence of values as a CSV.
+type StringList []string
+
+// Set implements part of the flag.Getter interface and will append new values to the flag.
+func (f *StringList) Set(s string) error {
+	*f = append(*f, strings.Split(s, ",")...)
+	return nil
+}
+
+// String implements part of the flag.Getter interface and returns a string-ish value for the flag.
+func (f *StringList) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(*f, ",")
+}
+
+// Get implements flag.Getter and returns a slice of string values.
+func (f *StringList) Get() any {
+	if f == nil {
+		return []string(nil)
+	}
+	return *f
+}
+
 // CanonicalizePath normalizes a path to use forward slashes and returns slash bits
 // TODO(tylerw): review this, it's probably wrong.
 func CanonicalizePath(path string) (outp string, outs uint64) {

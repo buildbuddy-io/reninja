@@ -41,8 +41,8 @@ import (
 var (
 	help      bool
 	verbose   bool
-	debugging StringList
-	warnings  StringList
+	debugging util.StringList
+	warnings  util.StringList
 
 	printVersion    = flag.Bool("version", false, fmt.Sprintf("print ninja version (\"%s\")", version.NinjaVersion))
 	quiet           = flag.Bool("quiet", false, "don't show progress status, just command output")
@@ -54,31 +54,6 @@ var (
 	dryRun          = flag.Bool("n", false, "dry run (don't run commands but act like they succeeded)")
 	tool            = flag.String("t", "", "run a subtool (use '-t list' to list subtools)")
 )
-
-// StringList implements a flag.Value that accepts an sequence of values as a CSV.
-type StringList []string
-
-// Set implements part of the flag.Getter interface and will append new values to the flag.
-func (f *StringList) Set(s string) error {
-	*f = append(*f, strings.Split(s, ",")...)
-	return nil
-}
-
-// String implements part of the flag.Getter interface and returns a string-ish value for the flag.
-func (f *StringList) String() string {
-	if f == nil {
-		return ""
-	}
-	return strings.Join(*f, ",")
-}
-
-// Get implements flag.Getter and returns a slice of string values.
-func (f *StringList) Get() any {
-	if f == nil {
-		return []string(nil)
-	}
-	return *f
-}
 
 func registerFlags() {
 	flag.BoolVar(&help, "help", false, "show usage and exit")
@@ -1712,6 +1687,7 @@ func main() {
 		if metrics.DefaultMetrics != nil {
 			ninja.DumpMetrics()
 		}
+		status.FinalizeBuild(int(result))
 		os.Exit(int(result))
 	}
 

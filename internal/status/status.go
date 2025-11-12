@@ -1,16 +1,34 @@
 package status
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
+	"github.com/buildbuddy-io/gin/internal/build_event_publisher"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/explanations"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/line_printer"
+	"github.com/buildbuddy-io/gin/internal/remote_headers"
 	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/google/uuid"
+
+	bespb "github.com/buildbuddy-io/gin/genproto/build_event_stream"
+	bepb "github.com/buildbuddy-io/gin/genproto/build_events"
+	clpb "github.com/buildbuddy-io/gin/genproto/command_line"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+)
+
+var (
+	besBackend   = flag.String("bes_backend", "", "BES backend target, like remote.buildbuddy.io")
+	resultsURL   = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
+	invocationID = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 )
 
 type Status interface {
@@ -22,6 +40,8 @@ type Status interface {
 
 	BuildStarted()
 	BuildFinished()
+
+	FinalizeBuild(ninjaExitCode int)
 
 	SetExplanations(explanations *explanations.Explanations)
 
@@ -104,6 +124,13 @@ type StatusPrinter struct {
 	explanations *explanations.Explanations
 
 	currentRate *SlidingRateInfo
+
+	// the fields below will only be set if a bes_backed is enabled.
+	// their access should be guarded on the presence of bes.
+	// TODO(tylerw): move to a struct?
+	bes          *build_event_publisher.Publisher
+	invocationID string
+	ctx          context.Context
 }
 
 func NewPrinter(config *build_config.Config) *StatusPrinter {
@@ -115,6 +142,32 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 	}
 	if sp.progressStatusFormat == "" {
 		sp.progressStatusFormat = "[%f/%t] "
+	}
+
+	if *besBackend != "" {
+		sp.invocationID = *invocationID
+		if sp.invocationID == "" {
+			sp.invocationID = uuid.New().String()
+		}
+
+		extraHeaders := remote_headers.GetPairs()
+		publisher, err := build_event_publisher.New(*besBackend, sp.invocationID, extraHeaders)
+		if err != nil {
+			util.Errorf("failed to create publisher: %s", err)
+			return sp
+		}
+		sp.ctx = context.TODO()
+		sp.bes = publisher
+
+		sp.bes.Start(sp.ctx)
+
+		if err := sp.bes.Publish(startedEvent(os.Args, sp.invocationID, time.Now())); err != nil {
+			util.Warningf("Failed to publish started event: %s", err)
+		}
+
+		if err := sp.bes.Publish(structuredCommandLineEvent(os.Args)); err != nil {
+			util.Warningf("Failed to publish structured command line: %s", err)
+		}
 	}
 	return sp
 }
@@ -299,6 +352,10 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 
 	p.runningEdges -= 1
 
+	if p.bes != nil {
+		p.logToBes(bepb.ConsoleOutputStream_STDOUT, edge.EvaluateCommand(false))
+	}
+
 	// Print the command that is spewing before printing its output.
 	if exitCode != exit_status.ExitSuccess {
 		var outputs string
@@ -340,11 +397,37 @@ func (p *StatusPrinter) BuildStarted() {
 	p.startedEdges = 0
 	p.finishedEdges = 0
 	p.runningEdges = 0
+
+	if p.bes != nil {
+		if err := p.bes.Publish(buildMetadataEvent()); err != nil {
+			util.Warningf("Failed to publish build metadata: %s", err)
+		}
+
+		if err := p.bes.Publish(workspaceStatusEvent()); err != nil {
+			util.Warningf("Failed to publish workspace status: %s", err)
+		}
+
+		if err := p.bes.Publish(configurationEvent()); err != nil {
+			util.Warningf("Failed to publish configuration: %s", err)
+		}
+	}
 }
 
 func (p *StatusPrinter) BuildFinished() {
 	p.printer.SetConsoleLocked(false)
 	p.printer.PrintOnNewline("")
+}
+
+func (p *StatusPrinter) FinalizeBuild(ninjaExitCode int) {
+	if p.bes != nil {
+		if err := p.bes.Publish(finishedEvent(ninjaExitCode)); err != nil {
+			util.Warningf("Failed to publish finished event: %s", err)
+		}
+
+		if err := p.bes.Finish(); err != nil {
+			util.Warningf("Failed to finish publishing events: %s", err)
+		}
+	}
 }
 
 func (p *StatusPrinter) SetExplanations(exp *explanations.Explanations) {
@@ -466,14 +549,237 @@ func (p *StatusPrinter) FormatProgressStatus(format string, timeMillis int64) st
 	return out.String()
 }
 
+func (p *StatusPrinter) logToBes(streamType bepb.ConsoleOutputStream, format string, args ...interface{}) {
+	if p.bes == nil {
+		return
+	}
+	line := format
+	if len(args) > 0 {
+		line = fmt.Sprintf(format, args)
+	}
+	if len(line) == 0 {
+		return
+	}
+	if line[len(line)-1] != '\n' {
+		line = line + "\n"
+	}
+	if err := p.bes.Publish(consoleOutputEvent(line, streamType)); err != nil {
+		util.Infof("Failed to publish console output: %s", err)
+	}
+}
+
 func (p *StatusPrinter) Info(format string, args ...interface{}) {
 	util.Infof(format, args...)
+
+	if p.bes != nil {
+		p.logToBes(bepb.ConsoleOutputStream_STDOUT, format, args)
+	}
 }
 
 func (p *StatusPrinter) Warning(format string, args ...interface{}) {
 	util.Warningf(format, args...)
+
+	if p.bes != nil {
+		p.logToBes(bepb.ConsoleOutputStream_STDERR, format, args)
+	}
 }
 
 func (p *StatusPrinter) Error(format string, args ...interface{}) {
 	util.Errorf(format, args...)
+
+	if p.bes != nil {
+		p.logToBes(bepb.ConsoleOutputStream_STDERR, format, args)
+	}
 }
+
+// / Begin annoying bazel build event formatting helper code.
+func startedEvent(cmdArgs []string, invocationID string, startTime time.Time) *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_Started{},
+		},
+		Children: []*bespb.BuildEventId{
+			{Id: &bespb.BuildEventId_BuildMetadata{}},
+			{Id: &bespb.BuildEventId_WorkspaceStatus{}},
+			{Id: &bespb.BuildEventId_Configuration{Configuration: &bespb.BuildEventId_ConfigurationId{Id: "host"}}},
+			{Id: &bespb.BuildEventId_BuildFinished{}},
+			{Id: &bespb.BuildEventId_StructuredCommandLine{
+				StructuredCommandLine: &bespb.BuildEventId_StructuredCommandLineId{
+					CommandLineLabel: "original",
+				},
+			}},
+		},
+		Payload: &bespb.BuildEvent_Started{
+			Started: &bespb.BuildStarted{
+				Uuid:               invocationID,
+				StartTime:          timestamppb.New(startTime),
+				Command:            strings.Join(cmdArgs[:min(2, len(cmdArgs))], " "),
+				OptionsDescription: strings.Join(cmdArgs, " "),
+			},
+		},
+	}
+}
+
+func structuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
+	sections := []*clpb.CommandLineSection{
+		{
+			SectionLabel: "command",
+			SectionType: &clpb.CommandLineSection_ChunkList{
+				ChunkList: &clpb.ChunkList{
+					Chunk: []string{cmdArgs[0]},
+				},
+			},
+		},
+	}
+
+	if len(cmdArgs) > 1 {
+		sections = append(sections, &clpb.CommandLineSection{
+			SectionLabel: "arguments",
+			SectionType: &clpb.CommandLineSection_ChunkList{
+				ChunkList: &clpb.ChunkList{
+					Chunk: cmdArgs[1:],
+				},
+			},
+		})
+	}
+
+	commandLine := &clpb.CommandLine{
+		CommandLineLabel: "original",
+		Sections:         sections,
+	}
+
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_StructuredCommandLine{
+				StructuredCommandLine: &bespb.BuildEventId_StructuredCommandLineId{
+					CommandLineLabel: "original",
+				},
+			},
+		},
+		Payload: &bespb.BuildEvent_StructuredCommandLine{
+			StructuredCommandLine: commandLine,
+		},
+	}
+}
+
+func buildMetadataEvent() *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_BuildMetadata{},
+		},
+		Payload: &bespb.BuildEvent_BuildMetadata{
+			BuildMetadata: &bespb.BuildMetadata{
+				Metadata: map[string]string{
+					"ROLE": "NINJA",
+				},
+			},
+		},
+	}
+}
+
+func workspaceStatusEvent() *bespb.BuildEvent {
+	user := os.Getenv("USER")
+	if user == "" {
+		user = "unknown"
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "unknown"
+	}
+
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_WorkspaceStatus{},
+		},
+		Payload: &bespb.BuildEvent_WorkspaceStatus{
+			WorkspaceStatus: &bespb.WorkspaceStatus{
+				Item: []*bespb.WorkspaceStatus_Item{
+					{Key: "BUILD_USER", Value: user},
+					{Key: "BUILD_HOST", Value: hostname},
+					{Key: "BUILD_WORKING_DIRECTORY", Value: cwd},
+				},
+			},
+		},
+	}
+
+}
+
+func configurationEvent() *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_Configuration{
+				Configuration: &bespb.BuildEventId_ConfigurationId{
+					Id: "host",
+				},
+			},
+		},
+		Payload: &bespb.BuildEvent_Configuration{
+			Configuration: &bespb.Configuration{
+				Mnemonic:     "host",
+				PlatformName: runtime.GOOS,
+				Cpu:          runtime.GOARCH,
+				MakeVariable: map[string]string{
+					"TARGET_CPU": runtime.GOARCH,
+				},
+			},
+		},
+	}
+
+}
+
+func finishedEvent(exitCode int) *bespb.BuildEvent {
+	exitCodeName := "SUCCESS"
+	if exitCode != 0 {
+		exitCodeName = "FAILED"
+	}
+
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_BuildFinished{},
+		},
+		Children: []*bespb.BuildEventId{
+			{Id: &bespb.BuildEventId_BuildToolLogs{}},
+		},
+		LastMessage: true,
+		Payload: &bespb.BuildEvent_Finished{
+			Finished: &bespb.BuildFinished{
+				ExitCode: &bespb.BuildFinished_ExitCode{
+					Name: exitCodeName,
+					Code: int32(exitCode),
+				},
+				FinishTime: timestamppb.Now(),
+			},
+		},
+	}
+
+}
+
+func consoleOutputEvent(output string, streamType bepb.ConsoleOutputStream) *bespb.BuildEvent {
+	progress := &bespb.Progress{}
+	if streamType == bepb.ConsoleOutputStream_STDOUT {
+		progress.Stdout = output
+	} else {
+		progress.Stderr = output
+	}
+
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_Progress{
+				Progress: &bespb.BuildEventId_ProgressId{
+					OpaqueCount: int32(time.Now().UnixNano()),
+				},
+			},
+		},
+		Payload: &bespb.BuildEvent_Progress{
+			Progress: progress,
+		},
+	}
+}
+
+/// End annoying bazel build event formatting helper code.

@@ -3,18 +3,14 @@ package build_event_publisher
 import (
 	"context"
 	"io"
-	"math"
 	"sync"
 	"time"
 
+	"github.com/buildbuddy-io/gin/internal/grpc_client"
 	"github.com/buildbuddy-io/gin/internal/retry"
 	"github.com/buildbuddy-io/gin/internal/statuserr"
 	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/experimental"
-	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/mem"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -28,16 +24,14 @@ const (
 	// numStreamRetries is the max number of retries to allow for publishing
 	// a build event stream.
 	numStreamRetries = 5
-
-	APIKeyHeader = "x-buildbuddy-api-key"
 )
 
 // Publisher publishes Bazel build events for a single build event stream.
 // It retries the stream if it gets disconnected.
 type Publisher struct {
-	streamID   *bepb.StreamId
-	apiKey     string
-	besBackend string
+	streamID     *bepb.StreamId
+	extraHeaders []string
+	besBackend   string
 
 	events *EventBuffer
 	// errCh streams the stream publishing error (if any) after all retry attempts
@@ -45,7 +39,7 @@ type Publisher struct {
 	errCh chan error
 }
 
-func New(besBackend, apiKey, invocationID string) (*Publisher, error) {
+func New(besBackend, invocationID string, extraHeaders []string) (*Publisher, error) {
 	id, err := uuid.NewRandom()
 	if err != nil {
 		return nil, err
@@ -55,11 +49,11 @@ func New(besBackend, apiKey, invocationID string) (*Publisher, error) {
 		BuildId:      id.String(),
 	}
 	return &Publisher{
-		streamID:   streamID,
-		apiKey:     apiKey,
-		besBackend: besBackend,
-		events:     NewEventBuffer(streamID),
-		errCh:      make(chan error, 1),
+		streamID:     streamID,
+		extraHeaders: extraHeaders,
+		besBackend:   besBackend,
+		events:       NewEventBuffer(streamID),
+		errCh:        make(chan error, 1),
 	}, nil
 }
 
@@ -91,32 +85,14 @@ func (p *Publisher) Start(ctx context.Context) {
 // run performs a single attempt to stream any currently buffered events
 // as well as all subsequently published events to the BES backend.
 func (p *Publisher) run(ctx context.Context) error {
-	dialOptions := []grpc.DialOption{
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
-		experimental.WithBufferPool(mem.DefaultBufferPool()),
-		grpc.WithSharedWriteBuffer(true),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			// After a duration of this time if the client doesn't see any activity it
-			// pings the server to see if the transport is still alive.
-			Time: 30 * time.Second,
-
-			// After having pinged for keepalive check, the client waits for a duration
-			// of Timeout and if no activity is seen even after that the connection is
-			// closed.
-			Timeout: 20 * time.Second,
-
-			// If true, client sends keepalive pings even with no active RPCs.
-			PermitWithoutStream: true,
-		}),
-	}
-	conn, err := grpc.DialContext(ctx, p.besBackend, dialOptions...)
+	conn, err := grpc_client.DialSimple(ctx, p.besBackend)
 	if err != nil {
 		return statuserr.WrapError(err, "error dialing bes_backend")
 	}
 	defer conn.Close()
 	besClient := pepb.NewPublishBuildEventClient(conn)
-	if p.apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, APIKeyHeader, p.apiKey)
+	if len(p.extraHeaders) > 0 {
+		ctx = metadata.AppendToOutgoingContext(ctx, p.extraHeaders...)
 	}
 	stream, err := besClient.PublishBuildToolEventStream(ctx)
 	if err != nil {
