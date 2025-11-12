@@ -1469,6 +1469,7 @@ func ReadFlags(args []string, options *Options, config *build_config.Config) int
 
 	if *printVersion {
 		fmt.Printf("%s\n", version.NinjaVersion)
+		return 0
 	}
 	if help {
 		deferGuessParallelism.Refresh()

@@ -161,6 +161,8 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 
 		sp.bes.Start(sp.ctx)
 
+		sp.printStreamURL()
+
 		if err := sp.bes.Publish(startedEvent(os.Args, sp.invocationID, time.Now())); err != nil {
 			util.Warningf("Failed to publish started event: %s", err)
 		}
@@ -168,8 +170,19 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		if err := sp.bes.Publish(structuredCommandLineEvent(os.Args)); err != nil {
 			util.Warningf("Failed to publish structured command line: %s", err)
 		}
+
 	}
 	return sp
+}
+
+func (p *StatusPrinter) printStreamURL() {
+	if p.bes == nil {
+		return
+	}
+	invocationURL := fmt.Sprintf("%s/invocation/%s", *resultsURL, p.invocationID)
+	streamingLog := fmt.Sprintf(p.printer.Esc(32) + "INFO:" + p.printer.Esc() + fmt.Sprintf(" Streaming results to: %s", p.printer.Esc(4, 34)+invocationURL+p.printer.Esc()))
+
+	fmt.Fprintln(os.Stderr, streamingLog)
 }
 
 func (p *StatusPrinter) EdgeAddedToPlan(edge *graph.Edge) {
@@ -428,6 +441,7 @@ func (p *StatusPrinter) FinalizeBuild(ninjaExitCode int) {
 			util.Warningf("Failed to finish publishing events: %s", err)
 		}
 	}
+	p.printStreamURL()
 }
 
 func (p *StatusPrinter) SetExplanations(exp *explanations.Explanations) {
