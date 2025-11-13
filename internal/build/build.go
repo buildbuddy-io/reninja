@@ -850,7 +850,7 @@ func (b *Builder) Build() (exit_status.ExitStatusType, error) {
 			if result == nil || result.Status == exit_status.ExitInterrupted {
 				b.Cleanup()
 				b.status.BuildFinished()
-				return result.Status, fmt.Errorf("interrupted by user")
+				return exit_status.ExitInterrupted, fmt.Errorf("interrupted by user")
 			}
 
 			pendingCommands -= 1
@@ -988,7 +988,7 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	}
 
 	startTimeMillis := b.runningEdges[edge]
-	endTimeMillis := metrics.GetTimeMillis() - startTimeMillis
+	endTimeMillis := metrics.GetTimeMillis() - b.startTimeMillis
 	delete(b.runningEdges, edge)
 
 	b.status.BuildEdgeFinished(edge, startTimeMillis, endTimeMillis, result.Status, result.Output)

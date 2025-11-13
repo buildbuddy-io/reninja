@@ -1616,7 +1616,7 @@ func main() {
 
 	status := status.NewPrinter(config)
 
-	toolName := "" // by default, ninja builds.
+	toolName := "" // 'build' is the default.
 	if options.Tool != nil {
 		toolName = options.Tool.Name
 	}

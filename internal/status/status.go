@@ -17,6 +17,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/line_printer"
 	"github.com/buildbuddy-io/gin/internal/remote_headers"
 	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/gin/internal/version"
 	"github.com/google/uuid"
 
 	bespb "github.com/buildbuddy-io/gin/genproto/build_event_stream"
@@ -63,7 +64,7 @@ type SlidingRateInfo struct {
 	rate       float64
 	n          int64
 	times      []float64
-	lastUpdate int
+	lastUpdate int64
 }
 
 func NewSlidingRateInfo(n int) *SlidingRateInfo {
@@ -75,7 +76,7 @@ func NewSlidingRateInfo(n int) *SlidingRateInfo {
 	}
 }
 
-func (i *SlidingRateInfo) UpdateRate(updateHint int, timeMillis int64) {
+func (i *SlidingRateInfo) UpdateRate(updateHint, timeMillis int64) {
 	if updateHint == i.lastUpdate {
 		return
 	}
@@ -98,10 +99,10 @@ var _ Status = &StatusPrinter{}
 type StatusPrinter struct {
 	config *build_config.Config
 
-	startedEdges  int
-	finishedEdges int
-	totalEdges    int
-	runningEdges  int
+	startedEdges  int64
+	finishedEdges int64
+	totalEdges    int64
+	runningEdges  int64
 
 	// How much wall clock elapsed so far?
 	timeMillis int64
@@ -113,17 +114,17 @@ type StatusPrinter struct {
 	timePredictedPercentage float64
 
 	// Out of all the edges, for how many do we know previous time?
-	etaPredictableEdgesTotal int
+	etaPredictableEdgesTotal int64
 	// And how much time did they all take?
 	etaPredictableCpuTimeTotalMillis int64
 
 	// Out of all the non-finished edges, for how many do we know previous time?
-	etaPredictableEdgesRemaining int
+	etaPredictableEdgesRemaining int64
 	// And how much time will they all take?
 	etaPredictableCpuTimeRemainingMillis int64
 
 	// For how many edges we don't know the previous run time?
-	etaUnpredictableEdgesRemaining int
+	etaUnpredictableEdgesRemaining int64
 
 	progressStatusFormat string
 
@@ -261,7 +262,7 @@ func (p *StatusPrinter) RecalculateProgressPrediction() {
 		return
 	}
 
-	var edgesWithUnknownRuntime int
+	var edgesWithUnknownRuntime int64
 	if usePreviousTimes {
 		edgesWithUnknownRuntime = p.etaUnpredictableEdgesRemaining
 	} else {
@@ -428,6 +429,12 @@ func (p *StatusPrinter) BuildStarted() {
 func (p *StatusPrinter) BuildFinished() {
 	p.printer.SetConsoleLocked(false)
 	p.printer.PrintOnNewline("")
+
+	if p.bes != nil {
+		if err := p.bes.Publish(buildMetricsEvent(p.startedEdges, p.finishedEdges, p.cpuTimeMillis, p.timeMillis)); err != nil {
+			util.Warningf("Failed to publish configuration: %s", err)
+		}
+	}
 }
 
 func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
@@ -516,7 +523,7 @@ func (p *StatusPrinter) FormatProgressStatus(format string, timeMillis int64) st
 
 			// Percentage of edges completed
 			case 'p':
-				percent := 0
+				percent := int64(0)
 				if p.finishedEdges != 0 && p.totalEdges != 0 {
 					percent = (100 * p.finishedEdges) / p.totalEdges
 				}
@@ -641,6 +648,7 @@ func startedEvent(toolName string, cmdArgs []string, invocationID string, startT
 		Payload: &bespb.BuildEvent_Started{
 			Started: &bespb.BuildStarted{
 				Uuid:               invocationID,
+				BuildToolVersion:   version.NinjaVersion,
 				StartTime:          timestamppb.New(startTime),
 				Command:            toolName,
 				OptionsDescription: strings.Join(cmdArgs, " "),
@@ -771,9 +779,37 @@ func configurationEvent() *bespb.BuildEvent {
 
 }
 
+func buildMetricsEvent(actionsCreated, actionsExecuted, cpuTimeMillis, wallTimeMillis int64) *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_BuildMetrics{},
+		},
+		Payload: &bespb.BuildEvent_BuildMetrics{
+			BuildMetrics: &bespb.BuildMetrics{
+				ActionSummary: &bespb.BuildMetrics_ActionSummary{
+					ActionsCreated:                    actionsCreated,
+					ActionsCreatedNotIncludingAspects: actionsCreated,
+					ActionsExecuted:                   actionsExecuted,
+				},
+				TimingMetrics: &bespb.BuildMetrics_TimingMetrics{
+					CpuTimeInMs:  cpuTimeMillis,
+					WallTimeInMs: wallTimeMillis,
+				},
+			},
+		},
+	}
+}
+
 func finishedEvent(exitCode int) *bespb.BuildEvent {
-	exitCodeName := "SUCCESS"
-	if exitCode != 0 {
+	var exitCodeName string
+
+	// From https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/util/ExitCode.java#L38
+	switch exit_status.ExitStatusType(exitCode) {
+	case exit_status.ExitSuccess:
+		exitCodeName = "SUCCESS"
+	case exit_status.ExitInterrupted:
+		exitCodeName = "INTERRUPTED"
+	case exit_status.ExitFailure:
 		exitCodeName = "FAILED"
 	}
 
