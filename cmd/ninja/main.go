@@ -1613,7 +1613,19 @@ func main() {
 	if exitCode >= 0 {
 		os.Exit(exitCode)
 	}
+
 	status := status.NewPrinter(config)
+
+	toolName := "" // by default, ninja builds.
+	if options.Tool != nil {
+		toolName = options.Tool.Name
+	}
+	status.InitializeTool(toolName, positionalArgs)
+
+	osExit := func(exitCode int) {
+		status.FinalizeTool(exitCode)
+		os.Exit(exitCode)
+	}
 
 	if options.WorkingDir != "" {
 		// The formatting of this string, complete with funny quotes, is
@@ -1633,7 +1645,8 @@ func main() {
 		// None of the RUN_AFTER_FLAGS actually use a NinjaMain, but it's needed
 		// by other tools.
 		ninja := NewNinjaMain(ninjaCommand, config)
-		os.Exit(options.Tool.ToolFunc(ninja, options, positionalArgs))
+		exitCode := options.Tool.ToolFunc(ninja, options, positionalArgs)
+		osExit(exitCode)
 	}
 
 	// Limit number of rebuilds, to prevent infinite loops.
@@ -1648,23 +1661,23 @@ func main() {
 		parser := manifest_parser.New(ninja.state, ninja.diskInterface, parserOpts)
 		if err := parser.ParseFile(options.InputFile); err != nil {
 			status.Error("%s", err.Error())
-			os.Exit(1)
+			osExit(1)
 		}
 
 		if options.Tool != nil && options.Tool.When == runAfterLoad {
-			os.Exit(options.Tool.ToolFunc(ninja, options, positionalArgs))
+			osExit(options.Tool.ToolFunc(ninja, options, positionalArgs))
 		}
 
 		if !ninja.EnsureBuildDirExists() {
-			os.Exit(1)
+			osExit(1)
 		}
 
 		if !ninja.OpenBuildLog(false /*=recompactOnly*/) || !ninja.OpenDepsLog(false /*=recompactOnly*/) {
-			os.Exit(1)
+			osExit(1)
 		}
 
 		if options.Tool != nil && options.Tool.When == runAfterLogs {
-			os.Exit(options.Tool.ToolFunc(ninja, options, positionalArgs))
+			osExit(options.Tool.ToolFunc(ninja, options, positionalArgs))
 		}
 
 		// Attempt to rebuild the manifest before building anything else
@@ -1673,13 +1686,13 @@ func main() {
 			// In dry_run mode the regeneration will succeed without changing the
 			// manifest forever. Better to return immediately.
 			if config.DryRun {
-				os.Exit(0)
+				osExit(0)
 			}
 			// Start the build over with the new manifest.
 			continue
 		} else if err != nil {
 			status.Error("rebuilding '%s': %s", options.InputFile, err)
-			os.Exit(1)
+			osExit(1)
 		}
 
 		ninja.ParsePreviousElapsedTimes()
@@ -1688,10 +1701,9 @@ func main() {
 		if metrics.DefaultMetrics != nil {
 			ninja.DumpMetrics()
 		}
-		status.FinalizeBuild(int(result))
-		os.Exit(int(result))
+		osExit(int(result))
 	}
 
 	status.Error("manifest '%s' still dirty after %d tries, perhaps system time is not set", options.InputFile, cycleLimit)
-	os.Exit(1)
+	osExit(1)
 }

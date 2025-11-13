@@ -38,10 +38,19 @@ type Status interface {
 	BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64)
 	BuildEdgeFinished(edge *graph.Edge, startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string)
 
+	// InitializeTool is called by ninja.go to report the program command
+	// line before work begins.
+	InitializeTool(toolName string, args []string)
+
+	// BuildStarted is called when build.go starts running the build process.
 	BuildStarted()
+
+	// BuildFinished is called when build.go completes running the build process.
 	BuildFinished()
 
-	FinalizeBuild(ninjaExitCode int)
+	// FinalizeTool is called by ninja.go to report the exit code before
+	// the program completely exits.
+	FinalizeTool(ninjaExitCode int)
 
 	SetExplanations(explanations *explanations.Explanations)
 
@@ -160,17 +169,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.bes = publisher
 
 		sp.bes.Start(sp.ctx)
-
 		sp.printStreamURL()
-
-		if err := sp.bes.Publish(startedEvent(os.Args, sp.invocationID, time.Now())); err != nil {
-			util.Warningf("Failed to publish started event: %s", err)
-		}
-
-		if err := sp.bes.Publish(structuredCommandLineEvent(os.Args)); err != nil {
-			util.Warningf("Failed to publish structured command line: %s", err)
-		}
-
 	}
 	return sp
 }
@@ -431,15 +430,31 @@ func (p *StatusPrinter) BuildFinished() {
 	p.printer.PrintOnNewline("")
 }
 
-func (p *StatusPrinter) FinalizeBuild(ninjaExitCode int) {
-	if p.bes != nil {
-		if err := p.bes.Publish(finishedEvent(ninjaExitCode)); err != nil {
-			util.Warningf("Failed to publish finished event: %s", err)
-		}
+func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
+	if p.bes == nil {
+		return
+	}
+	if err := p.bes.Publish(startedEvent(toolName, os.Args, p.invocationID, time.Now())); err != nil {
+		util.Warningf("Failed to publish started event: %s", err)
+	}
 
-		if err := p.bes.Finish(); err != nil {
-			util.Warningf("Failed to finish publishing events: %s", err)
-		}
+	if err := p.bes.Publish(structuredCommandLineEvent(args)); err != nil {
+		util.Warningf("Failed to publish structured command line: %s", err)
+	}
+
+}
+
+func (p *StatusPrinter) FinalizeTool(ninjaExitCode int) {
+	if p.bes == nil {
+		return
+	}
+
+	if err := p.bes.Publish(finishedEvent(ninjaExitCode)); err != nil {
+		util.Warningf("Failed to publish finished event: %s", err)
+	}
+
+	if err := p.bes.Finish(); err != nil {
+		util.Warningf("Failed to finish publishing events: %s", err)
 	}
 	p.printStreamURL()
 }
@@ -607,7 +622,7 @@ func (p *StatusPrinter) Error(format string, args ...interface{}) {
 }
 
 // / Begin annoying bazel build event formatting helper code.
-func startedEvent(cmdArgs []string, invocationID string, startTime time.Time) *bespb.BuildEvent {
+func startedEvent(toolName string, cmdArgs []string, invocationID string, startTime time.Time) *bespb.BuildEvent {
 	return &bespb.BuildEvent{
 		Id: &bespb.BuildEventId{
 			Id: &bespb.BuildEventId_Started{},
@@ -627,7 +642,7 @@ func startedEvent(cmdArgs []string, invocationID string, startTime time.Time) *b
 			Started: &bespb.BuildStarted{
 				Uuid:               invocationID,
 				StartTime:          timestamppb.New(startTime),
-				Command:            strings.Join(cmdArgs[:min(2, len(cmdArgs))], " "),
+				Command:            toolName,
 				OptionsDescription: strings.Join(cmdArgs, " "),
 			},
 		},
@@ -635,12 +650,21 @@ func startedEvent(cmdArgs []string, invocationID string, startTime time.Time) *b
 }
 
 func structuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
+	executableName := os.Args[0]
 	sections := []*clpb.CommandLineSection{
 		{
 			SectionLabel: "command",
 			SectionType: &clpb.CommandLineSection_ChunkList{
 				ChunkList: &clpb.ChunkList{
-					Chunk: []string{cmdArgs[0]},
+					Chunk: []string{executableName},
+				},
+			},
+		},
+		{
+			SectionLabel: "executable",
+			SectionType: &clpb.CommandLineSection_ChunkList{
+				ChunkList: &clpb.ChunkList{
+					Chunk: []string{executableName},
 				},
 			},
 		},
@@ -651,7 +675,7 @@ func structuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
 			SectionLabel: "arguments",
 			SectionType: &clpb.CommandLineSection_ChunkList{
 				ChunkList: &clpb.ChunkList{
-					Chunk: cmdArgs[1:],
+					Chunk: cmdArgs,
 				},
 			},
 		})
