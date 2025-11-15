@@ -33,13 +33,25 @@ type LinePrinter struct {
 	outputBuffer  string
 }
 
+func SmartTerminal() bool {
+	return isatty.IsTerminal(os.Stdout.Fd())
+}
+
+func SupportsColor() bool {
+	return supportscolor.Stdout().SupportsColor
+}
+
 func New() *LinePrinter {
+	return NewCustom(os.Stdout, isatty.IsTerminal(os.Stdout.Fd()), supportscolor.Stdout().SupportsColor)
+}
+
+func NewCustom(out io.Writer, smartTerminal, supportsColor bool) *LinePrinter {
 	return &LinePrinter{
-		out:           os.Stdout,
+		out:           out,
 		haveBlankLine: true,
 		consoleLocked: false,
-		smartTerminal: isatty.IsTerminal(os.Stdout.Fd()),
-		supportsColor: supportscolor.Stdout().SupportsColor,
+		smartTerminal: smartTerminal,
+		supportsColor: supportsColor,
 	}
 }
 

@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
@@ -141,12 +143,12 @@ type StatusPrinter struct {
 	bes          *build_event_publisher.Publisher
 	invocationID string
 	ctx          context.Context
+	cleanupIO    func()
 }
 
 func NewPrinter(config *build_config.Config) *StatusPrinter {
 	sp := &StatusPrinter{
 		config:               config,
-		printer:              line_printer.New(),
 		currentRate:          NewSlidingRateInfo(config.Parallelism),
 		progressStatusFormat: os.Getenv("NINJA_STATUS"),
 	}
@@ -169,10 +171,113 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.ctx = context.TODO()
 		sp.bes = publisher
 
+		// Check term support before monkey patching it.
+		smartTerm := line_printer.SmartTerminal()
+		supportsColor := line_printer.SupportsColor()
+
+		// Start the stream.
 		sp.bes.Start(sp.ctx)
+
+		// Hook stdout and stderr so everything gets sent there.
+		unhookStdout, err := sp.wrap(bepb.ConsoleOutputStream_STDOUT)
+		if err != nil {
+			util.Errorf("failed to hook stdout")
+			return sp
+		}
+		unhookStderr, err := sp.wrap(bepb.ConsoleOutputStream_STDERR)
+		if err != nil {
+			util.Errorf("failed to hook stderr")
+			return sp
+		}
+		sp.cleanupIO = func() {
+			unhookStdout()
+			unhookStderr()
+		}
+
+		// Make a new line writer with the original options but our hooked stdout.
+		sp.printer = line_printer.NewCustom(os.Stdout, smartTerm, supportsColor)
 		sp.printStreamURL()
+	} else {
+		sp.printer = line_printer.New() // leave stdout alone.
 	}
+
 	return sp
+}
+
+func (p *StatusPrinter) wrap(streamType bepb.ConsoleOutputStream) (func(), error) {
+	if p.bes == nil {
+		return func() {}, nil
+	}
+
+	// Save a pointer to the original file so we can restore
+	// it.
+	var originalIO *os.File
+	if streamType == bepb.ConsoleOutputStream_STDOUT {
+		originalIO = os.Stdout
+	} else if streamType == bepb.ConsoleOutputStream_STDERR {
+		originalIO = os.Stderr
+	} else {
+		return nil, fmt.Errorf("unknown stream type")
+	}
+
+	// Buffer the besWriter so we don't block stdio on
+	// sending each BES event.
+	besReader, besWriter := io.Pipe()
+	mw := io.MultiWriter(originalIO, besWriter)
+
+	// Create an os.Pipe (not io.Pipe) with which stdio
+	// can be replaced.
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+
+	wg := new(sync.WaitGroup)
+
+	wg.Add(1)
+	go func(wg *sync.WaitGroup) {
+		defer wg.Done()
+		io.Copy(mw, r)
+		besWriter.Close()
+	}(wg)
+
+	wg.Add(1)
+	go func(wg *sync.WaitGroup) {
+		defer wg.Done()
+		buf := make([]byte, 1024)
+		for {
+			n, err := besReader.Read(buf)
+			if n > 0 {
+				p.bes.Publish(consoleOutputEvent(string(buf[:n]), streamType))
+			}
+			if err != nil {
+				break
+			}
+		}
+	}(wg)
+
+	shutItDown := func() {
+		if streamType == bepb.ConsoleOutputStream_STDOUT {
+			os.Stdout = originalIO
+		} else if streamType == bepb.ConsoleOutputStream_STDERR {
+			os.Stderr = originalIO
+		} else {
+			panic("should not happen")
+		}
+
+		w.Close()
+		wg.Wait()
+	}
+
+	if streamType == bepb.ConsoleOutputStream_STDOUT {
+		os.Stdout = w
+	} else if streamType == bepb.ConsoleOutputStream_STDERR {
+		os.Stderr = w
+	} else {
+		panic("should not happen")
+	}
+
+	return shutItDown, nil
 }
 
 func (p *StatusPrinter) printStreamURL() {
@@ -381,10 +486,6 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 	p.runningEdges -= 1
 
 	if p.bes != nil {
-		p.logToBes(bepb.ConsoleOutputStream_STDOUT, edge.EvaluateCommand(false))
-	}
-
-	if p.bes != nil {
 		targetLabel := ""
 		if outputs := edge.Outputs(); len(outputs) > 0 {
 			targetLabel = outputs[0].Path()
@@ -480,6 +581,8 @@ func (p *StatusPrinter) FinalizeTool(ninjaExitCode int) {
 	if p.bes == nil {
 		return
 	}
+	p.printStreamURL()
+	p.cleanupIO()
 
 	if err := p.bes.Publish(finishedEvent(ninjaExitCode)); err != nil {
 		util.Warningf("Failed to publish finished event: %s", err)
@@ -488,7 +591,6 @@ func (p *StatusPrinter) FinalizeTool(ninjaExitCode int) {
 	if err := p.bes.Finish(); err != nil {
 		util.Warningf("Failed to finish publishing events: %s", err)
 	}
-	p.printStreamURL()
 }
 
 func (p *StatusPrinter) SetExplanations(exp *explanations.Explanations) {
@@ -610,47 +712,16 @@ func (p *StatusPrinter) FormatProgressStatus(format string, timeMillis int64) st
 	return out.String()
 }
 
-func (p *StatusPrinter) logToBes(streamType bepb.ConsoleOutputStream, format string, args ...interface{}) {
-	if p.bes == nil {
-		return
-	}
-	line := format
-	if len(args) > 0 {
-		line = fmt.Sprintf(format, args)
-	}
-	if len(line) == 0 {
-		return
-	}
-	if line[len(line)-1] != '\n' {
-		line = line + "\n"
-	}
-	if err := p.bes.Publish(consoleOutputEvent(line, streamType)); err != nil {
-		util.Infof("Failed to publish console output: %s", err)
-	}
-}
-
 func (p *StatusPrinter) Info(format string, args ...interface{}) {
 	util.Infof(format, args...)
-
-	if p.bes != nil {
-		p.logToBes(bepb.ConsoleOutputStream_STDOUT, format, args)
-	}
 }
 
 func (p *StatusPrinter) Warning(format string, args ...interface{}) {
 	util.Warningf(format, args...)
-
-	if p.bes != nil {
-		p.logToBes(bepb.ConsoleOutputStream_STDERR, format, args)
-	}
 }
 
 func (p *StatusPrinter) Error(format string, args ...interface{}) {
 	util.Errorf(format, args...)
-
-	if p.bes != nil {
-		p.logToBes(bepb.ConsoleOutputStream_STDERR, format, args)
-	}
 }
 
 // / Begin annoying bazel build event formatting helper code.
