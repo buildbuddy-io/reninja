@@ -225,6 +225,21 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64
 	if edge.UseConsole() {
 		p.printer.SetConsoleLocked(true)
 	}
+
+	if p.bes != nil {
+		edgeID := fmt.Sprintf("edge-%d", edge.ID())
+		mnemonic, _, _ := strings.Cut(edge.EvaluateCommand(false), " ")
+		if betterMnemonic, _, ok := strings.Cut(edge.Rule().Name(), "__"); ok {
+			mnemonic = betterMnemonic
+		}
+		targetLabel := ""
+		if outputs := edge.Outputs(); len(outputs) > 0 {
+			targetLabel = outputs[0].Path()
+		}
+		if err := p.bes.Publish(targetConfiguredEvent(targetLabel, mnemonic, edgeID)); err != nil {
+			util.Warningf("Failed to publish build metadata: %s", err)
+		}
+	}
 }
 
 func (p *StatusPrinter) RecalculateProgressPrediction() {
@@ -367,6 +382,16 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 
 	if p.bes != nil {
 		p.logToBes(bepb.ConsoleOutputStream_STDOUT, edge.EvaluateCommand(false))
+	}
+
+	if p.bes != nil {
+		targetLabel := ""
+		if outputs := edge.Outputs(); len(outputs) > 0 {
+			targetLabel = outputs[0].Path()
+		}
+		if err := p.bes.Publish(targetCompletedEvent(targetLabel, exitCode)); err != nil {
+			util.Warningf("Failed to publish build metadata: %s", err)
+		}
 	}
 
 	// Print the command that is spewing before printing its output.
@@ -777,6 +802,40 @@ func configurationEvent() *bespb.BuildEvent {
 		},
 	}
 
+}
+
+func targetConfiguredEvent(targetLabel, targetKind, configID string) *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_TargetConfigured{
+				TargetConfigured: &bespb.BuildEventId_TargetConfiguredId{
+					Label: targetLabel,
+				},
+			}},
+		Payload: &bespb.BuildEvent_Configured{Configured: &bespb.TargetConfigured{
+			TargetKind: targetKind,
+		}},
+	}
+}
+
+func targetCompletedEvent(targetLabel string, exitCode exit_status.ExitStatusType) *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{Id: &bespb.BuildEventId_TargetCompleted{
+			TargetCompleted: &bespb.BuildEventId_TargetCompletedId{
+				Label: targetLabel,
+			},
+		}},
+		Payload: &bespb.BuildEvent_Completed{Completed: &bespb.TargetComplete{
+			Success: exitCode == exit_status.ExitSuccess,
+			//                                OutputGroup: []*bespb.OutputGroup{
+			//                                        {
+			//                                                FileSets: []*bespb.BuildEventId_NamedSetOfFilesId{
+			//                                                        {Id: namedSetID},
+			//                                                },
+			//                                        },
+			//                                },
+		}},
+	}
 }
 
 func buildMetricsEvent(actionsCreated, actionsExecuted, cpuTimeMillis, wallTimeMillis int64) *bespb.BuildEvent {
