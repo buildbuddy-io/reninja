@@ -7,7 +7,7 @@ set -euo pipefail
 if [ ! -d "google" ]; then
     git clone https://github.com/googleapis/googleapis.git
     cp -r googleapis/google ./
-]; fi
+fi
 
 rm -rf genproto
 mkdir -p proto-out

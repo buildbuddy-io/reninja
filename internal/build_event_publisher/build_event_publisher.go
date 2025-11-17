@@ -87,7 +87,7 @@ func (p *Publisher) Start(ctx context.Context) {
 func (p *Publisher) run(ctx context.Context) error {
 	conn, err := grpc_client.DialSimple(ctx, p.besBackend)
 	if err != nil {
-		return statuserr.WrapError(err, "error dialing bes_backend")
+		return statuserr.WrapError(err, "error dialing BES backend")
 	}
 	defer conn.Close()
 	besClient := pepb.NewPublishBuildEventClient(conn)
@@ -96,7 +96,7 @@ func (p *Publisher) run(ctx context.Context) error {
 	}
 	stream, err := besClient.PublishBuildToolEventStream(ctx)
 	if err != nil {
-		return statuserr.WrapError(err, "error dialing bes_backend")
+		return statuserr.WrapError(err, "error dialing BES backend")
 	}
 
 	doneReceiving := make(chan error, 1)

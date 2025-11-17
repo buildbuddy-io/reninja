@@ -1,10 +1,12 @@
 package status
 
 import (
+	"compress/gzip"
 	"context"
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -13,8 +15,11 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_event_publisher"
+	"github.com/buildbuddy-io/gin/internal/digest"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/explanations"
+	"github.com/buildbuddy-io/gin/internal/filetransfer"
+	"github.com/buildbuddy-io/gin/internal/flamegraph"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/line_printer"
 	"github.com/buildbuddy-io/gin/internal/remote_headers"
@@ -29,9 +34,11 @@ import (
 )
 
 var (
-	besBackend   = flag.String("bes_backend", "", "BES backend target, like remote.buildbuddy.io")
-	resultsURL   = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
-	invocationID = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
+	besBackend         = flag.String("bes_backend", "", "BES backend target, like remote.buildbuddy.io")
+	remoteCache        = flag.String("remote_cache", "", "Remote cache target, like remote.buildbuddy.io")
+	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
+	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
+	remoteInstanceName = flag.String("remote_instance_name", "", "Generally should be left unset.")
 )
 
 type Status interface {
@@ -144,6 +151,9 @@ type StatusPrinter struct {
 	invocationID string
 	ctx          context.Context
 	cleanupIO    func()
+	flamegraph   *flamegraph.Flamegraph
+
+	uploader *filetransfer.Uploader
 }
 
 func NewPrinter(config *build_config.Config) *StatusPrinter {
@@ -181,12 +191,12 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		// Hook stdout and stderr so everything gets sent there.
 		unhookStdout, err := sp.wrap(bepb.ConsoleOutputStream_STDOUT)
 		if err != nil {
-			util.Errorf("failed to hook stdout")
+			util.Errorf("failed to hook stdout: %s", err)
 			return sp
 		}
 		unhookStderr, err := sp.wrap(bepb.ConsoleOutputStream_STDERR)
 		if err != nil {
-			util.Errorf("failed to hook stderr")
+			util.Errorf("failed to hook stderr: %s", err)
 			return sp
 		}
 		sp.cleanupIO = func() {
@@ -199,6 +209,19 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.printStreamURL()
 	} else {
 		sp.printer = line_printer.New() // leave stdout alone.
+	}
+
+	if *remoteCache != "" {
+		// TODO(tylerw): move once caching is supported
+		var err error
+		sp.uploader, err = filetransfer.NewUploader(*remoteCache)
+		if err != nil {
+			util.Errorf("failed to initialize uploader: %s", err)
+		}
+	}
+
+	if sp.bes != nil && sp.uploader != nil {
+		sp.flamegraph = flamegraph.New()
 	}
 
 	return sp
@@ -493,6 +516,10 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 		if err := p.bes.Publish(targetCompletedEvent(targetLabel, exitCode)); err != nil {
 			util.Warningf("Failed to publish build metadata: %s", err)
 		}
+
+		if p.flamegraph != nil {
+			p.flamegraph.RecordEdge(edge, startTimeMillis, endTimeMillis)
+		}
 	}
 
 	// Print the command that is spewing before printing its output.
@@ -577,12 +604,49 @@ func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
 
 }
 
+func (p *StatusPrinter) writeFlamegraphEvent() error {
+	if p.flamegraph.NumEvents() == 0 {
+		return nil
+	}
+	tmpFile, err := os.CreateTemp("", "command-*.profile.gz")
+	if err != nil {
+		return err
+	}
+
+	w := gzip.NewWriter(tmpFile)
+	if err := p.flamegraph.Write(w); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	fmt.Printf("tmpFile: %s\n", tmpFile.Name())
+	commandProfileGz, err := p.uploader.UploadFile(context.TODO(), *remoteInstanceName, tmpFile.Name())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("commandProfileGz: %s\n", commandProfileGz)
+	if err := p.bes.Publish(buildToolLogsEvent(commandProfileGz)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (p *StatusPrinter) FinalizeTool(ninjaExitCode int) {
 	if p.bes == nil {
 		return
 	}
 	p.printStreamURL()
 	p.cleanupIO()
+
+	if p.flamegraph != nil {
+		if err := p.writeFlamegraphEvent(); err != nil {
+			util.Warningf("Failed to write flamegraph: %s", err)
+		}
+	}
 
 	if err := p.bes.Publish(finishedEvent(ninjaExitCode)); err != nil {
 		util.Warningf("Failed to publish finished event: %s", err)
@@ -930,6 +994,33 @@ func buildMetricsEvent(actionsCreated, actionsExecuted, cpuTimeMillis, wallTimeM
 	}
 }
 
+func buildToolLogsEvent(commandProfileGz *digest.CASResourceName) *bespb.BuildEvent {
+	bytestreamURIPrefix := "bytestream://"
+
+	backendURL, err := url.Parse(*remoteCache)
+	if err == nil {
+		bytestreamURIPrefix += backendURL.Host
+	}
+
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_BuildToolLogs{},
+		},
+		Payload: &bespb.BuildEvent_BuildToolLogs{
+			BuildToolLogs: &bespb.BuildToolLogs{
+				Log: []*bespb.File{
+					{
+						Name: "command.profile.gz",
+						File: &bespb.File_Uri{
+							Uri: fmt.Sprintf("%s%s", bytestreamURIPrefix, commandProfileGz.DownloadString()),
+						},
+					},
+				},
+			},
+		},
+	}
+
+}
 func finishedEvent(exitCode int) *bespb.BuildEvent {
 	var exitCodeName string
 
@@ -942,7 +1033,6 @@ func finishedEvent(exitCode int) *bespb.BuildEvent {
 	case exit_status.ExitFailure:
 		exitCodeName = "FAILED"
 	}
-
 	return &bespb.BuildEvent{
 		Id: &bespb.BuildEventId{
 			Id: &bespb.BuildEventId_BuildFinished{},
