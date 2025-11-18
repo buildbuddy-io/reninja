@@ -17,6 +17,7 @@ import (
 const (
 	PhaseComplete = "X"
 	PhaseCounter  = "C"
+	PhaseMetadata = "M"
 )
 
 // Profile represents a trace profile, including all trace events.
@@ -44,7 +45,8 @@ type Target struct {
 }
 
 type Flamegraph struct {
-	targets map[string]*Target
+	targets    map[string]*Target
+	wroteFirst bool
 }
 
 func New() *Flamegraph {
@@ -71,19 +73,41 @@ type ThreadTracker struct {
 	workers []int64
 }
 
-func (t *ThreadTracker) alloc(target *Target) int {
+func (t *ThreadTracker) alloc(target *Target) (int, bool) {
 	for worker := range len(t.workers) {
 		if t.workers[worker] >= target.EndTimeMillis {
 			t.workers[worker] = target.StartTimeMillis
-			return worker
+			return worker, false
 		}
 	}
 	t.workers = append(t.workers, target.StartTimeMillis)
-	return len(t.workers) - 1
+	return len(t.workers) - 1, true
 }
 
 func (g *Flamegraph) NumEvents() int {
 	return len(g.targets)
+}
+
+func (g *Flamegraph) writeEvent(w io.Writer, e *Event) error {
+	delim := ",\n"
+	if !g.wroteFirst {
+		delim = "\n"
+		g.wroteFirst = true
+	}
+	if _, err := io.WriteString(w, delim); err != nil {
+		return fmt.Errorf("write event delimiter: %w", err)
+	}
+
+	b, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("marshal event: %w", err)
+	}
+
+	if _, err := w.Write(b); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+
+	return nil
 }
 
 func (g *Flamegraph) Write(w io.Writer) error {
@@ -98,15 +122,35 @@ func (g *Flamegraph) Write(w io.Writer) error {
 		return int(b.EndTimeMillis - a.EndTimeMillis)
 	})
 
-	threadTracker := &ThreadTracker{make([]int64, 0)}
-
 	if _, err := io.WriteString(w, `{"traceEvents":[`); err != nil {
 		return statuserr.WrapError(err, "write response")
 	}
-
-	wroteFirst := false
+	threadTracker := &ThreadTracker{make([]int64, 0)}
 	for _, target := range allTargets {
-		tid := threadTracker.alloc(target)
+		tid, newThread := threadTracker.alloc(target)
+		if newThread {
+			ev := &Event{
+				ProcessID: 1,
+				ThreadID:  int64(tid),
+				Name:      "thread_name",
+				Args:      map[string]any{"name": fmt.Sprintf("ninja-%d", tid)},
+				Phase:     PhaseMetadata,
+			}
+			if err := g.writeEvent(w, ev); err != nil {
+				return err
+			}
+			mev := &Event{
+				ProcessID: 1,
+				ThreadID:  int64(tid),
+				Name:      "thread_sort_index",
+				Args:      map[string]any{"sort_index": tid},
+				Phase:     PhaseMetadata,
+			}
+			if err := g.writeEvent(w, mev); err != nil {
+				return err
+			}
+		}
+
 		ev := &Event{
 			Category:  "targets",
 			Name:      fmt.Sprintf("%0s", strings.Join(target.Targets, ", ")),
@@ -118,22 +162,8 @@ func (g *Flamegraph) Write(w io.Writer) error {
 			Args:      map[string]any{},
 		}
 
-		delim := ",\n"
-		if !wroteFirst {
-			delim = "\n"
-			wroteFirst = true
-		}
-		if _, err := io.WriteString(w, delim); err != nil {
-			return fmt.Errorf("write event delimiter: %w", err)
-		}
-
-		b, err := json.Marshal(ev)
-		if err != nil {
-			return fmt.Errorf("marshal event: %w", err)
-		}
-
-		if _, err := w.Write(b); err != nil {
-			return fmt.Errorf("write: %w", err)
+		if err := g.writeEvent(w, ev); err != nil {
+			return err
 		}
 	}
 
