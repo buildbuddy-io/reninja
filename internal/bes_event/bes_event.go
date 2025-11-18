@@ -45,6 +45,17 @@ func StartedEvent(toolName string, cmdArgs []string, invocationID string, startT
 	}
 }
 
+func OptionsParsedEvent(cmdArgs []string) *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Payload: &bespb.BuildEvent_OptionsParsed{
+			OptionsParsed: &bespb.OptionsParsed{
+				CmdLine:         os.Args[1:],
+				ExplicitCmdLine: os.Args[1:],
+			},
+		},
+	}
+}
+
 func StructuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
 	executableName := os.Args[0]
 	sections := []*clpb.CommandLineSection{
@@ -66,7 +77,7 @@ func StructuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
 		},
 	}
 
-	if len(cmdArgs) > 1 {
+	if len(cmdArgs) > 0 {
 		sections = append(sections, &clpb.CommandLineSection{
 			SectionLabel: "arguments",
 			SectionType: &clpb.CommandLineSection_ChunkList{

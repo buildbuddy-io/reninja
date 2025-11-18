@@ -560,17 +560,6 @@ func (p *StatusPrinter) BuildStarted() {
 	p.runningEdges = 0
 
 	if p.bes != nil {
-		if err := p.bes.Publish(bes_event.BuildMetadataEvent()); err != nil {
-			util.Warningf("Failed to publish build metadata: %s", err)
-		}
-
-		if err := p.bes.Publish(bes_event.WorkspaceStatusEvent()); err != nil {
-			util.Warningf("Failed to publish workspace status: %s", err)
-		}
-
-		if err := p.bes.Publish(bes_event.ConfigurationEvent()); err != nil {
-			util.Warningf("Failed to publish configuration: %s", err)
-		}
 	}
 }
 
@@ -593,8 +582,24 @@ func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
 		util.Warningf("Failed to publish started event: %s", err)
 	}
 
+	if err := p.bes.Publish(bes_event.OptionsParsedEvent(args)); err != nil {
+		util.Warningf("Failed to publish structured command line: %s", err)
+	}
+
 	if err := p.bes.Publish(bes_event.StructuredCommandLineEvent(args)); err != nil {
 		util.Warningf("Failed to publish structured command line: %s", err)
+	}
+
+	if err := p.bes.Publish(bes_event.BuildMetadataEvent()); err != nil {
+		util.Warningf("Failed to publish build metadata: %s", err)
+	}
+
+	if err := p.bes.Publish(bes_event.WorkspaceStatusEvent()); err != nil {
+		util.Warningf("Failed to publish workspace status: %s", err)
+	}
+
+	if err := p.bes.Publish(bes_event.ConfigurationEvent()); err != nil {
+		util.Warningf("Failed to publish configuration: %s", err)
 	}
 
 }
