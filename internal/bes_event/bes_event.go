@@ -107,16 +107,15 @@ func StructuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
 	}
 }
 
-func BuildMetadataEvent() *bespb.BuildEvent {
+func BuildMetadataEvent(kvs map[string]string) *bespb.BuildEvent {
+	kvs["ROLE"] = "NINJA"
 	return &bespb.BuildEvent{
 		Id: &bespb.BuildEventId{
 			Id: &bespb.BuildEventId_BuildMetadata{},
 		},
 		Payload: &bespb.BuildEvent_BuildMetadata{
 			BuildMetadata: &bespb.BuildMetadata{
-				Metadata: map[string]string{
-					"ROLE": "NINJA",
-				},
+				Metadata: kvs,
 			},
 		},
 	}

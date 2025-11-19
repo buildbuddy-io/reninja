@@ -15,6 +15,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/bes_event"
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_event_publisher"
+	"github.com/buildbuddy-io/gin/internal/build_metadata"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/explanations"
 	"github.com/buildbuddy-io/gin/internal/filetransfer"
@@ -590,7 +591,7 @@ func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
 		util.Warningf("Failed to publish structured command line: %s", err)
 	}
 
-	if err := p.bes.Publish(bes_event.BuildMetadataEvent()); err != nil {
+	if err := p.bes.Publish(bes_event.BuildMetadataEvent(build_metadata.GetMetadata())); err != nil {
 		util.Warningf("Failed to publish build metadata: %s", err)
 	}
 
