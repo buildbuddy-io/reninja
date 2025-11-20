@@ -3,7 +3,6 @@ package status
 import (
 	"compress/gzip"
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"net/url"
@@ -22,19 +21,12 @@ import (
 	"github.com/buildbuddy-io/gin/internal/flamegraph"
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/line_printer"
+	"github.com/buildbuddy-io/gin/internal/remote_flags"
 	"github.com/buildbuddy-io/gin/internal/remote_headers"
 	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/google/uuid"
 
 	bepb "github.com/buildbuddy-io/gin/genproto/build_events"
-)
-
-var (
-	besBackend         = flag.String("bes_backend", "", "BES backend target, like remote.buildbuddy.io")
-	remoteCache        = flag.String("remote_cache", "", "Remote cache target, like remote.buildbuddy.io")
-	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
-	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
-	remoteInstanceName = flag.String("remote_instance_name", "", "Generally should be left unset.")
 )
 
 type Status interface {
@@ -162,14 +154,14 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.progressStatusFormat = "[%f/%t] "
 	}
 
-	if *besBackend != "" {
-		sp.invocationID = *invocationID
+	if remote_flags.BESBackend() != "" {
+		sp.invocationID = remote_flags.InvocationID()
 		if sp.invocationID == "" {
 			sp.invocationID = uuid.New().String()
 		}
 
 		extraHeaders := remote_headers.GetPairs()
-		publisher, err := build_event_publisher.New(*besBackend, sp.invocationID, extraHeaders)
+		publisher, err := build_event_publisher.New(remote_flags.BESBackend(), sp.invocationID, extraHeaders)
 		if err != nil {
 			util.Errorf("failed to create publisher: %s", err)
 			return sp
@@ -207,15 +199,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.printer = line_printer.New() // leave stdout alone.
 	}
 
-	if *remoteCache != "" {
-		// TODO(tylerw): move once caching is supported
-		var err error
-		sp.uploader, err = filetransfer.NewUploader(*remoteCache)
-		if err != nil {
-			util.Errorf("failed to initialize uploader: %s", err)
-		}
-	}
-
+	sp.uploader = filetransfer.GetUploader()
 	if sp.bes != nil && sp.uploader != nil {
 		sp.flamegraph = flamegraph.New()
 	}
@@ -303,7 +287,7 @@ func (p *StatusPrinter) printStreamURL() {
 	if p.bes == nil {
 		return
 	}
-	invocationURL := fmt.Sprintf("%s/invocation/%s", *resultsURL, p.invocationID)
+	invocationURL := fmt.Sprintf("%s/invocation/%s", remote_flags.ResultsURL(), p.invocationID)
 	streamingLog := fmt.Sprintf(p.printer.Esc(32) + "INFO:" + p.printer.Esc() + fmt.Sprintf(" Streaming results to: %s", p.printer.Esc(4, 34)+invocationURL+p.printer.Esc()))
 
 	fmt.Fprintln(os.Stderr, streamingLog)
@@ -624,11 +608,11 @@ func (p *StatusPrinter) writeFlamegraphEvent() error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	commandProfileGz, err := p.uploader.UploadFile(context.TODO(), *remoteInstanceName, tmpFile.Name())
+	commandProfileGz, err := p.uploader.UploadFile(context.TODO(), remote_flags.RemoteInstanceName(), tmpFile.Name())
 	if err != nil {
 		return err
 	}
-	backendURL, err := url.Parse(*remoteCache)
+	backendURL, err := url.Parse(remote_flags.RemoteCache())
 	if err != nil {
 		return err
 	}
