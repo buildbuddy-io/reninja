@@ -288,8 +288,8 @@ func (p *StatusPrinter) printStreamURL() {
 		return
 	}
 	invocationURL := fmt.Sprintf("%s/invocation/%s", remote_flags.ResultsURL(), p.invocationID)
-	streamingLog := fmt.Sprintf(p.printer.Esc(32) + "INFO:" + p.printer.Esc() + fmt.Sprintf(" Streaming results to: %s", p.printer.Esc(4, 34)+invocationURL+p.printer.Esc()))
-
+	streamingTo := fmt.Sprintf("Streaming results to: %s", p.printer.Esc(4, 34)+invocationURL+p.printer.Esc())
+	streamingLog := p.printer.Esc(32) + "INFO: " + p.printer.Esc() + streamingTo
 	fmt.Fprintln(os.Stderr, streamingLog)
 }
 

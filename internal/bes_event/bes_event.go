@@ -56,42 +56,43 @@ func OptionsParsedEvent(cmdArgs []string) *bespb.BuildEvent {
 	}
 }
 
-func StructuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
-	executableName := os.Args[0]
-	sections := []*clpb.CommandLineSection{
-		{
-			SectionLabel: "command",
-			SectionType: &clpb.CommandLineSection_ChunkList{
-				ChunkList: &clpb.ChunkList{
-					Chunk: []string{executableName},
-				},
-			},
-		},
-		{
-			SectionLabel: "executable",
-			SectionType: &clpb.CommandLineSection_ChunkList{
-				ChunkList: &clpb.ChunkList{
-					Chunk: []string{executableName},
-				},
-			},
-		},
-	}
-
-	if len(cmdArgs) > 0 {
-		sections = append(sections, &clpb.CommandLineSection{
-			SectionLabel: "arguments",
-			SectionType: &clpb.CommandLineSection_ChunkList{
-				ChunkList: &clpb.ChunkList{
-					Chunk: cmdArgs,
-				},
-			},
+func getStructuredCommandLine() *clpb.CommandLine {
+	options := make([]*clpb.Option, 0, len(os.Args[1:]))
+	for _, arg := range os.Args[1:] {
+		// TODO: Handle other arg formats ("-name=value", "--name value",
+		// "--bool_switch", etc). Ignore these for now since we don't set
+		// them in practice.
+		if !strings.HasPrefix(arg, "--") || !strings.Contains(arg, "=") {
+			continue
+		}
+		nameValue := strings.SplitN(strings.TrimPrefix(arg, "--"), "=", 2)
+		options = append(options, &clpb.Option{
+			CombinedForm: arg,
+			OptionName:   nameValue[0],
+			OptionValue:  nameValue[1],
 		})
 	}
-
-	commandLine := &clpb.CommandLine{
+	return &clpb.CommandLine{
 		CommandLineLabel: "original",
-		Sections:         sections,
+		Sections: []*clpb.CommandLineSection{
+			{
+				SectionLabel: "executable",
+				SectionType: &clpb.CommandLineSection_ChunkList{ChunkList: &clpb.ChunkList{
+					Chunk: []string{os.Args[0]},
+				}},
+			},
+			{
+				SectionLabel: "command options",
+				SectionType: &clpb.CommandLineSection_OptionList{OptionList: &clpb.OptionList{
+					Option: options,
+				}},
+			},
+		},
 	}
+}
+
+func StructuredCommandLineEvent(cmdArgs []string) *bespb.BuildEvent {
+	commandLine := getStructuredCommandLine()
 
 	return &bespb.BuildEvent{
 		Id: &bespb.BuildEventId{

@@ -32,6 +32,9 @@ var (
 
 func initializeClients() {
 	once.Do(func() {
+		if remote_flags.RemoteCache() == "" {
+			return
+		}
 		conn, err := grpc_client.DialSimple(context.TODO(), remote_flags.RemoteCache())
 		if err != nil {
 			util.Errorf("error dialing remote cache: %s", err)

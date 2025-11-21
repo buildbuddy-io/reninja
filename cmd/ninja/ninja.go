@@ -32,6 +32,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/manifest_parser"
 	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/missing_deps"
+	"github.com/buildbuddy-io/gin/internal/ninjarc"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/status"
 	"github.com/buildbuddy-io/gin/internal/util"
@@ -53,6 +54,7 @@ var (
 	maxLoad         = flag.Float64("l", -1, "do not start new jobs if the load average is greater than N")
 	dryRun          = flag.Bool("n", false, "dry run (don't run commands but act like they succeeded)")
 	tool            = flag.String("t", "", "run a subtool (use '-t list' to list subtools)")
+	configFlag      = flag.String("config", "", "ninjarc configuration to apply")
 )
 
 func registerFlags() {
@@ -1604,6 +1606,28 @@ func main() {
 	// are first stripped, then passed in via the positionalArgs slice.
 	knownFlags, unknownFlags := StripUnknownFlags(flag.CommandLine, os.Args)
 	os.Args = knownFlags
+
+	rcRules, err := ninjarc.ParseRCFiles(options.WorkingDir, "~/.ninjarc")
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	flag.Parse()
+
+	toolName := "build" // 'build' is the default.
+	if *tool != "" {
+		toolName = *tool
+	}
+	for _, rule := range rcRules {
+		if rule.Phase != "common" && rule.Phase != toolName {
+			continue
+		}
+		if rule.Config != *configFlag {
+			continue
+		}
+		rule.ApplyToFlags()
+	}
+
 	flag.Parse()
 
 	ninjaCommand := os.Args[0]
@@ -1615,11 +1639,6 @@ func main() {
 	}
 
 	status := status.NewPrinter(config)
-
-	toolName := "build" // 'build' is the default.
-	if options.Tool != nil {
-		toolName = options.Tool.Name
-	}
 	status.InitializeTool(toolName, positionalArgs)
 
 	osExit := func(exitCode int) {
