@@ -2,6 +2,7 @@ package filetransfer
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,7 @@ import (
 )
 
 const (
-	digestFunction = repb.DigestFunction_BLAKE3
+	DigestFunction = repb.DigestFunction_BLAKE3
 )
 
 var (
@@ -42,17 +43,18 @@ func initializeClients() {
 		}
 		bsClient := bspb.NewByteStreamClient(conn)
 		casClient := repb.NewContentAddressableStorageClient(conn)
-		defaultUploader = &Uploader{bsClient, casClient}
-		defaultDownloader = &Downloader{bsClient, casClient}
+		acClient := repb.NewActionCacheClient(conn)
+		defaultUploader = &Uploader{bsClient, casClient, acClient}
+		defaultDownloader = &Downloader{bsClient, casClient, acClient}
 	})
 }
 
-func GetUploader() *Uploader {
+func DefaultUploader() *Uploader {
 	initializeClients()
 	return defaultUploader
 }
 
-func GetDownloader() *Downloader {
+func DefaultDownloader() *Downloader {
 	initializeClients()
 	return defaultDownloader
 }
@@ -60,19 +62,41 @@ func GetDownloader() *Downloader {
 type Uploader struct {
 	bsClient  bspb.ByteStreamClient
 	casClient repb.ContentAddressableStorageClient
+	acClient  repb.ActionCacheClient
 }
 
-func (u *Uploader) UploadFile(ctx context.Context, instanceName string, path string) (*digest.CASResourceName, error) {
+func appendHeadersToCtx(ctx context.Context) context.Context {
 	extraHeaders := remote_headers.GetPairs()
-	if len(extraHeaders) > 0 {
-		ctx = metadata.AppendToOutgoingContext(ctx, extraHeaders...)
+	if len(extraHeaders) == 0 {
+		return ctx
 	}
+	ctx = metadata.AppendToOutgoingContext(ctx, extraHeaders...)
+	return ctx
+}
 
-	d, err := cachetools.UploadFile(ctx, u.bsClient, instanceName, digestFunction, path)
+func (u *Uploader) UploadActionResult(ctx context.Context, r *digest.ACResourceName, ar *repb.ActionResult) error {
+	ctx = appendHeadersToCtx(ctx)
+	return cachetools.UploadActionResult(ctx, u.acClient, r, ar)
+}
+
+func (u *Uploader) UploadInMemoryBlob(ctx context.Context, in io.ReadSeeker) (*digest.CASResourceName, error) {
+	ctx = appendHeadersToCtx(ctx)
+	instanceName := remote_flags.RemoteInstanceName()
+	d, err := cachetools.UploadBlob(ctx, u.bsClient, instanceName, DigestFunction, in)
 	if err != nil {
 		return nil, err
 	}
-	return digest.NewCASResourceName(d, instanceName, digestFunction), nil
+	return digest.NewCASResourceName(d, instanceName, DigestFunction), nil
+}
+
+func (u *Uploader) UploadFile(ctx context.Context, path string) (*digest.CASResourceName, error) {
+	ctx = appendHeadersToCtx(ctx)
+	instanceName := remote_flags.RemoteInstanceName()
+	d, err := cachetools.UploadFile(ctx, u.bsClient, instanceName, DigestFunction, path)
+	if err != nil {
+		return nil, err
+	}
+	return digest.NewCASResourceName(d, instanceName, DigestFunction), nil
 }
 
 func cleanPaths(dirty []string) ([]string, error) {
@@ -100,7 +124,7 @@ func (u Uploader) UploadDirectoryToCAS(ctx context.Context, files []string) (*re
 		return nil, nil, err
 	}
 
-	ul := cachetools.NewBatchCASUploader(ctx, u.bsClient, u.casClient, remote_flags.RemoteInstanceName(), digestFunction)
+	ul := cachetools.NewBatchCASUploader(ctx, u.bsClient, u.casClient, remote_flags.RemoteInstanceName(), DigestFunction)
 
 	rootDirPath := "/"
 	pathsToUpload := map[string]struct{}{
@@ -204,4 +228,15 @@ func isExecutable(info os.FileInfo) bool {
 type Downloader struct {
 	bsClient  bspb.ByteStreamClient
 	casClient repb.ContentAddressableStorageClient
+	acClient  repb.ActionCacheClient
+}
+
+func (d *Downloader) GetActionResult(ctx context.Context, ar *digest.ACResourceName) (*repb.ActionResult, error) {
+	ctx = appendHeadersToCtx(ctx)
+	return cachetools.GetActionResult(ctx, d.acClient, ar)
+}
+
+func (d *Downloader) GetBlob(ctx context.Context, r *digest.CASResourceName, out io.Writer) error {
+	ctx = appendHeadersToCtx(ctx)
+	return cachetools.GetBlob(ctx, d.bsClient, r, out)
 }

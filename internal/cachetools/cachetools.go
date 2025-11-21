@@ -722,3 +722,7 @@ func maybeSetCompressor(rn *digest.CASResourceName) {
 		rn.SetCompressor(repb.Compressor_ZSTD)
 	}
 }
+
+func IsExecutable(info os.FileInfo) bool {
+	return info.Mode()&0100 != 0
+}

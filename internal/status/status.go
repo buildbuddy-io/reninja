@@ -154,7 +154,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.progressStatusFormat = "[%f/%t] "
 	}
 
-	if remote_flags.BESBackend() != "" {
+	if remote_flags.EnableBES() {
 		sp.invocationID = remote_flags.InvocationID()
 		if sp.invocationID == "" {
 			sp.invocationID = uuid.New().String()
@@ -199,8 +199,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.printer = line_printer.New() // leave stdout alone.
 	}
 
-	sp.uploader = filetransfer.GetUploader()
-	if sp.bes != nil && sp.uploader != nil {
+	if sp.bes != nil {
 		sp.flamegraph = flamegraph.New()
 	}
 
@@ -593,6 +592,10 @@ func (p *StatusPrinter) writeFlamegraphEvent() error {
 	if p.flamegraph.NumEvents() == 0 {
 		return nil
 	}
+	uploader := filetransfer.DefaultUploader()
+	if uploader == nil {
+		return nil
+	}
 	tmpFile, err := os.CreateTemp("", "command-*.profile.gz")
 	if err != nil {
 		return err
@@ -608,7 +611,8 @@ func (p *StatusPrinter) writeFlamegraphEvent() error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	commandProfileGz, err := p.uploader.UploadFile(context.TODO(), remote_flags.RemoteInstanceName(), tmpFile.Name())
+
+	commandProfileGz, err := uploader.UploadFile(context.TODO(), tmpFile.Name())
 	if err != nil {
 		return err
 	}

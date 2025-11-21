@@ -44,6 +44,7 @@ func DialSimple(ctx context.Context, target string) (*grpc.ClientConn, error) {
 			PermitWithoutStream: true,
 		}),
 	}
+	target = normalizeTarget(target)
 
 	u, err := url.Parse(target)
 	if err == nil {
@@ -64,7 +65,7 @@ func DialSimple(ctx context.Context, target string) (*grpc.ClientConn, error) {
 
 	conn, err := grpc.DialContext(ctx, target, dialOptions...)
 	if err != nil {
-		return nil, statuserr.WrapError(err, "error dialing bes_backend")
+		return nil, statuserr.WrapError(err, "error dialing")
 	}
 	return conn, err
 }
