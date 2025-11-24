@@ -135,12 +135,14 @@ func (s *Subprocess) Done() bool {
 }
 
 type Set struct {
+	mu       *sync.Mutex
 	running  []*Subprocess
 	finished []*Subprocess
 }
 
 func NewSet() *Set {
 	return &Set{
+		mu:       &sync.Mutex{},
 		running:  make([]*Subprocess, 0),
 		finished: make([]*Subprocess, 0),
 	}
@@ -151,19 +153,33 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
 	s.running = append(s.running, sub)
+	s.mu.Unlock()
 	return sub, nil
 }
 
 func (s *Set) Running() []*Subprocess {
-	return s.running
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	r := make([]*Subprocess, 0, len(s.running))
+	copy(r, s.running)
+	return r
 }
 
 func (s *Set) Finished() []*Subprocess {
-	return s.finished
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f := make([]*Subprocess, 0, len(s.finished))
+	copy(f, s.finished)
+	return f
 }
 
 func (s *Set) DoWork() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	nextRunning := s.running[:0]
 	for _, sub := range s.running {
 		if interrupted.Load() {
@@ -180,6 +196,8 @@ func (s *Set) DoWork() bool {
 }
 
 func (s *Set) NextFinished() *Subprocess {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(s.finished) == 0 {
 		return nil
 	}
