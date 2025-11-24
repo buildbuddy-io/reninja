@@ -3,11 +3,11 @@ package build
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"maps"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/remote_flags"
+	"github.com/buildbuddy-io/gin/internal/request_metadata"
 	"github.com/buildbuddy-io/gin/internal/subprocess"
 	"github.com/buildbuddy-io/gin/internal/util"
 
@@ -176,22 +177,27 @@ type CachingCommandRunner struct {
 	config        *build_config.Config
 	subprocs      *subprocess.Set
 	jobserver     jobserver.Client
-	cachedEdges   chan *Result
 	subprocToEdge map[*subprocess.Subprocess]*graph.Edge
+	cachedEdges   map[*graph.Edge]*Result
+	context       context.Context
+	cancel        context.CancelFunc
 	uploader      *filetransfer.Uploader
 	downloader    *filetransfer.Downloader
 }
 
 func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *CachingCommandRunner {
 	if filetransfer.DefaultUploader() == nil || filetransfer.DefaultDownloader() == nil {
-		log.Fatalf("--cache requires --remote_cache be set")
+		log.Fatalf("--cache requires --remote_cache to be set")
 	}
+	ctx, cancelFunc := context.WithCancel(context.TODO())
 	return &CachingCommandRunner{
 		config:        config,
 		subprocs:      subprocess.NewSet(),
 		jobserver:     jobserver,
-		cachedEdges:   make(chan *Result, 100),
 		subprocToEdge: make(map[*subprocess.Subprocess]*graph.Edge, 0),
+		cachedEdges:   make(map[*graph.Edge]*Result, 0),
+		cancel:        cancelFunc,
+		context:       ctx,
 		uploader:      filetransfer.DefaultUploader(),
 		downloader:    filetransfer.DefaultDownloader(),
 	}
@@ -210,12 +216,13 @@ func (r *CachingCommandRunner) GetActiveEdges() []*graph.Edge {
 }
 
 func (r *CachingCommandRunner) Abort() {
+	r.cancel()
 	r.ClearJobTokens()
 	r.subprocs.Clear()
 }
 
 func (r *CachingCommandRunner) CanRunMore() int {
-	subprocNumber := len(r.subprocs.Running()) + len(r.subprocs.Finished())
+	subprocNumber := len(r.subprocs.Running()) + len(r.subprocs.Finished()) + len(r.cachedEdges)
 
 	capacity := r.config.Parallelism - subprocNumber
 
@@ -253,40 +260,46 @@ func hashCommand(edge *graph.Edge) (*digest.ACResourceName, error) {
 	return digest.NewACResourceName(d, remote_flags.RemoteInstanceName(), filetransfer.DigestFunction), nil
 }
 
-func (r *CachingCommandRunner) fetchOutputsAndResult(actionResult *repb.ActionResult, edge *graph.Edge) (*Result, error) {
-	ctx := context.TODO()
+func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*Result, error) {
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := filetransfer.DigestFunction
 	for _, outputFile := range actionResult.GetOutputFiles() {
-		outputPath := outputFile.GetPath()
-		parentDir := filepath.Dir(outputPath)
-		if err := os.MkdirAll(parentDir, 0755); err != nil {
-			return nil, err
-		}
-		casDigest := digest.NewCASResourceName(outputFile.GetDigest(), instanceName, digestFunction)
-		f, err := os.Create(outputPath)
+		f, err := os.Create(outputFile.GetPath())
 		if err != nil {
 			return nil, err
 		}
 		defer f.Close()
-		if err := r.downloader.GetBlob(ctx, casDigest, f); err != nil {
-			return nil, err
+
+		// Is this output file inlined? if so, don't re-download it.
+		if len(outputFile.Contents) > 0 {
+			if _, err := f.Write(outputFile.Contents); err != nil {
+				return nil, err
+			}
+		} else {
+			casDigest := digest.NewCASResourceName(outputFile.GetDigest(), instanceName, digestFunction)
+			if err := r.downloader.GetBlob(ctx, casDigest, f); err != nil {
+				return nil, err
+			}
 		}
 		if outputFile.GetIsExecutable() {
-			if err := os.Chmod(outputPath, 0755); err != nil {
+			if err := os.Chmod(outputFile.GetPath(), 0755); err != nil {
 				return nil, err
 			}
 		}
 	}
 
 	var output string
-	if !digest.IsEmptyHash(actionResult.GetStdoutDigest(), digestFunction) {
-		buf := &bytes.Buffer{}
-		casDigest := digest.NewCASResourceName(actionResult.GetStdoutDigest(), instanceName, digestFunction)
-		if err := r.downloader.GetBlob(ctx, casDigest, buf); err != nil {
-			return nil, err
+	if len(actionResult.StdoutRaw) > 0 {
+		output = string(actionResult.StdoutRaw)
+	} else {
+		if !digest.IsEmptyHash(actionResult.GetStdoutDigest(), digestFunction) {
+			buf := &bytes.Buffer{}
+			casDigest := digest.NewCASResourceName(actionResult.GetStdoutDigest(), instanceName, digestFunction)
+			if err := r.downloader.GetBlob(ctx, casDigest, buf); err != nil {
+				return nil, err
+			}
+			output = buf.String()
 		}
-		output = buf.String()
 	}
 	return &Result{
 		Status: exit_status.ExitStatusType(actionResult.GetExitCode()),
@@ -296,20 +309,10 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(actionResult *repb.ActionRe
 }
 
 func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
-	// Try to get the cached command, if it exists, we can skip execution.
-	acrn, err := hashCommand(edge)
-	if err != nil {
-		return err
+	if res, err := r.downloadCompletedEdge(edge); err == nil {
+		r.cachedEdges[edge] = res
+		return nil
 	}
-	actionResult, err := r.downloader.GetActionResult(context.TODO(), acrn)
-	if err == nil && actionResult != nil {
-		res, err := r.fetchOutputsAndResult(actionResult, edge)
-		if err == nil {
-			r.cachedEdges <- res
-			return nil
-		}
-	}
-
 	command := edge.EvaluateCommand(false)
 	subproc, err := r.subprocs.Add(command, edge.UseConsole())
 	if err != nil {
@@ -319,22 +322,39 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	return nil
 }
 
+func (r *CachingCommandRunner) downloadCompletedEdge(edge *graph.Edge) (*Result, error) {
+	acrn, err := hashCommand(edge)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
+	actionResult, err := r.downloader.GetActionResult(ctx, acrn)
+	if err == nil && actionResult != nil {
+		return r.fetchOutputsAndResult(ctx, actionResult, edge)
+	}
+	return nil, fmt.Errorf("edge-not-found-in-cache")
+}
+
 func (r *CachingCommandRunner) uploadCompletedEdge(result *Result) error {
-	acrn, err := hashCommand(result.Edge)
+	edge := result.Edge
+
+	acrn, err := hashCommand(edge)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.TODO()
 	ar := &repb.ActionResult{
 		ExitCode: int32(result.Status),
 	}
 
+	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	for _, out := range result.Edge.Outputs() {
 		fi, err := os.Stat(out.Path())
 		if err != nil {
 			return err
 		}
+
 		d, err := r.uploader.UploadFile(ctx, out.Path())
 		ar.OutputFiles = append(ar.OutputFiles, &repb.OutputFile{
 			Path:         out.Path(),
@@ -342,7 +362,7 @@ func (r *CachingCommandRunner) uploadCompletedEdge(result *Result) error {
 			IsExecutable: cachetools.IsExecutable(fi),
 		})
 	}
-	stdout, err := r.uploader.UploadInMemoryBlob(context.TODO(), strings.NewReader(result.Output))
+	stdout, err := r.uploader.UploadInMemoryBlob(ctx, strings.NewReader(result.Output))
 	if err != nil {
 		return err
 	}
@@ -351,18 +371,16 @@ func (r *CachingCommandRunner) uploadCompletedEdge(result *Result) error {
 }
 
 func (r *CachingCommandRunner) WaitForCommand() *Result {
-	var subproc *subprocess.Subprocess
-
-	select {
-	case result := <-r.cachedEdges:
+	for edge, result := range r.cachedEdges {
+		delete(r.cachedEdges, edge)
 		return result
-	default:
-		break
 	}
 
+	var subproc *subprocess.Subprocess
 	for ; subproc == nil; subproc = r.subprocs.NextFinished() {
 		interrupted := r.subprocs.DoWork()
 		if interrupted {
+			r.cancel()
 			return nil
 		}
 	}
