@@ -457,6 +457,27 @@ func (e *Edge) Dump(prefix string) {
 	fmt.Printf("] %p\n", e)
 }
 
+func (e *Edge) ActionID() string {
+	// TODO(tylerw): make a digest?
+	return fmt.Sprintf("edge-%d", e.ID())
+}
+
+func (e *Edge) ActionMnemonic() string {
+	if betterMnemonic, _, ok := strings.Cut(e.Rule().Name(), "__"); ok {
+		return betterMnemonic
+	} else {
+		mnemonic, _, _ := strings.Cut(e.EvaluateCommand(false), " ")
+		return mnemonic
+	}
+}
+
+func (e *Edge) TargetLabel() string {
+	for _, output := range e.Outputs() {
+		return output.Path()
+	}
+	return ""
+}
+
 type escapeKind int
 
 const (

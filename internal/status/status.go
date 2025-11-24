@@ -23,6 +23,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/line_printer"
 	"github.com/buildbuddy-io/gin/internal/remote_flags"
 	"github.com/buildbuddy-io/gin/internal/remote_headers"
+	"github.com/buildbuddy-io/gin/internal/request_metadata"
 	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/google/uuid"
 
@@ -159,8 +160,11 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		if sp.invocationID == "" {
 			sp.invocationID = uuid.New().String()
 		}
-
+		request_metadata.SetInvocationID(sp.invocationID)
 		extraHeaders := remote_headers.GetPairs()
+		if key, val, ok := request_metadata.GetInvocationRequestMetadata(); ok {
+			extraHeaders = append(extraHeaders, key, val)
+		}
 		publisher, err := build_event_publisher.New(remote_flags.BESBackend(), sp.invocationID, extraHeaders)
 		if err != nil {
 			util.Errorf("failed to create publisher: %s", err)
@@ -334,16 +338,7 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64
 	}
 
 	if p.bes != nil {
-		edgeID := fmt.Sprintf("edge-%d", edge.ID())
-		mnemonic, _, _ := strings.Cut(edge.EvaluateCommand(false), " ")
-		if betterMnemonic, _, ok := strings.Cut(edge.Rule().Name(), "__"); ok {
-			mnemonic = betterMnemonic
-		}
-		targetLabel := ""
-		if outputs := edge.Outputs(); len(outputs) > 0 {
-			targetLabel = outputs[0].Path()
-		}
-		if err := p.bes.Publish(bes_event.TargetConfiguredEvent(targetLabel, mnemonic, edgeID)); err != nil {
+		if err := p.bes.Publish(bes_event.TargetConfiguredEvent(edge.TargetLabel(), edge.ActionMnemonic(), edge.ActionID())); err != nil {
 			util.Warningf("Failed to publish build metadata: %s", err)
 		}
 	}
@@ -612,7 +607,8 @@ func (p *StatusPrinter) writeFlamegraphEvent() error {
 		return err
 	}
 
-	commandProfileGz, err := uploader.UploadFile(context.TODO(), tmpFile.Name())
+	ctx := request_metadata.AttachCacheRequestMetadata(context.TODO(), "bes-upload", "", "")
+	commandProfileGz, err := uploader.UploadFile(ctx, tmpFile.Name())
 	if err != nil {
 		return err
 	}
