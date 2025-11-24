@@ -50,9 +50,9 @@ const (
 )
 
 var (
-	enableUploadCompression = flag.Bool("enable_upload_compression", true, "If true, enable compression of uploads to remote caches")
-	casRPCTimeout           = flag.Duration("cas_rpc_timeout", 1*time.Minute, "Maximum time a single batch RPC or a single ByteStream chunk read can take.")
-	acRPCTimeout            = flag.Duration("ac_rpc_timeout", 15*time.Second, "Maximum time a single Action Cache RPC can take.")
+	enableCompression = flag.Bool("enable_compression", true, "If true, enable compression of transfers to/from remote caches")
+	casRPCTimeout     = flag.Duration("cas_rpc_timeout", 1*time.Minute, "Maximum time a single batch RPC or a single ByteStream chunk read can take.")
+	acRPCTimeout      = flag.Duration("ac_rpc_timeout", 15*time.Second, "Maximum time a single Action Cache RPC can take.")
 
 	uploadBufPool = bytebufferpool.VariableSize(uploadBufSizeBytes)
 )
@@ -133,6 +133,7 @@ func getBlob(ctx context.Context, bsClient bspb.ByteStreamClient, r *digest.CASR
 }
 
 func GetBlob(ctx context.Context, bsClient bspb.ByteStreamClient, r *digest.CASResourceName, out io.Writer) error {
+	maybeSetCompressor(r)
 	// We can only retry if we can rewind the writer back to the beginning.
 	seeker, retryable := out.(io.Seeker)
 	if retryable {
@@ -370,14 +371,9 @@ func UploadFromReader(ctx context.Context, bsClient bspb.ByteStreamClient, r *di
 	}
 }
 
-func GetActionResult(ctx context.Context, acClient repb.ActionCacheClient, ar *digest.ACResourceName) (*repb.ActionResult, error) {
+func GetActionResultCustom(ctx context.Context, acClient repb.ActionCacheClient, req *repb.GetActionResultRequest) (*repb.ActionResult, error) {
 	if acClient == nil {
 		return nil, statuserr.FailedPreconditionError("ActionCacheClient not configured")
-	}
-	req := &repb.GetActionResultRequest{
-		ActionDigest:   ar.GetDigest(),
-		InstanceName:   ar.GetInstanceName(),
-		DigestFunction: ar.GetDigestFunction(),
 	}
 	return retry.Do(ctx, retryOptions("GetActionResult"), func(ctx context.Context) (*repb.ActionResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, *acRPCTimeout)
@@ -388,6 +384,18 @@ func GetActionResult(ctx context.Context, acClient repb.ActionCacheClient, ar *d
 		}
 		return rsp, err
 	})
+}
+
+func GetActionResult(ctx context.Context, acClient repb.ActionCacheClient, ar *digest.ACResourceName) (*repb.ActionResult, error) {
+	if acClient == nil {
+		return nil, statuserr.FailedPreconditionError("ActionCacheClient not configured")
+	}
+	req := &repb.GetActionResultRequest{
+		ActionDigest:   ar.GetDigest(),
+		InstanceName:   ar.GetInstanceName(),
+		DigestFunction: ar.GetDigestFunction(),
+	}
+	return GetActionResultCustom(ctx, acClient, req)
 }
 
 func UploadActionResult(ctx context.Context, acClient repb.ActionCacheClient, r *digest.ACResourceName, ar *repb.ActionResult) error {
@@ -549,7 +557,7 @@ func (ul *BatchCASUploader) Upload(d *repb.Digest, rsc io.ReadSeekCloser) error 
 	r := io.ReadCloser(rsc)
 
 	compressor := repb.Compressor_IDENTITY
-	if *enableUploadCompression && d.GetSizeBytes() >= minSizeBytesToCompress {
+	if *enableCompression && d.GetSizeBytes() >= minSizeBytesToCompress {
 		compressor = repb.Compressor_ZSTD
 	}
 
@@ -718,7 +726,7 @@ func NewBytesReadSeekCloser(b []byte) io.ReadSeekCloser {
 func (*bytesReadSeekCloser) Close() error { return nil }
 
 func maybeSetCompressor(rn *digest.CASResourceName) {
-	if *enableUploadCompression && rn.GetDigest().GetSizeBytes() >= minSizeBytesToCompress {
+	if *enableCompression && rn.GetDigest().GetSizeBytes() >= minSizeBytesToCompress {
 		rn.SetCompressor(repb.Compressor_ZSTD)
 	}
 }
