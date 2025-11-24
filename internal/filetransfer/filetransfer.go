@@ -238,5 +238,6 @@ func (d *Downloader) GetActionResult(ctx context.Context, ar *digest.ACResourceN
 
 func (d *Downloader) GetBlob(ctx context.Context, r *digest.CASResourceName, out io.Writer) error {
 	ctx = appendHeadersToCtx(ctx)
+	r.SetCompressor(repb.Compressor_ZSTD)
 	return cachetools.GetBlob(ctx, d.bsClient, r, out)
 }
