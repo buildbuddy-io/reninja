@@ -1541,7 +1541,9 @@ func StripUnknownFlags(flagSet *flag.FlagSet, args []string) ([]string, []string
 			i++ // skip the flag value
 
 			if arg == "-t" { // tool args, stop parsing here.
-				stripped = append(stripped, args[i+1:]...)
+				if len(args) > i {
+					stripped = append(stripped, args[i+1:]...)
+				}
 				break
 			}
 		}
