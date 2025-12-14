@@ -317,16 +317,3 @@ func (d *Downloader) GetBlob(ctx context.Context, r *digest.CASResourceName, out
 	ctx = appendHeadersToCtx(ctx)
 	return cachetools.GetBlob(ctx, d, r, out)
 }
-
-func (d *Downloader) FindMissing(ctx context.Context, rs []*repb.Digest) ([]*digest.CASResourceName, error) {
-	ctx = appendHeadersToCtx(ctx)
-	req := &repb.FindMissingBlobsRequest{
-		InstanceName:   remote_flags.RemoteInstanceName(),
-		DigestFunction: DigestFunction,
-		BlobDigests:    make([]*repb.Digest, len(rs)),
-	}
-	for i, r := range rs {
-		req.BlobDigests[i] = r
-	}
-	return cachetools.FindMissingBlobs(ctx, d, req)
-}
