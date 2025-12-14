@@ -163,7 +163,7 @@ func (s *Set) Running() []*Subprocess {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	r := make([]*Subprocess, 0, len(s.running))
+	r := make([]*Subprocess, len(s.running))
 	copy(r, s.running)
 	return r
 }
@@ -172,7 +172,7 @@ func (s *Set) Finished() []*Subprocess {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	f := make([]*Subprocess, 0, len(s.finished))
+	f := make([]*Subprocess, len(s.finished))
 	copy(f, s.finished)
 	return f
 }
