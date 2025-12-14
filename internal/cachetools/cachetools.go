@@ -132,6 +132,26 @@ func getBlob(ctx context.Context, bsClient bspb.ByteStreamClient, r *digest.CASR
 	return nil
 }
 
+func FindMissingBlobs(ctx context.Context, casClient repb.ContentAddressableStorageClient, req *repb.FindMissingBlobsRequest) ([]*digest.CASResourceName, error) {
+	return retry.Do(ctx, retryOptions("FindMissingBlobs"), func(ctx context.Context) ([]*digest.CASResourceName, error) {
+		ctx, cancel := context.WithTimeout(ctx, *casRPCTimeout)
+		defer cancel()
+		return findMissingBlobs(ctx, casClient, req)
+	})
+}
+
+func findMissingBlobs(ctx context.Context, casClient repb.ContentAddressableStorageClient, req *repb.FindMissingBlobsRequest) ([]*digest.CASResourceName, error) {
+	rsp, err := casClient.FindMissingBlobs(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	missing := make([]*digest.CASResourceName, len(rsp.GetMissingBlobDigests()))
+	for i, d := range rsp.GetMissingBlobDigests() {
+		missing[i] = digest.NewCASResourceName(d, req.GetInstanceName(), req.GetDigestFunction())
+	}
+	return missing, nil
+}
+
 func GetBlob(ctx context.Context, bsClient bspb.ByteStreamClient, r *digest.CASResourceName, out io.Writer) error {
 	maybeSetCompressor(r)
 	// We can only retry if we can rewind the writer back to the beginning.
@@ -356,6 +376,16 @@ func UploadFromReader(ctx context.Context, bsClient bspb.ByteStreamClient, r *di
 	seeker, retryable := in.(io.Seeker)
 	if retryable {
 		result, err := retry.Do(ctx, retryOptions("ByteStream.Write"), func(ctx context.Context) (uploadRetryResult, error) {
+			if casClient, ok := bsClient.(repb.ContentAddressableStorageClient); ok {
+				missing, err := findMissingBlobs(ctx, casClient, &repb.FindMissingBlobsRequest{
+					InstanceName:   r.GetInstanceName(),
+					DigestFunction: r.GetDigestFunction(),
+					BlobDigests:    []*repb.Digest{r.GetDigest()},
+				})
+				if err == nil && len(missing) == 0 {
+					return uploadRetryResult{digest: r.GetDigest(), uploadedBytes: 0}, nil
+				}
+			}
 			if _, err := seeker.Seek(0, io.SeekStart); err != nil {
 				return uploadRetryResult{digest: nil, uploadedBytes: 0}, retry.NonRetryableError(err)
 			}
@@ -510,9 +540,9 @@ func UploadBlobToCAS(ctx context.Context, bsClient bspb.ByteStreamClient, instan
 // BatchCASUploader uploads many files to CAS concurrently, batching small
 // uploads together and falling back to bytestream uploads for large files.
 type BatchCASUploader struct {
+	bspb.ByteStreamClient
+	repb.ContentAddressableStorageClient
 	ctx             context.Context
-	bsClient        bspb.ByteStreamClient
-	casClient       repb.ContentAddressableStorageClient
 	eg              *errgroup.Group
 	unsentBatchReq  *repb.BatchUpdateBlobsRequest
 	uploads         map[digest.Key]struct{}
@@ -527,15 +557,15 @@ type BatchCASUploader struct {
 func NewBatchCASUploader(ctx context.Context, bsClient bspb.ByteStreamClient, casClient repb.ContentAddressableStorageClient, instanceName string, digestFunction repb.DigestFunction_Value) *BatchCASUploader {
 	eg, ctx := errgroup.WithContext(ctx)
 	return &BatchCASUploader{
-		ctx:             ctx,
-		bsClient:        bsClient,
-		casClient:       casClient,
-		eg:              eg,
-		unsentBatchReq:  &repb.BatchUpdateBlobsRequest{InstanceName: instanceName, DigestFunction: digestFunction},
-		unsentBatchSize: 0,
-		instanceName:    instanceName,
-		digestFunction:  digestFunction,
-		uploads:         make(map[digest.Key]struct{}),
+		ByteStreamClient:                bsClient,
+		ContentAddressableStorageClient: casClient,
+		ctx:                             ctx,
+		eg:                              eg,
+		unsentBatchReq:                  &repb.BatchUpdateBlobsRequest{InstanceName: instanceName, DigestFunction: digestFunction},
+		unsentBatchSize:                 0,
+		instanceName:                    instanceName,
+		digestFunction:                  digestFunction,
+		uploads:                         make(map[digest.Key]struct{}),
 	}
 }
 
@@ -565,13 +595,13 @@ func (ul *BatchCASUploader) Upload(d *repb.Digest, rsc io.ReadSeekCloser) error 
 		resourceName := digest.NewCASResourceName(d, ul.instanceName, ul.digestFunction)
 		resourceName.SetCompressor(compressor)
 
-		byteStreamClient := ul.bsClient
+		byteStreamClient := ul.ByteStreamClient
 		if byteStreamClient == nil {
 			return statuserr.InvalidArgumentError("missing bytestream client")
 		}
 		ul.eg.Go(func() error {
 			defer r.Close()
-			_, _, err := UploadFromReader(ul.ctx, byteStreamClient, resourceName, r)
+			_, _, err := UploadFromReader(ul.ctx, ul, resourceName, r)
 			return err
 		})
 		return nil
@@ -633,7 +663,7 @@ func (ul *BatchCASUploader) UploadFile(path string) (*repb.Digest, error) {
 }
 
 func (ul *BatchCASUploader) flushCurrentBatch() error {
-	casClient := ul.casClient
+	casClient := ul.ContentAddressableStorageClient
 	if casClient == nil {
 		return statuserr.InvalidArgumentError("missing CAS client")
 	}
@@ -648,6 +678,30 @@ func (ul *BatchCASUploader) flushCurrentBatch() error {
 		rsp, err := retry.Do(ul.ctx, retryOptions("BatchUpdateBlobs"), func(ctx context.Context) (*repb.BatchUpdateBlobsResponse, error) {
 			ctx, cancel := context.WithTimeout(ctx, *casRPCTimeout)
 			defer cancel()
+
+			findMissingReq := &repb.FindMissingBlobsRequest{
+				InstanceName:   req.GetInstanceName(),
+				DigestFunction: req.GetDigestFunction(),
+				BlobDigests:    make([]*repb.Digest, len(req.GetRequests())),
+			}
+
+			for i, req := range req.GetRequests() {
+				findMissingReq.BlobDigests[i] = req.GetDigest()
+			}
+			missing, err := findMissingBlobs(ctx, ul, findMissingReq)
+			if err == nil {
+				if len(missing) == 0 {
+					return &repb.BatchUpdateBlobsResponse{}, nil
+				}
+				req.Requests = slices.DeleteFunc(req.Requests, func(br *repb.BatchUpdateBlobsRequest_Request) bool {
+					for _, rn := range missing {
+						if rn.GetDigest().GetHash() == br.GetDigest().GetHash() {
+							return false
+						}
+					}
+					return true
+				})
+			}
 			return casClient.BatchUpdateBlobs(ctx, req)
 		})
 		if err != nil {

@@ -1,0 +1,377 @@
+package build
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"log"
+	"maps"
+	"math"
+	"os"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/buildbuddy-io/gin/internal/build_config"
+	"github.com/buildbuddy-io/gin/internal/cachetools"
+	"github.com/buildbuddy-io/gin/internal/digest"
+	"github.com/buildbuddy-io/gin/internal/exit_status"
+	"github.com/buildbuddy-io/gin/internal/filetransfer"
+	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/jobserver"
+	"github.com/buildbuddy-io/gin/internal/remote_flags"
+	"github.com/buildbuddy-io/gin/internal/request_metadata"
+	"github.com/buildbuddy-io/gin/internal/subprocess"
+	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/google/shlex"
+	"golang.org/x/sync/errgroup"
+
+	repb "github.com/buildbuddy-io/gin/genproto/remote_execution"
+)
+
+type CachingCommandRunner struct {
+	config      *build_config.Config
+	jobserver   jobserver.Client
+	mu          *sync.Mutex
+	eg          *errgroup.Group
+	activeEdges map[*activeEdgeState]struct{}
+
+	context    context.Context
+	cancel     context.CancelFunc
+	uploader   *filetransfer.Uploader
+	downloader *filetransfer.Downloader
+}
+
+type activeEdgeState struct {
+	edge           *graph.Edge
+	subprocess     *subprocess.Subprocess
+	finishedResult chan *Result
+}
+
+func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *CachingCommandRunner {
+	if filetransfer.DefaultUploader() == nil || filetransfer.DefaultDownloader() == nil {
+		log.Fatalf("--cache requires --remote_cache to be set")
+	}
+	ctx, cancelFunc := context.WithCancel(context.TODO())
+	eg, _ := errgroup.WithContext(ctx)
+
+	return &CachingCommandRunner{
+		config:      config,
+		jobserver:   jobserver,
+		mu:          &sync.Mutex{},
+		eg:          eg,
+		activeEdges: make(map[*activeEdgeState]struct{}, 0),
+
+		cancel:     cancelFunc,
+		context:    ctx,
+		uploader:   filetransfer.DefaultUploader(),
+		downloader: filetransfer.DefaultDownloader(),
+	}
+}
+
+func (r *CachingCommandRunner) ClearJobTokens() {
+	if r.jobserver != nil {
+		for _, edge := range r.GetActiveEdges() {
+			r.jobserver.Release(edge.JobSlot())
+		}
+	}
+}
+
+func (r *CachingCommandRunner) GetActiveEdges() []*graph.Edge {
+	// returns number of inflight edges (running + uncollected)
+	active := make([]*graph.Edge, len(r.activeEdges))
+
+	i := 0
+	for edgeState := range r.activeEdges {
+		active[i] = edgeState.edge
+		i++
+	}
+	return active
+}
+
+func (r *CachingCommandRunner) Abort() {
+	r.cancel()
+	r.ClearJobTokens()
+}
+
+func (r *CachingCommandRunner) CanRunMore() int {
+	// returns number of running edges + number of uncollected edges.
+	subprocNumber := len(r.activeEdges)
+	capacity := r.config.Parallelism - subprocNumber
+
+	if r.jobserver != nil {
+		// When a jobserver token pool is used, make the
+		// capacity infinite, and let FindWork() limit jobs
+		// through token acquisitions instead.
+		capacity = math.MaxInt
+	}
+
+	if r.config.MaxLoadAverage > 0.0 {
+		loadCapacity := int(r.config.MaxLoadAverage - util.GetLoadAverage())
+		if loadCapacity < capacity {
+			capacity = loadCapacity
+		}
+	}
+
+	if capacity < 0 {
+		capacity = 0
+	}
+
+	if capacity == 0 && len(r.activeEdges) == 0 {
+		// Ensure that we make progress.
+		capacity = 1
+	}
+
+	return capacity
+}
+
+func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
+	command := edge.EvaluateCommand(false)
+	splitCommand, err := shlex.Split(command)
+	if err != nil {
+		return nil, err
+	}
+	cmdProto := &repb.Command{
+		Arguments: splitCommand,
+	}
+	for _, output := range edge.Outputs() {
+		cmdProto.OutputPaths = append(cmdProto.OutputPaths, output.Path())
+	}
+	// TODO(tylerw): maybe hash and include other stuff here.
+	return cmdProto, nil
+}
+
+func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*digest.CASResourceName, error) {
+	cmd, err := assembleCommand(edge)
+	if err != nil {
+		return nil, err
+	}
+	instanceName := remote_flags.RemoteInstanceName()
+	digestFunction := filetransfer.DigestFunction
+
+	files := make([]string, len(edge.Inputs()))
+	for i, input := range edge.Inputs() {
+		files[i] = input.Path()
+	}
+	sort.Strings(files)
+	rootDirResourceName, _, err := r.uploader.HashDirectoryTree(ctx, files)
+	commandDigest, err := digest.ComputeForMessage(cmd, digestFunction)
+	if err != nil {
+		return nil, err
+	}
+	action := &repb.Action{
+		CommandDigest:   commandDigest,
+		InputRootDigest: rootDirResourceName.GetDigest(),
+	}
+	d, err := digest.ComputeForMessage(action, digestFunction)
+	if err != nil {
+		return nil, err
+	}
+	return digest.NewCASResourceName(d, instanceName, digestFunction), nil
+}
+
+func (r *CachingCommandRunner) assembleAndUploadAction(ctx context.Context, edge *graph.Edge) (*digest.CASResourceName, error) {
+	cmd, err := assembleCommand(edge)
+	if err != nil {
+		return nil, err
+	}
+
+	digestToFile := make(map[*repb.Digest]string, len(edge.Inputs()))
+	for _, input := range edge.Inputs() {
+		d, err := digest.ComputeForFile(input.Path(), filetransfer.DigestFunction)
+		if err != nil {
+			return nil, err
+		}
+		digestToFile[d] = input.Path()
+	}
+
+	eg, gctx := errgroup.WithContext(ctx)
+	var rootDirResourceName *digest.CASResourceName
+	eg.Go(func() error {
+		rootDirResourceName, _, err = r.uploader.UploadDirectoryToCAS(gctx, slices.Sorted(maps.Values(digestToFile)))
+		return err
+	})
+	var commandResourceName *digest.CASResourceName
+	eg.Go(func() error {
+		commandResourceName, err = r.uploader.UploadProto(gctx, cmd)
+		return err
+	})
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	action := &repb.Action{
+		CommandDigest:   commandResourceName.GetDigest(),
+		InputRootDigest: rootDirResourceName.GetDigest(),
+	}
+	return r.uploader.UploadProto(ctx, action)
+}
+
+func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*Result, error) {
+	instanceName := remote_flags.RemoteInstanceName()
+	digestFunction := filetransfer.DigestFunction
+	eg, gctx := errgroup.WithContext(ctx)
+	for _, outputFile := range actionResult.GetOutputFiles() {
+		eg.Go(func() error {
+			f, err := os.Create(outputFile.GetPath())
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			casDigest := digest.NewCASResourceName(outputFile.GetDigest(), instanceName, digestFunction)
+			if err := r.downloader.GetBlob(gctx, casDigest, f); err != nil {
+				return err
+			}
+			if outputFile.GetIsExecutable() {
+				if err := os.Chmod(outputFile.GetPath(), 0755); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	var output string
+	if len(actionResult.StdoutRaw) > 0 {
+		output = string(actionResult.StdoutRaw)
+	} else {
+		if !digest.IsEmptyHash(actionResult.GetStdoutDigest(), digestFunction) {
+			eg.Go(func() error {
+				buf := &bytes.Buffer{}
+				casDigest := digest.NewCASResourceName(actionResult.GetStdoutDigest(), instanceName, digestFunction)
+				if err := r.downloader.GetBlob(gctx, casDigest, buf); err != nil {
+					return err
+				}
+				output = buf.String()
+				return nil
+			})
+		}
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	return &Result{
+		Status: exit_status.ExitStatusType(actionResult.GetExitCode()),
+		Output: output,
+		Edge:   edge,
+	}, nil
+}
+
+func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
+	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
+	r.eg.Go(func() error {
+		edgeState := &activeEdgeState{
+			edge:           edge,
+			finishedResult: make(chan *Result),
+		}
+		r.mu.Lock()
+		r.activeEdges[edgeState] = struct{}{}
+		r.mu.Unlock()
+
+		arn, err := r.assembleAndHashAction(ctx, edge)
+		if res, err := r.downloadCompletedEdge(ctx, arn, edge); err == nil {
+			edgeState.finishedResult <- res
+			return nil
+		}
+
+		command := edge.EvaluateCommand(false)
+		subproc, err := subprocess.NewSubprocess(command, edge.UseConsole())
+		if err != nil {
+			return err
+		}
+
+		exitCode := subproc.Finish()
+		output := subproc.GetOutput()
+
+		arn2, err := r.assembleAndUploadAction(ctx, edge)
+		if err != nil {
+			return err
+		}
+
+		if err := r.uploadCompletedEdge(arn2, edge, exitCode, output); err != nil {
+			util.Warningf("error uploading cache result: %s", err)
+		}
+
+		edgeState.finishedResult <- &Result{
+			Edge:   edge,
+			Status: exitCode,
+			Output: output,
+		}
+
+		return nil
+	})
+	return nil
+}
+
+func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, arn *digest.CASResourceName, edge *graph.Edge) (*Result, error) {
+	acrn := digest.NewACResourceName(arn.GetDigest(), arn.GetInstanceName(), arn.GetDigestFunction())
+
+	actionResult, err := r.downloader.DownloadActionResult(ctx, acrn)
+	if err == nil && actionResult != nil && actionResult.GetExitCode() == 0 {
+		return r.fetchOutputsAndResult(ctx, actionResult, edge)
+	}
+	return nil, fmt.Errorf("edge-not-found-in-cache")
+}
+
+func (r *CachingCommandRunner) uploadCompletedEdge(arn *digest.CASResourceName, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string) error {
+	// Skip uploading failed actions.
+	if exitCode != exit_status.ExitSuccess {
+		return nil
+	}
+	acrn := digest.NewACResourceName(arn.GetDigest(), arn.GetInstanceName(), arn.GetDigestFunction())
+	ar := &repb.ActionResult{
+		ExitCode: int32(exitCode),
+	}
+
+	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
+	digestToFile := make(map[*repb.Digest]string, len(edge.Outputs()))
+	for _, out := range edge.Outputs() {
+		d, err := digest.ComputeForFile(out.Path(), filetransfer.DigestFunction)
+		if err != nil {
+			return err
+		}
+		digestToFile[d] = out.Path()
+	}
+
+	for _, outPath := range slices.Sorted(maps.Values(digestToFile)) {
+		fi, err := os.Stat(outPath)
+		if err != nil {
+			return err
+		}
+
+		d, err := r.uploader.UploadFile(ctx, outPath)
+		ar.OutputFiles = append(ar.OutputFiles, &repb.OutputFile{
+			Path:         outPath,
+			Digest:       d.GetDigest(),
+			IsExecutable: cachetools.IsExecutable(fi),
+		})
+	}
+	stdout, err := r.uploader.UploadInMemoryBlob(ctx, strings.NewReader(output))
+	if err != nil {
+		return err
+	}
+	ar.StdoutDigest = stdout.GetDigest()
+	return r.uploader.UploadActionResult(ctx, acrn, ar)
+}
+
+func (r *CachingCommandRunner) WaitForCommand() *Result {
+	for {
+		r.mu.Lock()
+		edges := slices.Collect(maps.Keys(r.activeEdges))
+		r.mu.Unlock()
+
+		for i := 0; i < len(edges); i++ {
+			if res, ok := <-edges[i].finishedResult; ok {
+				r.mu.Lock()
+				delete(r.activeEdges, edges[i])
+				r.mu.Unlock()
+				return res
+			}
+			if subprocess.Interrupted() {
+				r.cancel()
+				return nil
+			}
+		}
+	}
+}

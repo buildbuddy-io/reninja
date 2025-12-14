@@ -2,6 +2,7 @@ package filetransfer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/statuserr"
 	"github.com/buildbuddy-io/gin/internal/util"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 
 	repb "github.com/buildbuddy-io/gin/genproto/remote_execution"
 	bspb "google.golang.org/genproto/googleapis/bytestream"
@@ -60,9 +62,9 @@ func DefaultDownloader() *Downloader {
 }
 
 type Uploader struct {
-	bsClient  bspb.ByteStreamClient
-	casClient repb.ContentAddressableStorageClient
-	acClient  repb.ActionCacheClient
+	bspb.ByteStreamClient
+	repb.ContentAddressableStorageClient
+	repb.ActionCacheClient
 }
 
 func appendHeadersToCtx(ctx context.Context) context.Context {
@@ -76,13 +78,23 @@ func appendHeadersToCtx(ctx context.Context) context.Context {
 
 func (u *Uploader) UploadActionResult(ctx context.Context, r *digest.ACResourceName, ar *repb.ActionResult) error {
 	ctx = appendHeadersToCtx(ctx)
-	return cachetools.UploadActionResult(ctx, u.acClient, r, ar)
+	return cachetools.UploadActionResult(ctx, u, r, ar)
 }
 
 func (u *Uploader) UploadInMemoryBlob(ctx context.Context, in io.ReadSeeker) (*digest.CASResourceName, error) {
 	ctx = appendHeadersToCtx(ctx)
 	instanceName := remote_flags.RemoteInstanceName()
-	d, err := cachetools.UploadBlob(ctx, u.bsClient, instanceName, DigestFunction, in)
+	d, err := cachetools.UploadBlob(ctx, u, instanceName, DigestFunction, in)
+	if err != nil {
+		return nil, err
+	}
+	return digest.NewCASResourceName(d, instanceName, DigestFunction), nil
+}
+
+func (u *Uploader) UploadProto(ctx context.Context, in proto.Message) (*digest.CASResourceName, error) {
+	ctx = appendHeadersToCtx(ctx)
+	instanceName := remote_flags.RemoteInstanceName()
+	d, err := cachetools.UploadProto(ctx, u, instanceName, DigestFunction, in)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +104,7 @@ func (u *Uploader) UploadInMemoryBlob(ctx context.Context, in io.ReadSeeker) (*d
 func (u *Uploader) UploadFile(ctx context.Context, path string) (*digest.CASResourceName, error) {
 	ctx = appendHeadersToCtx(ctx)
 	instanceName := remote_flags.RemoteInstanceName()
-	d, err := cachetools.UploadFile(ctx, u.bsClient, instanceName, DigestFunction, path)
+	d, err := cachetools.UploadFile(ctx, u, instanceName, DigestFunction, path)
 	if err != nil {
 		return nil, err
 	}
@@ -115,16 +127,56 @@ func cleanPaths(dirty []string) ([]string, error) {
 	return cleanedFiles, nil
 }
 
-// UploadDirectoryToCAS uploads all the files in a given directory to the CAS
-// as well as the directory structure, and returns the digest of the root
-// Directory proto that can be used to fetch the uploaded contents.
-func (u Uploader) UploadDirectoryToCAS(ctx context.Context, files []string) (*repb.Digest, *repb.Digest, error) {
+func (u Uploader) HashDirectoryTree(ctx context.Context, files []string) (*digest.CASResourceName, *digest.CASResourceName, error) {
 	cleanedFiles, err := cleanPaths(files)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	ul := cachetools.NewBatchCASUploader(ctx, u.bsClient, u.casClient, remote_flags.RemoteInstanceName(), DigestFunction)
+	instanceName := remote_flags.RemoteInstanceName()
+	rootDirPath := "/"
+	pathsToUpload := map[string]struct{}{
+		rootDirPath: {},
+	}
+	for _, path := range cleanedFiles {
+		start := 0
+		i := strings.IndexRune(path, filepath.Separator)
+		for ; i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
+			subPath := path[0 : start+i]
+			pathsToUpload[subPath] = struct{}{}
+			start += i + 1
+		}
+		pathsToUpload[path] = struct{}{}
+	}
+
+	// Recursively find and upload all descendant dirs.
+	visited, rootDirectoryDigest, err := uploadDir(nil, rootDirPath, pathsToUpload, nil /*=visited*/)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(visited) == 0 {
+		return nil, nil, statuserr.InternalError("empty directory list after uploading directory tree; this should never happen")
+	}
+	// Upload the tree, which consists of the root dir as well as all descendant
+	// dirs.
+	rootTree := &repb.Tree{Root: visited[0], Children: visited[1:]}
+	treeDigest, err := digest.ComputeForMessage(rootTree, DigestFunction)
+	if err != nil {
+		return nil, nil, err
+	}
+	return digest.NewCASResourceName(rootDirectoryDigest, instanceName, DigestFunction), digest.NewCASResourceName(treeDigest, instanceName, DigestFunction), nil
+}
+
+// UploadDirectoryToCAS uploads all the files in a given directory to the CAS
+// as well as the directory structure, and returns the digest of the root
+// Directory proto that can be used to fetch the uploaded contents.
+func (u Uploader) UploadDirectoryToCAS(ctx context.Context, files []string) (*digest.CASResourceName, *digest.CASResourceName, error) {
+	cleanedFiles, err := cleanPaths(files)
+	if err != nil {
+		return nil, nil, err
+	}
+	instanceName := remote_flags.RemoteInstanceName()
+	ul := cachetools.NewBatchCASUploader(ctx, u, u, instanceName, DigestFunction)
 
 	rootDirPath := "/"
 	pathsToUpload := map[string]struct{}{
@@ -159,7 +211,7 @@ func (u Uploader) UploadDirectoryToCAS(ctx context.Context, files []string) (*re
 	if err := ul.Wait(); err != nil {
 		return nil, nil, err
 	}
-	return rootDirectoryDigest, treeDigest, nil
+	return digest.NewCASResourceName(rootDirectoryDigest, instanceName, DigestFunction), digest.NewCASResourceName(treeDigest, instanceName, DigestFunction), nil
 }
 
 func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload map[string]struct{}, visited []*repb.Directory) ([]*repb.Directory, *repb.Digest, error) {
@@ -171,15 +223,24 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 	if err != nil {
 		return nil, nil, err
 	}
+
 	for _, entry := range entries {
 		name := entry.Name()
 		path := filepath.Join(dirPath, name)
 
+		if path == dirPath {
+			continue
+		}
 		if _, ok := pathsToUpload[path]; !ok {
 			continue
 		}
 
+		doPrint := ul != nil && false // Enable for debugging.
 		if entry.IsDir() {
+			if doPrint {
+				fmt.Printf("D%s%s\n", strings.Repeat(" ", len(visited)), path)
+			}
+
 			var d *repb.Digest
 			visited, d, err = uploadDir(ul, path, pathsToUpload, visited)
 			if err != nil {
@@ -190,11 +251,19 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 				Digest: d,
 			})
 		} else if entry.Type().IsRegular() {
+			if doPrint {
+				fmt.Printf("F%s%s\n", strings.Repeat(" ", len(visited)), path)
+			}
 			info, err := entry.Info()
 			if err != nil {
 				return nil, nil, err
 			}
-			d, err := ul.UploadFile(path)
+			var d *repb.Digest
+			if ul != nil {
+				d, err = ul.UploadFile(path)
+			} else {
+				d, err = digest.ComputeForFile(path, DigestFunction)
+			}
 			if err != nil {
 				return nil, nil, err
 			}
@@ -204,6 +273,9 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 				IsExecutable: isExecutable(info),
 			})
 		} else if entry.Type()&os.ModeSymlink == os.ModeSymlink {
+			if doPrint {
+				fmt.Printf("L%s%s\n", strings.Repeat(" ", len(visited)), path)
+			}
 			target, err := os.Readlink(path)
 			if err != nil {
 				return nil, nil, err
@@ -214,11 +286,16 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 			})
 		}
 	}
-	digest, err := ul.UploadProto(dir)
+	var d *repb.Digest
+	if ul != nil {
+		d, err = ul.UploadProto(dir)
+	} else {
+		d, err = digest.ComputeForMessage(dir, DigestFunction)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
-	return visited, digest, nil
+	return visited, d, nil
 }
 
 func isExecutable(info os.FileInfo) bool {
@@ -226,17 +303,30 @@ func isExecutable(info os.FileInfo) bool {
 }
 
 type Downloader struct {
-	bsClient  bspb.ByteStreamClient
-	casClient repb.ContentAddressableStorageClient
-	acClient  repb.ActionCacheClient
+	bspb.ByteStreamClient
+	repb.ContentAddressableStorageClient
+	repb.ActionCacheClient
 }
 
-func (d *Downloader) GetActionResult(ctx context.Context, ar *digest.ACResourceName) (*repb.ActionResult, error) {
+func (d *Downloader) DownloadActionResult(ctx context.Context, ar *digest.ACResourceName) (*repb.ActionResult, error) {
 	ctx = appendHeadersToCtx(ctx)
-	return cachetools.GetActionResult(ctx, d.acClient, ar)
+	return cachetools.GetActionResult(ctx, d, ar)
 }
 
 func (d *Downloader) GetBlob(ctx context.Context, r *digest.CASResourceName, out io.Writer) error {
 	ctx = appendHeadersToCtx(ctx)
-	return cachetools.GetBlob(ctx, d.bsClient, r, out)
+	return cachetools.GetBlob(ctx, d, r, out)
+}
+
+func (d *Downloader) FindMissing(ctx context.Context, rs []*repb.Digest) ([]*digest.CASResourceName, error) {
+	ctx = appendHeadersToCtx(ctx)
+	req := &repb.FindMissingBlobsRequest{
+		InstanceName:   remote_flags.RemoteInstanceName(),
+		DigestFunction: DigestFunction,
+		BlobDigests:    make([]*repb.Digest, len(rs)),
+	}
+	for i, r := range rs {
+		req.BlobDigests[i] = r
+	}
+	return cachetools.FindMissingBlobs(ctx, d, req)
 }
