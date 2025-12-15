@@ -1,11 +1,14 @@
 package filetransfer
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -127,30 +130,40 @@ func cleanPaths(dirty []string) ([]string, error) {
 	return cleanedFiles, nil
 }
 
+func expandTree(cleanedFiles []string) []string {
+	paths := make(map[string]struct{}, len(cleanedFiles))
+	for _, path := range cleanedFiles {
+		start := 0
+		i := strings.IndexRune(path, filepath.Separator)
+		for ; i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
+			subPath := path[0 : start+i]
+			if subPath != "" {
+				paths[subPath] = struct{}{}
+			}
+			start += i + 1
+		}
+		paths[path] = struct{}{}
+	}
+
+	pathSet := slices.Sorted(maps.Keys(paths))
+	sepString := string(filepath.Separator)
+
+	// Sort paths by depth, increasing.
+	slices.SortFunc(pathSet, func(a, b string) int {
+		return cmp.Compare(strings.Count(a, sepString), strings.Count(b, sepString))
+	})
+	return pathSet
+}
+
 func (u Uploader) HashDirectoryTree(ctx context.Context, files []string) (*digest.CASResourceName, *digest.CASResourceName, error) {
 	cleanedFiles, err := cleanPaths(files)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	instanceName := remote_flags.RemoteInstanceName()
-	rootDirPath := "/"
-	pathsToUpload := map[string]struct{}{
-		rootDirPath: {},
-	}
-	for _, path := range cleanedFiles {
-		start := 0
-		i := strings.IndexRune(path, filepath.Separator)
-		for ; i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
-			subPath := path[0 : start+i]
-			pathsToUpload[subPath] = struct{}{}
-			start += i + 1
-		}
-		pathsToUpload[path] = struct{}{}
-	}
-
+	pathsToUpload := expandTree(cleanedFiles)
 	// Recursively find and upload all descendant dirs.
-	visited, rootDirectoryDigest, err := uploadDir(nil, rootDirPath, pathsToUpload, nil /*=visited*/)
+	visited, rootDirectoryDigest, err := uploadDir(nil, pathsToUpload, nil /*=visited*/)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -164,6 +177,7 @@ func (u Uploader) HashDirectoryTree(ctx context.Context, files []string) (*diges
 	if err != nil {
 		return nil, nil, err
 	}
+	instanceName := remote_flags.RemoteInstanceName()
 	return digest.NewCASResourceName(rootDirectoryDigest, instanceName, DigestFunction), digest.NewCASResourceName(treeDigest, instanceName, DigestFunction), nil
 }
 
@@ -175,26 +189,13 @@ func (u Uploader) UploadDirectoryToCAS(ctx context.Context, files []string) (*di
 	if err != nil {
 		return nil, nil, err
 	}
+	pathsToUpload := expandTree(cleanedFiles)
+
 	instanceName := remote_flags.RemoteInstanceName()
 	ul := cachetools.NewBatchCASUploader(ctx, u, u, instanceName, DigestFunction)
 
-	rootDirPath := "/"
-	pathsToUpload := map[string]struct{}{
-		rootDirPath: {},
-	}
-	for _, path := range cleanedFiles {
-		start := 0
-		i := strings.IndexRune(path, filepath.Separator)
-		for ; i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
-			subPath := path[0 : start+i]
-			pathsToUpload[subPath] = struct{}{}
-			start += i + 1
-		}
-		pathsToUpload[path] = struct{}{}
-	}
-
 	// Recursively find and upload all descendant dirs.
-	visited, rootDirectoryDigest, err := uploadDir(ul, rootDirPath, pathsToUpload, nil /*=visited*/)
+	visited, rootDirectoryDigest, err := uploadDir(ul, pathsToUpload, nil /*=visited*/)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -214,27 +215,28 @@ func (u Uploader) UploadDirectoryToCAS(ctx context.Context, files []string) (*di
 	return digest.NewCASResourceName(rootDirectoryDigest, instanceName, DigestFunction), digest.NewCASResourceName(treeDigest, instanceName, DigestFunction), nil
 }
 
-func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload map[string]struct{}, visited []*repb.Directory) ([]*repb.Directory, *repb.Digest, error) {
+func uploadDir(ul *cachetools.BatchCASUploader, pathsToUpload []string, visited []*repb.Directory) ([]*repb.Directory, *repb.Digest, error) {
 	dir := &repb.Directory{}
 	// Append the directory before doing any other work, so that the root
 	// directory is located at visited[0] at the end of recursion.
 	visited = append(visited, dir)
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		return nil, nil, err
+
+	if len(visited) > 10 {
+		panic("recursion error")
 	}
+	root := pathsToUpload[0]
+	rest := pathsToUpload[1:]
 
-	for _, entry := range entries {
-		name := entry.Name()
-		path := filepath.Join(dirPath, name)
-
-		if path == dirPath {
+	for i, path := range rest {
+		name := strings.TrimPrefix(path, root)
+		parts := strings.Count(name, string(filepath.Separator))
+		if parts != 1 {
 			continue
 		}
-		if _, ok := pathsToUpload[path]; !ok {
-			continue
+		entry, err := os.Stat(path)
+		if err != nil {
+			return nil, nil, err
 		}
-
 		doPrint := ul != nil && false // Enable for debugging.
 		if entry.IsDir() {
 			if doPrint {
@@ -242,7 +244,7 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 			}
 
 			var d *repb.Digest
-			visited, d, err = uploadDir(ul, path, pathsToUpload, visited)
+			visited, d, err = uploadDir(ul, rest[i:], visited)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -250,14 +252,11 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 				Name:   name,
 				Digest: d,
 			})
-		} else if entry.Type().IsRegular() {
+		} else if entry.Mode().IsRegular() {
 			if doPrint {
 				fmt.Printf("F%s%s\n", strings.Repeat(" ", len(visited)), path)
 			}
-			info, err := entry.Info()
-			if err != nil {
-				return nil, nil, err
-			}
+			info := entry
 			var d *repb.Digest
 			if ul != nil {
 				d, err = ul.UploadFile(path)
@@ -272,7 +271,7 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 				Digest:       d,
 				IsExecutable: isExecutable(info),
 			})
-		} else if entry.Type()&os.ModeSymlink == os.ModeSymlink {
+		} else if entry.Mode()&os.ModeSymlink == os.ModeSymlink {
 			if doPrint {
 				fmt.Printf("L%s%s\n", strings.Repeat(" ", len(visited)), path)
 			}
@@ -286,6 +285,7 @@ func uploadDir(ul *cachetools.BatchCASUploader, dirPath string, pathsToUpload ma
 			})
 		}
 	}
+	var err error
 	var d *repb.Digest
 	if ul != nil {
 		d, err = ul.UploadProto(dir)
