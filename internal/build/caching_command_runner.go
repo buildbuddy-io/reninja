@@ -171,6 +171,18 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 	eg, gctx := errgroup.WithContext(ctx)
 	for _, outputFile := range actionResult.GetOutputFiles() {
 		eg.Go(func() error {
+			matchedEdgeOutput := false
+			for _, output := range edge.Outputs() {
+				// Generally edges have few outputs, so this is fine.
+				if output.Path() == outputFile.GetPath() {
+					matchedEdgeOutput = true
+					break
+				}
+			}
+			if !matchedEdgeOutput {
+				return nil // Skip writing any outputs that aren't outputs of this edge.
+			}
+
 			f, err := os.Create(outputFile.GetPath())
 			if err != nil {
 				return err
