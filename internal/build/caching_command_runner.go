@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"log"
-	"maps"
 	"math"
 	"os"
 	"slices"
@@ -33,7 +32,7 @@ type CachingCommandRunner struct {
 	jobserver   jobserver.Client
 	mu          *sync.Mutex
 	eg          *errgroup.Group
-	activeEdges map[*activeEdgeState]struct{}
+	activeEdges []*activeEdgeState
 
 	context    context.Context
 	cancel     context.CancelFunc
@@ -59,7 +58,7 @@ func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Cl
 		jobserver:   jobserver,
 		mu:          &sync.Mutex{},
 		eg:          eg,
-		activeEdges: make(map[*activeEdgeState]struct{}, 0),
+		activeEdges: make([]*activeEdgeState, 0),
 
 		cancel:     cancelFunc,
 		context:    ctx,
@@ -78,13 +77,13 @@ func (r *CachingCommandRunner) ClearJobTokens() {
 
 func (r *CachingCommandRunner) GetActiveEdges() []*graph.Edge {
 	// returns number of inflight edges (running + uncollected)
+	r.mu.Lock()
 	active := make([]*graph.Edge, len(r.activeEdges))
-
-	i := 0
-	for edgeState := range r.activeEdges {
+	for i, edgeState := range r.activeEdges {
 		active[i] = edgeState.edge
-		i++
 	}
+	r.mu.Unlock()
+
 	return active
 }
 
@@ -236,7 +235,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			finishedResult: make(chan *Result),
 		}
 		r.mu.Lock()
-		r.activeEdges[edgeState] = struct{}{}
+		r.activeEdges = append(r.activeEdges, edgeState)
 		r.mu.Unlock()
 
 		action, flattenedTree, err := r.assembleAndHashAction(ctx, edge)
@@ -347,15 +346,19 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 }
 
 func (r *CachingCommandRunner) WaitForCommand() *Result {
+
 	for {
 		r.mu.Lock()
-		edges := slices.Collect(maps.Keys(r.activeEdges))
+		edges := make([]*activeEdgeState, len(r.activeEdges))
+		copy(edges, r.activeEdges)
 		r.mu.Unlock()
 
 		for i := 0; i < len(edges); i++ {
 			if res, ok := <-edges[i].finishedResult; ok {
 				r.mu.Lock()
-				delete(r.activeEdges, edges[i])
+				r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
+					return n == edges[i]
+				})
 				r.mu.Unlock()
 				return res
 			}
