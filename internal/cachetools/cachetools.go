@@ -635,6 +635,10 @@ func (ul *BatchCASUploader) UploadProto(in proto.Message) (*repb.Digest, error) 
 	if err != nil {
 		return nil, err
 	}
+	return ul.UploadBlob(data)
+}
+
+func (ul *BatchCASUploader) UploadBlob(data []byte) (*repb.Digest, error) {
 	d, err := digest.Compute(bytes.NewReader(data), ul.digestFunction)
 	if err != nil {
 		return nil, err

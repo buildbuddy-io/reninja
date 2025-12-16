@@ -3,7 +3,6 @@ package filetransfer
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -29,6 +28,20 @@ import (
 const (
 	DigestFunction = repb.DigestFunction_BLAKE3
 )
+
+// UploadableNode represents a node in the directory tree that can be uploaded to CAS.
+type UploadableNode struct {
+	// Digest is the content-addressed digest of this node.
+	Digest *repb.Digest
+
+	// ReadFn returns a reader for the content to upload.
+	// The caller is responsible for closing the returned reader.
+	ReadFn func() (io.ReadSeekCloser, error)
+
+	// Directory is non-nil only for directory nodes.
+	// Used to build the Tree proto after traversal.
+	Directory *repb.Directory
+}
 
 var (
 	once              sync.Once
@@ -155,75 +168,63 @@ func expandTree(cleanedFiles []string) []string {
 	return pathSet
 }
 
-func (u Uploader) HashDirectoryTree(ctx context.Context, files []string) (*digest.CASResourceName, *digest.CASResourceName, error) {
+type FlattenedTree []*UploadableNode
+
+func (u Uploader) HashDirectoryTree(ctx context.Context, files []string) (*repb.Digest, FlattenedTree, error) {
 	cleanedFiles, err := cleanPaths(files)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	pathsToUpload := expandTree(cleanedFiles)
-	// Recursively find and upload all descendant dirs.
-	visited, rootDirectoryDigest, err := uploadDir(nil, pathsToUpload, nil /*=visited*/)
+	visited, rootDirectoryDigest, err := computeDirTree(pathsToUpload, nil /*=visited*/)
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(visited) == 0 {
-		return nil, nil, statuserr.InternalError("empty directory list after uploading directory tree; this should never happen")
+		return nil, nil, statuserr.InternalError("empty directory list after computing directory tree; this should never happen")
 	}
-	// Upload the tree, which consists of the root dir as well as all descendant
-	// dirs.
-	rootTree := &repb.Tree{Root: visited[0], Children: visited[1:]}
-	treeDigest, err := digest.ComputeForMessage(rootTree, DigestFunction)
-	if err != nil {
-		return nil, nil, err
-	}
-	instanceName := remote_flags.RemoteInstanceName()
-	return digest.NewCASResourceName(rootDirectoryDigest, instanceName, DigestFunction), digest.NewCASResourceName(treeDigest, instanceName, DigestFunction), nil
+	return rootDirectoryDigest, visited, nil
 }
 
-// UploadDirectoryToCAS uploads all the files in a given directory to the CAS
-// as well as the directory structure, and returns the digest of the root
-// Directory proto that can be used to fetch the uploaded contents.
-func (u Uploader) UploadDirectoryToCAS(ctx context.Context, files []string) (*digest.CASResourceName, *digest.CASResourceName, error) {
-	cleanedFiles, err := cleanPaths(files)
-	if err != nil {
-		return nil, nil, err
+func UploadDirectoryTreeToCAS(ul *cachetools.BatchCASUploader, flatTree FlattenedTree) error {
+	if len(flatTree) == 0 {
+		return statuserr.InternalError("empty tree")
 	}
-	pathsToUpload := expandTree(cleanedFiles)
-
-	instanceName := remote_flags.RemoteInstanceName()
-	ul := cachetools.NewBatchCASUploader(ctx, u, u, instanceName, DigestFunction)
-
-	// Recursively find and upload all descendant dirs.
-	visited, rootDirectoryDigest, err := uploadDir(ul, pathsToUpload, nil /*=visited*/)
-	if err != nil {
-		return nil, nil, err
+	var dirs []*repb.Directory
+	for _, node := range flatTree {
+		if node.Directory != nil {
+			dirs = append(dirs, node.Directory)
+		}
+		rsc, err := node.ReadFn()
+		if err != nil {
+			return err
+		}
+		if err := ul.Upload(node.Digest, rsc); err != nil {
+			return err
+		}
 	}
-	if len(visited) == 0 {
-		return nil, nil, statuserr.InternalError("empty directory list after uploading directory tree; this should never happen")
+	if len(dirs) == 0 {
+		return statuserr.InternalError("no directory nodes found; this should never happen")
 	}
-	// Upload the tree, which consists of the root dir as well as all descendant
-	// dirs.
-	rootTree := &repb.Tree{Root: visited[0], Children: visited[1:]}
-	treeDigest, err := ul.UploadProto(rootTree)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := ul.Wait(); err != nil {
-		return nil, nil, err
-	}
-	return digest.NewCASResourceName(rootDirectoryDigest, instanceName, DigestFunction), digest.NewCASResourceName(treeDigest, instanceName, DigestFunction), nil
+	rootTree := &repb.Tree{Root: dirs[0], Children: dirs[1:]}
+	_, err := ul.UploadProto(rootTree)
+	return err
 }
 
-func uploadDir(ul *cachetools.BatchCASUploader, pathsToUpload []string, visited []*repb.Directory) ([]*repb.Directory, *repb.Digest, error) {
+// computeDirTree traverses the directory tree rooted at pathsToUpload[0] and
+// computes digests for all files and directories. It returns a slice of
+// *UploadableNode containing all nodes that need to be uploaded, along with
+// the digest of the root directory.
+//
+// The visited slice accumulates nodes in traversal order, with directory nodes
+// appearing before their contents. The first directory node in the returned
+// slice is the root directory.
+func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*UploadableNode, *repb.Digest, error) {
 	dir := &repb.Directory{}
-	// Append the directory before doing any other work, so that the root
-	// directory is located at visited[0] at the end of recursion.
-	visited = append(visited, dir)
+	uploadableNode := &UploadableNode{}
+	visited = append(visited, uploadableNode)
 
-	if len(visited) > 10 {
-		panic("recursion error")
-	}
 	root := pathsToUpload[0]
 	rest := pathsToUpload[1:]
 
@@ -237,14 +238,9 @@ func uploadDir(ul *cachetools.BatchCASUploader, pathsToUpload []string, visited 
 		if err != nil {
 			return nil, nil, err
 		}
-		doPrint := ul != nil && false // Enable for debugging.
 		if entry.IsDir() {
-			if doPrint {
-				fmt.Printf("D%s%s\n", strings.Repeat(" ", len(visited)), path)
-			}
-
 			var d *repb.Digest
-			visited, d, err = uploadDir(ul, rest[i:], visited)
+			visited, d, err = computeDirTree(rest[i:], visited)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -253,16 +249,8 @@ func uploadDir(ul *cachetools.BatchCASUploader, pathsToUpload []string, visited 
 				Digest: d,
 			})
 		} else if entry.Mode().IsRegular() {
-			if doPrint {
-				fmt.Printf("F%s%s\n", strings.Repeat(" ", len(visited)), path)
-			}
 			info := entry
-			var d *repb.Digest
-			if ul != nil {
-				d, err = ul.UploadFile(path)
-			} else {
-				d, err = digest.ComputeForFile(path, DigestFunction)
-			}
+			d, err := digest.ComputeForFile(path, DigestFunction)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -271,10 +259,14 @@ func uploadDir(ul *cachetools.BatchCASUploader, pathsToUpload []string, visited 
 				Digest:       d,
 				IsExecutable: isExecutable(info),
 			})
+			path := path
+			visited = append(visited, &UploadableNode{
+				Digest: d,
+				ReadFn: func() (io.ReadSeekCloser, error) {
+					return os.Open(path)
+				},
+			})
 		} else if entry.Mode()&os.ModeSymlink == os.ModeSymlink {
-			if doPrint {
-				fmt.Printf("L%s%s\n", strings.Repeat(" ", len(visited)), path)
-			}
 			target, err := os.Readlink(path)
 			if err != nil {
 				return nil, nil, err
@@ -283,18 +275,25 @@ func uploadDir(ul *cachetools.BatchCASUploader, pathsToUpload []string, visited 
 				Name:   name,
 				Target: target,
 			})
+			// Symlinks don't need to be uploaded separately; they're part of the Directory proto
 		}
 	}
-	var err error
-	var d *repb.Digest
-	if ul != nil {
-		d, err = ul.UploadProto(dir)
-	} else {
-		d, err = digest.ComputeForMessage(dir, DigestFunction)
-	}
+
+	d, err := digest.ComputeForMessage(dir, DigestFunction)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	uploadableNode.Digest = d
+	uploadableNode.Directory = dir
+	uploadableNode.ReadFn = func() (io.ReadSeekCloser, error) {
+		data, err := proto.Marshal(uploadableNode.Directory)
+		if err != nil {
+			return nil, err
+		}
+		return cachetools.NewBytesReadSeekCloser(data), nil
+	}
+
 	return visited, d, nil
 }
 
