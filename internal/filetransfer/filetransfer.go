@@ -1,13 +1,14 @@
 package filetransfer
 
 import (
-	"cmp"
 	"context"
+	"fmt"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -143,12 +144,37 @@ func cleanPaths(dirty []string) ([]string, error) {
 	return cleanedFiles, nil
 }
 
+func hierarchicalPathCompare(p1, p2 string) int {
+	b1 := []byte(p1)
+	b2 := []byte(p2)
+
+	minLen := min(len(b1), len(b2))
+	for i := 0; i < minLen; i++ {
+		c1, c2 := b1[i], b2[i]
+		if c1 != c2 {
+			// '/' sorts before everything else
+			if c1 == '/' {
+				return -1
+			}
+			if c2 == '/' {
+				return 1
+			}
+			if c1 < c2 {
+				return -1
+			}
+			return 1
+		}
+	}
+
+	// Common prefix matches, shorter string comes first
+	return len(b1) - len(b2)
+}
+
 func expandTree(cleanedFiles []string) []string {
 	paths := make(map[string]struct{}, len(cleanedFiles))
 	for _, path := range cleanedFiles {
 		start := 0
-		i := strings.IndexRune(path, filepath.Separator)
-		for ; i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
+		for i := strings.IndexRune(path, filepath.Separator); i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
 			subPath := path[0 : start+i]
 			if subPath != "" {
 				paths[subPath] = struct{}{}
@@ -159,12 +185,13 @@ func expandTree(cleanedFiles []string) []string {
 	}
 
 	pathSet := slices.Sorted(maps.Keys(paths))
-	sepString := string(filepath.Separator)
 
 	// Sort paths by depth, increasing.
-	slices.SortFunc(pathSet, func(a, b string) int {
-		return cmp.Compare(strings.Count(a, sepString), strings.Count(b, sepString))
+	sort.Slice(pathSet, func(i, j int) bool {
+		return hierarchicalPathCompare(pathSet[i], pathSet[j]) < 0
 	})
+
+	fmt.Printf("pathSet: %s\n", pathSet)
 	return pathSet
 }
 
@@ -220,6 +247,10 @@ func UploadDirectoryTreeToCAS(ul *cachetools.BatchCASUploader, flatTree Flattene
 // The visited slice accumulates nodes in traversal order, with directory nodes
 // appearing before their contents. The first directory node in the returned
 // slice is the root directory.
+//
+// The paths in pathsToUpload must have already been sorted hierarchically,
+// using something like hierarchicalPathCompare. That does not happen directly
+// in this method because it recurses.
 func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*UploadableNode, *repb.Digest, error) {
 	dir := &repb.Directory{}
 	uploadableNode := &UploadableNode{}
@@ -229,11 +260,10 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 	rest := pathsToUpload[1:]
 
 	for i, path := range rest {
-		name := strings.TrimPrefix(path, root)
-		parts := strings.Count(name, string(filepath.Separator))
-		if parts != 1 {
+		if filepath.Dir(path) != root {
 			continue
 		}
+		name := strings.TrimPrefix(path, root)
 		entry, err := os.Stat(path)
 		if err != nil {
 			return nil, nil, err

@@ -315,10 +315,10 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 
 	ul := cachetools.NewBatchCASUploader(ctx, r.uploader, r.uploader, instanceName, digestFunction)
 
-	// Upload inputs
-	if err := filetransfer.UploadDirectoryTreeToCAS(ul, tree); err != nil {
-		return err
-	}
+	// only needed for remote execution.
+	//if err := filetransfer.UploadDirectoryTreeToCAS(ul, tree); err != nil {
+	//	return err
+	//}
 
 	// Upload outputs
 	for i, output := range edge.Outputs() {

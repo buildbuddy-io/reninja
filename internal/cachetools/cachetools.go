@@ -697,13 +697,13 @@ func (ul *BatchCASUploader) flushCurrentBatch() error {
 				if len(missing) == 0 {
 					return &repb.BatchUpdateBlobsResponse{}, nil
 				}
+				missingSet := make(map[digest.Key]struct{}, len(missing))
+				for _, missingResource := range missing {
+					missingSet[digest.NewKey(missingResource.GetDigest())] = struct{}{}
+				}
 				req.Requests = slices.DeleteFunc(req.Requests, func(br *repb.BatchUpdateBlobsRequest_Request) bool {
-					for _, rn := range missing {
-						if rn.GetDigest().GetHash() == br.GetDigest().GetHash() {
-							return false
-						}
-					}
-					return true
+					_, missing := missingSet[digest.NewKey(br.GetDigest())]
+					return !missing
 				})
 			}
 			return casClient.BatchUpdateBlobs(ctx, req)
