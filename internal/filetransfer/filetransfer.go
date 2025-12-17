@@ -2,7 +2,6 @@ package filetransfer
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -190,8 +189,6 @@ func expandTree(cleanedFiles []string) []string {
 	sort.Slice(pathSet, func(i, j int) bool {
 		return hierarchicalPathCompare(pathSet[i], pathSet[j]) < 0
 	})
-
-	fmt.Printf("pathSet: %s\n", pathSet)
 	return pathSet
 }
 
