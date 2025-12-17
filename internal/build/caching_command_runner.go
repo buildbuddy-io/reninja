@@ -31,7 +31,6 @@ type CachingCommandRunner struct {
 	config      *build_config.Config
 	jobserver   jobserver.Client
 	mu          *sync.Mutex
-	eg          *errgroup.Group
 	activeEdges []*activeEdgeState
 
 	context    context.Context
@@ -51,13 +50,11 @@ func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Cl
 		log.Fatalf("--cache requires --remote_cache to be set")
 	}
 	ctx, cancelFunc := context.WithCancel(context.TODO())
-	eg, _ := errgroup.WithContext(ctx)
 
 	return &CachingCommandRunner{
 		config:      config,
 		jobserver:   jobserver,
 		mu:          &sync.Mutex{},
-		eg:          eg,
 		activeEdges: make([]*activeEdgeState, 0),
 
 		cancel:     cancelFunc,
@@ -139,7 +136,7 @@ func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 	return cmdProto, nil
 }
 
-func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*repb.Action, filetransfer.FlattenedTree, error) {
+func (r *CachingCommandRunner) assembleAndHashAction(edge *graph.Edge) (*repb.Action, filetransfer.FlattenedTree, error) {
 	cmd, err := assembleCommand(edge)
 	if err != nil {
 		return nil, nil, err
@@ -149,7 +146,7 @@ func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *
 	for i, input := range edge.ExplicitInputs() {
 		files[i] = input.Path()
 	}
-	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(ctx, files)
+	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -228,36 +225,46 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 }
 
 func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
-	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
-	r.eg.Go(func() error {
-		edgeState := &activeEdgeState{
-			edge:           edge,
-			finishedResult: make(chan *Result),
-		}
-		r.mu.Lock()
-		r.activeEdges = append(r.activeEdges, edgeState)
-		r.mu.Unlock()
+	edgeState := &activeEdgeState{
+		edge:           edge,
+		finishedResult: make(chan *Result),
+	}
+	r.mu.Lock()
+	r.activeEdges = append(r.activeEdges, edgeState)
+	r.mu.Unlock()
 
-		action, flattenedTree, err := r.assembleAndHashAction(ctx, edge)
-		if err != nil {
-			return err
+	action, flattenedTree, err := r.assembleAndHashAction(edge)
+	if err != nil {
+		return err
+	}
+
+	makeFailureResult := func(err error) *Result {
+		return &Result{
+			Edge:   edge,
+			Status: exit_status.ExitFailure,
+			Output: err.Error(),
 		}
+	}
+
+	go func() {
+		ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 		if res, err := r.downloadCompletedEdge(ctx, action, edge); err == nil {
 			edgeState.finishedResult <- res
-			return nil
+			return
 		}
 
 		command := edge.EvaluateCommand(false)
 		subproc, err := subprocess.NewSubprocess(command, edge.UseConsole())
 		if err != nil {
-			return err
+			edgeState.finishedResult <- makeFailureResult(err)
+			return
 		}
 
 		exitCode := subproc.Finish()
 		output := subproc.GetOutput()
-
 		if err := r.uploadCompletedEdge(edge, exitCode, output, action, flattenedTree); err != nil {
-			return err
+			edgeState.finishedResult <- makeFailureResult(err)
+			return
 		}
 
 		edgeState.finishedResult <- &Result{
@@ -265,9 +272,8 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			Status: exitCode,
 			Output: output,
 		}
+	}()
 
-		return nil
-	})
 	return nil
 }
 
@@ -339,14 +345,13 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 	if err := ul.Wait(); err != nil {
 		return err
 	}
-	acrn := digest.NewACResourceName(actionDigest, instanceName, digestFunction)
 
 	// Upload the actual action result.
+	acrn := digest.NewACResourceName(actionDigest, instanceName, digestFunction)
 	return r.uploader.UploadActionResult(ctx, acrn, ar)
 }
 
 func (r *CachingCommandRunner) WaitForCommand() *Result {
-
 	for {
 		r.mu.Lock()
 		edges := make([]*activeEdgeState, len(r.activeEdges))

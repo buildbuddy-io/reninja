@@ -170,7 +170,7 @@ func expandTree(cleanedFiles []string) []string {
 
 type FlattenedTree []*UploadableNode
 
-func (u Uploader) HashDirectoryTree(ctx context.Context, files []string) (*repb.Digest, FlattenedTree, error) {
+func (u Uploader) HashDirectoryTree(files []string) (*repb.Digest, FlattenedTree, error) {
 	cleanedFiles, err := cleanPaths(files)
 	if err != nil {
 		return nil, nil, err
