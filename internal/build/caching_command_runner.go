@@ -145,8 +145,8 @@ func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *
 		return nil, nil, err
 	}
 
-	files := make([]string, len(edge.Inputs()))
-	for i, input := range edge.Inputs() {
+	files := make([]string, len(edge.ExplicitInputs()))
+	for i, input := range edge.ExplicitInputs() {
 		files[i] = input.Path()
 	}
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(ctx, files)
