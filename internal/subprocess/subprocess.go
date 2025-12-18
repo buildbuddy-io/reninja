@@ -30,6 +30,10 @@ func handleSignals() {
 	})
 }
 
+func Interrupted() bool {
+	return interrupted.Load()
+}
+
 type Subprocess struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
