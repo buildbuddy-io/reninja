@@ -12,7 +12,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
-	rapidhash "github.com/poiug07/rapidhash_go"
+	rapidhash "github.com/buildbuddy-io/gin/third_party/rapidhash_v1"
 )
 
 const (
