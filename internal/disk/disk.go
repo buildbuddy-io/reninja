@@ -65,7 +65,7 @@ func (d *RealDiskInterface) Stat(path string) (timestamp.TimeStamp, error) {
 		}
 		return timestamp.TimeStampUnknown, err
 	}
-	mtime := timestamp.TimeStamp(info.ModTime().UnixMilli())
+	mtime := timestamp.TimeStamp(info.ModTime().UnixNano())
 	return mtime, nil
 }
 
