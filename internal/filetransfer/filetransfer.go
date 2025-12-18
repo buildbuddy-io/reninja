@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 
@@ -183,13 +182,10 @@ func expandTree(cleanedFiles []string) []string {
 		paths[path] = struct{}{}
 	}
 
-	pathSet := slices.Sorted(maps.Keys(paths))
-
-	// Sort paths by depth, increasing.
-	sort.Slice(pathSet, func(i, j int) bool {
-		return hierarchicalPathCompare(pathSet[i], pathSet[j]) < 0
+	// Sort so that each path is directly followed by its children.
+	return slices.SortedFunc(maps.Keys(paths), func(i, j string) int {
+		return hierarchicalPathCompare(i, j)
 	})
-	return pathSet
 }
 
 type FlattenedTree []*UploadableNode
