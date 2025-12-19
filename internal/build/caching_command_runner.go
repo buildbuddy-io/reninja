@@ -17,12 +17,14 @@ import (
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/remote_flags"
+	"github.com/buildbuddy-io/gin/internal/remote_headers"
 	"github.com/buildbuddy-io/gin/internal/request_metadata"
 	"github.com/buildbuddy-io/gin/internal/statuserr"
 	"github.com/buildbuddy-io/gin/internal/subprocess"
 	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/google/shlex"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/metadata"
 
 	repb "github.com/buildbuddy-io/gin/genproto/remote_execution"
 )
@@ -50,6 +52,11 @@ func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Cl
 		log.Fatalf("--cache requires --remote_cache to be set")
 	}
 	ctx, cancelFunc := context.WithCancel(context.TODO())
+
+	extraHeaders := remote_headers.GetPairs()
+	if len(extraHeaders) > 1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, extraHeaders...)
+	}
 
 	return &CachingCommandRunner{
 		config:      config,
