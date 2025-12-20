@@ -133,6 +133,10 @@ type StatusPrinter struct {
 
 	currentRate *SlidingRateInfo
 
+	ticker *time.Ticker
+	done   chan bool
+	mu     *sync.Mutex
+
 	// the fields below will only be set if a bes_backed is enabled.
 	// their access should be guarded on the presence of bes.
 	// TODO(tylerw): move to a struct?
@@ -150,6 +154,9 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		config:               config,
 		currentRate:          NewSlidingRateInfo(config.Parallelism),
 		progressStatusFormat: os.Getenv("NINJA_STATUS"),
+		ticker:               time.NewTicker(500 * time.Millisecond),
+		done:                 make(chan bool),
+		mu:                   &sync.Mutex{},
 	}
 	if sp.progressStatusFormat == "" {
 		sp.progressStatusFormat = "[%f/%t] "
@@ -323,7 +330,6 @@ func (p *StatusPrinter) EdgeRemovedFromPlan(edge *graph.Edge) {
 		p.etaUnpredictableEdgesRemaining -= 1
 	}
 }
-
 func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64) {
 	p.startedEdges += 1
 	p.runningEdges += 1
@@ -342,6 +348,7 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64
 			util.Warningf("Failed to publish build metadata: %s", err)
 		}
 	}
+	p.recordSystemMetrics(startTimeMillis)
 }
 
 func (p *StatusPrinter) RecalculateProgressPrediction() {
@@ -493,6 +500,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 
 		if p.flamegraph != nil {
 			p.flamegraph.RecordEdge(edge, startTimeMillis, endTimeMillis)
+			p.recordSystemMetrics(p.timeMillis)
 		}
 	}
 
@@ -533,13 +541,45 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 	}
 }
 
+func (p *StatusPrinter) recordSystemMetrics(millisSinceStart int64) {
+	if p.flamegraph == nil {
+		return
+	}
+	p.mu.Lock()
+	actionsRunning := p.runningEdges
+	p.mu.Unlock()
+
+	p.flamegraph.RecordActionCount(actionsRunning, millisSinceStart)
+	p.flamegraph.RecordLoadAverage(util.GetLoadAverage(), millisSinceStart)
+	p.flamegraph.RecordSystemMemoryUsage(util.GetSystemMemoryUsageMB(), millisSinceStart)
+	p.flamegraph.RecordSystemCPUUsage(util.GetSystemCPUUsageCores(), millisSinceStart)
+	up, down := util.GetSystemNetworkUsage()
+	p.flamegraph.RecordSystemNetworkUsage(up, down, millisSinceStart)
+	p.flamegraph.RecordMemoryUsage(util.GetProgramMemoryUsageMB(), millisSinceStart)
+}
+
 func (p *StatusPrinter) BuildStarted() {
 	p.startedEdges = 0
 	p.finishedEdges = 0
 	p.runningEdges = 0
 
-	if p.bes != nil {
-	}
+	p.recordSystemMetrics(0)
+
+	// Periodically (every 1 second) update system metrics.
+	go func() {
+		lastTimeStamp := time.Now().UnixMilli()
+		elapsed := int64(0)
+		for {
+			select {
+			case <-p.done:
+				return
+			case t := <-p.ticker.C:
+				elapsed += t.UnixMilli() - lastTimeStamp
+				lastTimeStamp = t.UnixMilli()
+				p.recordSystemMetrics(elapsed)
+			}
+		}
+	}()
 }
 
 func (p *StatusPrinter) BuildFinished() {
@@ -551,6 +591,12 @@ func (p *StatusPrinter) BuildFinished() {
 			util.Warningf("Failed to publish configuration: %s", err)
 		}
 	}
+
+	p.ticker.Stop()
+	p.done <- true
+
+	// Update system metrics one last time
+	p.recordSystemMetrics(p.timeMillis)
 }
 
 func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
