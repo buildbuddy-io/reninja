@@ -574,8 +574,9 @@ func (p *StatusPrinter) BuildStarted() {
 			case <-p.done:
 				return
 			case t := <-p.ticker.C:
-				elapsed += t.UnixMilli() - lastTimeStamp
-				lastTimeStamp = t.UnixMilli()
+				currentTimeStamp = t.UnixMilli()
+				elapsed += currentTimeStamp - lastTimeStamp
+				lastTimeStamp = currentTimeStamp
 				p.recordSystemMetrics(elapsed)
 			}
 		}

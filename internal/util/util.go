@@ -94,7 +94,7 @@ func GetSystemCPUUsageCores() float64 {
 	return v[0] * float64(count) / 100
 }
 
-const oneMegabit = 125000
+const oneMegabit = 125000 // Trace displays in Mbps.
 
 var (
 	networkUsageMu            = sync.Mutex{}
