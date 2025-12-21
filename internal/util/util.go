@@ -4,9 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/buildbuddy-io/gin/internal/edit_distance"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/shirou/gopsutil/v4/net"
 )
 
 // StringList implements a flag.Value that accepts an sequence of values as a CSV.
@@ -60,6 +66,67 @@ func CanonicalizePath(path string) (outp string, outs uint64) {
 	}
 
 	return filepath.Clean(result.String()), slashBits
+}
+
+func GetProgramMemoryUsageMB() float64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return float64(m.Sys) / 1e6
+}
+
+func GetSystemMemoryUsageMB() float64 {
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		return -1
+	}
+	return float64(v.Used) / 1e6
+}
+
+func GetSystemCPUUsageCores() float64 {
+	count, err := cpu.Counts(true /*=logical*/)
+	if err != nil {
+		return -1
+	}
+	v, err := cpu.Percent(0, false /*=perCPU*/)
+	if err != nil || len(v) == 0 {
+		return -1
+	}
+	return v[0] * float64(count) / 100
+}
+
+const oneMegabit = 125000 // Trace displays in Mbps.
+
+var (
+	networkUsageMu            = sync.Mutex{}
+	lastUploadedBytes         uint64
+	lastDownloadBytes         uint64
+	lastMeasurementTimeMillis int64
+)
+
+// GetSystemNetworkUsage returns upload, download in Mbps (megabits/second).
+func GetSystemNetworkUsage() (float64, float64) {
+	v, err := net.IOCounters(false /*=pernic*/)
+	if err != nil || len(v) == 0 {
+		return -1, -1
+	}
+	nowMillis := time.Now().UnixMilli()
+
+	networkUsageMu.Lock()
+	defer networkUsageMu.Unlock()
+
+	uploadedBytesSinceLast := float64(v[0].BytesSent-lastUploadedBytes) / oneMegabit
+	downloadBytesSinceLast := float64(v[0].BytesRecv-lastDownloadBytes) / oneMegabit
+	timePassedMillis := nowMillis - lastMeasurementTimeMillis
+	secondsPassed := float64(timePassedMillis) / 1000
+
+	lastUploadedBytes = v[0].BytesSent
+	lastDownloadBytes = v[0].BytesRecv
+	lastMeasurementTimeMillis = nowMillis
+
+	if secondsPassed == 0 {
+		return -1, -1
+	}
+	return uploadedBytesSinceLast / secondsPassed, downloadBytesSinceLast / secondsPassed
 }
 
 func IsKnownShellSafeCharacter(ch rune) bool {
