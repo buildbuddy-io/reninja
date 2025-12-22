@@ -233,26 +233,35 @@ func BuildMetricsEvent(actionsCreated, actionsExecuted, cpuTimeMillis, wallTimeM
 	}
 }
 
-func BuildToolLogsEvent(bytestreamURIPrefix string, commandProfileGz *digest.CASResourceName) *bespb.BuildEvent {
+func BuildToolLogsEvent(bytestreamURIPrefix string, commandProfileGz, execLogBinpbZstd *digest.CASResourceName) *bespb.BuildEvent {
+	toolLogs := &bespb.BuildToolLogs{}
+	if commandProfileGz != nil {
+		toolLogs.Log = append(toolLogs.Log, &bespb.File{
+			Name: "command.profile.gz",
+			File: &bespb.File_Uri{
+				Uri: fmt.Sprintf("%s%s", bytestreamURIPrefix, commandProfileGz.DownloadString()),
+			},
+		})
+	}
+	if execLogBinpbZstd != nil {
+		toolLogs.Log = append(toolLogs.Log, &bespb.File{
+			Name: "execution_log.binpb.zst",
+			File: &bespb.File_Uri{
+				Uri: fmt.Sprintf("%s%s", bytestreamURIPrefix, execLogBinpbZstd.DownloadString()),
+			},
+		})
+	}
 	return &bespb.BuildEvent{
 		Id: &bespb.BuildEventId{
 			Id: &bespb.BuildEventId_BuildToolLogs{},
 		},
 		Payload: &bespb.BuildEvent_BuildToolLogs{
-			BuildToolLogs: &bespb.BuildToolLogs{
-				Log: []*bespb.File{
-					{
-						Name: "command.profile.gz",
-						File: &bespb.File_Uri{
-							Uri: fmt.Sprintf("%s%s", bytestreamURIPrefix, commandProfileGz.DownloadString()),
-						},
-					},
-				},
-			},
+			BuildToolLogs: toolLogs,
 		},
 	}
 
 }
+
 func FinishedEvent(exitCode int) *bespb.BuildEvent {
 	var exitCodeName string
 

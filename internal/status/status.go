@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,9 @@ import (
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_event_publisher"
 	"github.com/buildbuddy-io/gin/internal/build_metadata"
+	"github.com/buildbuddy-io/gin/internal/compact_execution"
+	"github.com/buildbuddy-io/gin/internal/compression"
+	"github.com/buildbuddy-io/gin/internal/digest"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/explanations"
 	"github.com/buildbuddy-io/gin/internal/filetransfer"
@@ -35,7 +39,7 @@ type Status interface {
 	EdgeRemovedFromPlan(edge *graph.Edge)
 
 	BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64)
-	BuildEdgeFinished(edge *graph.Edge, startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string)
+	BuildEdgeFinished(edge *graph.Edge, startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool)
 
 	// InitializeTool is called by ninja.go to report the program command
 	// line before work begins.
@@ -51,6 +55,7 @@ type Status interface {
 	// the program completely exits.
 	FinalizeTool(ninjaExitCode int)
 
+	SetBuildDir(dir string)
 	SetExplanations(explanations *explanations.Explanations)
 
 	Info(format string, args ...interface{})
@@ -95,7 +100,8 @@ func (i *SlidingRateInfo) Rate() float64 {
 var _ Status = &StatusPrinter{}
 
 type StatusPrinter struct {
-	config *build_config.Config
+	config   *build_config.Config
+	buildDir string
 
 	startedEdges  int64
 	finishedEdges int64
@@ -144,9 +150,16 @@ type StatusPrinter struct {
 	invocationID string
 	ctx          context.Context
 	cleanupIO    func()
-	flamegraph   *flamegraph.Flamegraph
+	uploader     *filetransfer.Uploader
 
-	uploader *filetransfer.Uploader
+	// The following logs are lazily initialized, once, when SetBuildDir is
+	// called, so that their backing files can live in the ninja build dir.
+	logsInitialized *sync.Once
+	flamegraph      *flamegraph.Flamegraph
+
+	execLogFile         *os.File
+	execLogWriter       *compression.ZstdCompressingWriter
+	compactExecutionLog *compact_execution.Log
 }
 
 func NewPrinter(config *build_config.Config) *StatusPrinter {
@@ -157,6 +170,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		ticker:               time.NewTicker(500 * time.Millisecond),
 		done:                 make(chan bool),
 		mu:                   &sync.Mutex{},
+		logsInitialized:      &sync.Once{},
 	}
 	if sp.progressStatusFormat == "" {
 		sp.progressStatusFormat = "[%f/%t] "
@@ -208,10 +222,6 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		sp.printStreamURL()
 	} else {
 		sp.printer = line_printer.New() // leave stdout alone.
-	}
-
-	if sp.bes != nil {
-		sp.flamegraph = flamegraph.New()
 	}
 
 	return sp
@@ -460,7 +470,20 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 	p.printer.Print(toPrint, elideMode)
 }
 
-func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string) {
+func spawnResult(startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool) compact_execution.SpawnResult {
+	now := time.Now().UnixMilli()
+	elapsed := endTimeMillis - startTimeMillis
+	return compact_execution.SpawnResult{
+		ExitCode:  int32(exitCode),
+		Status:    output,
+		StartTime: time.UnixMilli(now - elapsed),
+		EndTime:   time.UnixMilli(now),
+		Runner:    "local",
+		CacheHit:  cacheHit,
+	}
+}
+
+func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool) {
 	p.timeMillis = endTimeMillis
 	p.finishedEdges += 1
 
@@ -501,6 +524,11 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, end
 		if p.flamegraph != nil {
 			p.flamegraph.RecordEdge(edge, startTimeMillis, endTimeMillis)
 			p.recordSystemMetrics(p.timeMillis)
+		}
+
+		if p.compactExecutionLog != nil {
+			result := spawnResult(startTimeMillis, endTimeMillis, exitCode, output, cacheHit)
+			p.compactExecutionLog.RecordEdge(edge, &result)
 		}
 	}
 
@@ -564,6 +592,7 @@ func (p *StatusPrinter) BuildStarted() {
 	p.runningEdges = 0
 
 	p.recordSystemMetrics(0)
+	p.initializeLogs()
 
 	// Periodically (every 1 second) update system metrics.
 	go func() {
@@ -630,41 +659,65 @@ func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
 
 }
 
-func (p *StatusPrinter) writeFlamegraphEvent() error {
-	if p.flamegraph.NumEvents() == 0 {
-		return nil
-	}
+func (p *StatusPrinter) uploadCompactExecutionLog() (*digest.CASResourceName, error) {
 	uploader := filetransfer.DefaultUploader()
 	if uploader == nil {
-		return nil
+		return nil, nil
+	}
+	if err := p.execLogWriter.Close(); err != nil {
+		return nil, err
+	}
+	if err := p.execLogFile.Close(); err != nil {
+		return nil, err
+	}
+	ctx := request_metadata.AttachCacheRequestMetadata(context.TODO(), "bes-upload", "", "")
+	return uploader.UploadFile(ctx, p.execLogFile.Name())
+}
+
+func (p *StatusPrinter) uploadFlamegraph() (*digest.CASResourceName, error) {
+	uploader := filetransfer.DefaultUploader()
+	if uploader == nil {
+		return nil, nil
+	}
+	if p.flamegraph.NumEvents() == 0 {
+		return nil, nil
 	}
 	tmpFile, err := os.CreateTemp("", "command-*.profile.gz")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	w := gzip.NewWriter(tmpFile)
 	if err := p.flamegraph.Write(w); err != nil {
-		return err
+		return nil, err
 	}
 	if err := w.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tmpFile.Close(); err != nil {
-		return err
+		return nil, err
 	}
 
 	ctx := request_metadata.AttachCacheRequestMetadata(context.TODO(), "bes-upload", "", "")
-	commandProfileGz, err := uploader.UploadFile(ctx, tmpFile.Name())
-	if err != nil {
-		return err
-	}
+	return uploader.UploadFile(ctx, tmpFile.Name())
+}
+
+func (p *StatusPrinter) writeBuildLogEvent() error {
 	backendURL, err := url.Parse(remote_flags.RemoteCache())
 	if err != nil {
 		return err
 	}
 	bytestreamURIPrefix := "bytestream://" + backendURL.Host
-	if err := p.bes.Publish(bes_event.BuildToolLogsEvent(bytestreamURIPrefix, commandProfileGz)); err != nil {
+
+	commandProfileGz, err := p.uploadFlamegraph()
+	if err != nil {
+		return err
+	}
+	execLogBinpbZstd, err := p.uploadCompactExecutionLog()
+	if err != nil {
+		return err
+	}
+	if err := p.bes.Publish(bes_event.BuildToolLogsEvent(bytestreamURIPrefix, commandProfileGz, execLogBinpbZstd)); err != nil {
 		return err
 	}
 	return nil
@@ -677,10 +730,8 @@ func (p *StatusPrinter) FinalizeTool(ninjaExitCode int) {
 	p.printStreamURL()
 	p.cleanupIO()
 
-	if p.flamegraph != nil {
-		if err := p.writeFlamegraphEvent(); err != nil {
-			util.Warningf("Failed to write flamegraph: %s", err)
-		}
+	if err := p.writeBuildLogEvent(); err != nil {
+		util.Warningf("Failed to write build tool event: %s", err)
 	}
 
 	if err := p.bes.Publish(bes_event.FinishedEvent(ninjaExitCode)); err != nil {
@@ -694,6 +745,40 @@ func (p *StatusPrinter) FinalizeTool(ninjaExitCode int) {
 
 func (p *StatusPrinter) SetExplanations(exp *explanations.Explanations) {
 	p.explanations = exp
+}
+
+func (p *StatusPrinter) SetBuildDir(dir string) {
+	p.buildDir = dir
+	p.initializeLogs()
+}
+
+func (p *StatusPrinter) initializeLogs() {
+	if p.bes == nil {
+		return
+	}
+
+	p.logsInitialized.Do(func() {
+		p.flamegraph = flamegraph.New()
+
+		execLogPath := ".ninja_compact_execution_log.binpb.zst"
+		if p.buildDir != "" {
+			execLogPath = filepath.Join(p.buildDir, execLogPath)
+		}
+		os.Remove(execLogPath)
+		execLogFile, err := os.Create(execLogPath)
+		if err != nil {
+			util.Warningf("Failed to open compact exec log file: %s", err)
+			return
+		}
+		zstdWriter, err := compression.NewZstdCompressingWriter(execLogFile, 16384)
+		if err != nil {
+			util.Warningf("Failed to open compact exec log compressor: %s", err)
+			return
+		}
+		p.execLogFile = execLogFile
+		p.execLogWriter = zstdWriter
+		p.compactExecutionLog = compact_execution.New(p.execLogWriter)
+	})
 }
 
 func formatRate(rate float64, format string) string {

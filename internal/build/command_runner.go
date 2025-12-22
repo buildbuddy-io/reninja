@@ -53,8 +53,9 @@ func (d *DryCommandRunner) WaitForCommand() *Result {
 	d.finished = d.finished[1:]
 
 	r := &Result{
-		Status: exit_status.ExitSuccess,
-		Edge:   front,
+		Status:   exit_status.ExitSuccess,
+		Edge:     front,
+		CacheHit: false,
 	}
 	return r
 }
@@ -152,9 +153,10 @@ func (r *RealCommandRunner) WaitForCommand() *Result {
 	}
 
 	result := &Result{
-		Status: subproc.Finish(),
-		Output: subproc.GetOutput(),
-		Edge:   r.subprocToEdge[subproc],
+		Status:   subproc.Finish(),
+		Output:   subproc.GetOutput(),
+		Edge:     r.subprocToEdge[subproc],
+		CacheHit: false,
 	}
 
 	delete(r.subprocToEdge, subproc)
