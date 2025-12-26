@@ -54,8 +54,10 @@ func (l *Log) writeEntry(entry *spawnpb.ExecLogEntry) error {
 }
 
 func (l *Log) allocID() uint32 {
+	l.mu.Lock()
 	id := l.nextID
 	l.nextID++
+	l.mu.Unlock()
 	return id
 }
 
@@ -84,17 +86,24 @@ func (l *Log) createInputSet(inputIDs []uint32) (uint32, error) {
 // getOrCreateFileEntry returns the ID for a file, creating the entry if needed.
 // The path should be relative to the execution root.
 func (l *Log) getOrCreateFileEntry(path string) (uint32, error) {
+	l.mu.Lock()
+
 	if id, ok := l.fileIDs[path]; ok {
+		l.mu.Unlock()
 		return id, nil
 	}
 
+	l.mu.Unlock() // Unlock while compute digest.
 	d, err := digest.ComputeForFile(path, filetransfer.DigestFunction)
 	if err != nil {
 		return 0, err
 	}
 
 	id := l.allocID()
+
+	l.mu.Lock()
 	l.fileIDs[path] = id
+	l.mu.Unlock()
 
 	digestProto := &spawnpb.Digest{
 		Hash:      d.GetHash(),
@@ -121,9 +130,6 @@ func (l *Log) getOrCreateFileEntry(path string) (uint32, error) {
 // RecordEdge records an executed edge to the spawn log.
 // This should be called after the edge has finished executing.
 func (l *Log) RecordEdge(edge *graph.Edge, result *SpawnResult) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if edge.IsPhony() {
 		return nil // Skip phony edges.
 	}
