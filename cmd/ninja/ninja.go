@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/buildbuddy-io/gin/internal/browse"
 	"github.com/buildbuddy-io/gin/internal/build"
@@ -185,7 +186,7 @@ func NewNinjaMain(ninjaCommand string, config *build_config.Config) *NinjaMain {
 		diskInterface:   disk.NewRealDiskInterface(),
 		buildLog:        build_log.NewBuildLog(),
 		depsLog:         deps_log.NewDepsLog(),
-		startTimeMillis: metrics.GetTimeMillis(),
+		startTimeMillis: time.Now().UnixMilli(),
 	}
 }
 

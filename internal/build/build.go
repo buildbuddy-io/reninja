@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/build_log"
@@ -907,7 +908,7 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 	if edge.IsPhony() {
 		return true, nil
 	}
-	startTimeMillis := metrics.GetTimeMillis() - b.startTimeMillis
+	startTimeMillis := time.Now().UnixMilli() - b.startTimeMillis
 	b.runningEdges[edge] = startTimeMillis
 
 	b.status.BuildEdgeStarted(edge, startTimeMillis)
@@ -989,7 +990,7 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	}
 
 	startTimeMillis := b.runningEdges[edge]
-	endTimeMillis := metrics.GetTimeMillis() - b.startTimeMillis
+	endTimeMillis := time.Now().UnixMilli() - b.startTimeMillis
 	delete(b.runningEdges, edge)
 
 	b.status.BuildEdgeFinished(edge, startTimeMillis, endTimeMillis, result.Status, result.Output, result.CacheHit)

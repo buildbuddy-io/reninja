@@ -63,12 +63,6 @@ func (m *Metrics) Report() {
 	}
 }
 
-// Get the current time as relative to some epoch.
-// Epoch varies between platforms; only useful for measuring elapsed time.
-func GetTimeMillis() int64 {
-	return time.Now().UnixMilli()
-}
-
 type DoneFunction func()
 
 // The primary interface to metrics.  Use defer metric.Record("foobar") at the top
