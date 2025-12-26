@@ -1693,6 +1693,7 @@ func main() {
 			osExit(1)
 		}
 
+		status.SetBuildDir(ninja.buildDir)
 		if !ninja.OpenBuildLog(false /*=recompactOnly*/) || !ninja.OpenDepsLog(false /*=recompactOnly*/) {
 			osExit(1)
 		}

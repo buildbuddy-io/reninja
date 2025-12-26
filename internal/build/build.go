@@ -28,9 +28,10 @@ import (
 )
 
 type Result struct {
-	Edge   *graph.Edge
-	Status exit_status.ExitStatusType
-	Output string
+	Edge     *graph.Edge
+	Status   exit_status.ExitStatusType
+	Output   string
+	CacheHit bool
 }
 
 func (r Result) Success() bool {
@@ -991,7 +992,7 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	endTimeMillis := metrics.GetTimeMillis() - b.startTimeMillis
 	delete(b.runningEdges, edge)
 
-	b.status.BuildEdgeFinished(edge, startTimeMillis, endTimeMillis, result.Status, result.Output)
+	b.status.BuildEdgeFinished(edge, startTimeMillis, endTimeMillis, result.Status, result.Output, result.CacheHit)
 
 	// The rest of this function only applies to successful commands.
 	if !result.Success() {

@@ -225,9 +225,10 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 		return nil, err
 	}
 	return &Result{
-		Status: exit_status.ExitStatusType(actionResult.GetExitCode()),
-		Output: output,
-		Edge:   edge,
+		Status:   exit_status.ExitStatusType(actionResult.GetExitCode()),
+		Output:   output,
+		Edge:     edge,
+		CacheHit: true,
 	}, nil
 }
 
@@ -275,9 +276,10 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		}
 
 		edgeState.finishedResult <- &Result{
-			Edge:   edge,
-			Status: exitCode,
-			Output: output,
+			Edge:     edge,
+			Status:   exitCode,
+			Output:   output,
+			CacheHit: false,
 		}
 	}()
 
