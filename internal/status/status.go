@@ -38,15 +38,15 @@ type Status interface {
 	EdgeAddedToPlan(edge *graph.Edge)
 	EdgeRemovedFromPlan(edge *graph.Edge)
 
-	BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64)
-	BuildEdgeFinished(edge *graph.Edge, startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool)
+	BuildEdgeStarted(edge *graph.Edge, absoluteStartMillis int64)
+	BuildEdgeFinished(edge *graph.Edge, absoluteStartMillis, absoluteEndMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool)
 
 	// InitializeTool is called by ninja.go to report the program command
 	// line before work begins.
 	InitializeTool(toolName string, args []string)
 
 	// BuildStarted is called when build.go starts running the build process.
-	BuildStarted()
+	BuildStarted(buildStartMillis int64)
 
 	// BuildFinished is called when build.go completes running the build process.
 	BuildFinished()
@@ -107,6 +107,9 @@ type StatusPrinter struct {
 	finishedEdges int64
 	totalEdges    int64
 	runningEdges  int64
+
+	// build start time
+	buildStartMillis int64
 
 	// How much wall clock elapsed so far?
 	timeMillis int64
@@ -340,9 +343,11 @@ func (p *StatusPrinter) EdgeRemovedFromPlan(edge *graph.Edge) {
 		p.etaUnpredictableEdgesRemaining -= 1
 	}
 }
-func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, startTimeMillis int64) {
+func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, absoluteStartMillis int64) {
 	p.startedEdges += 1
 	p.runningEdges += 1
+
+	startTimeMillis := absoluteStartMillis - p.buildStartMillis
 	p.timeMillis = startTimeMillis
 
 	if edge.UseConsole() || p.printer.SmartTerminal() {
@@ -483,7 +488,9 @@ func spawnResult(startTimeMillis, endTimeMillis int64, exitCode exit_status.Exit
 	}
 }
 
-func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool) {
+func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, absoluteStartMillis, absoluteEndMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool) {
+	startTimeMillis := absoluteStartMillis - p.buildStartMillis
+	endTimeMillis := absoluteEndMillis - p.buildStartMillis
 	p.timeMillis = endTimeMillis
 	p.finishedEdges += 1
 
@@ -586,10 +593,11 @@ func (p *StatusPrinter) recordSystemMetrics(millisSinceStart int64) {
 	p.flamegraph.RecordMemoryUsage(util.GetProgramMemoryUsageMB(), millisSinceStart)
 }
 
-func (p *StatusPrinter) BuildStarted() {
+func (p *StatusPrinter) BuildStarted(buildStartMillis int64) {
 	p.startedEdges = 0
 	p.finishedEdges = 0
 	p.runningEdges = 0
+	p.buildStartMillis = buildStartMillis
 
 	p.recordSystemMetrics(0)
 	p.initializeLogs()

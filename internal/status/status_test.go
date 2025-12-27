@@ -2,6 +2,7 @@ package status_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/status"
@@ -11,7 +12,7 @@ import (
 func TestStatusFormatElapsed(t *testing.T) {
 	config := &build_config.Config{}
 	status := status.NewPrinter(config)
-	status.BuildStarted()
+	status.BuildStarted(time.Now().UnixMilli())
 
 	// Before any task is done, the elapsed time must be zero.
 	assert.Equal(t, "[%/e0.000]", status.FormatProgressStatus("[%%/e%e]", 0))

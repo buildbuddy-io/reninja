@@ -793,7 +793,7 @@ func (b *Builder) Build() (exit_status.ExitStatusType, error) {
 	}
 
 	// We are about to start the build process.
-	b.status.BuildStarted()
+	b.status.BuildStarted(b.startTimeMillis)
 
 	// This main loop runs the entire build process.
 	// It is structured like this:
@@ -908,7 +908,7 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 	if edge.IsPhony() {
 		return true, nil
 	}
-	startTimeMillis := time.Now().UnixMilli() - b.startTimeMillis
+	startTimeMillis := time.Now().UnixMilli()
 	b.runningEdges[edge] = startTimeMillis
 
 	b.status.BuildEdgeStarted(edge, startTimeMillis)
@@ -989,11 +989,11 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 		depsNodes = dn
 	}
 
-	startTimeMillis := b.runningEdges[edge]
-	endTimeMillis := time.Now().UnixMilli() - b.startTimeMillis
+	absoluteStartMillis := b.runningEdges[edge]
+	absoluteEndMillis := time.Now().UnixMilli()
 	delete(b.runningEdges, edge)
 
-	b.status.BuildEdgeFinished(edge, startTimeMillis, endTimeMillis, result.Status, result.Output, result.CacheHit)
+	b.status.BuildEdgeFinished(edge, absoluteStartMillis, absoluteEndMillis, result.Status, result.Output, result.CacheHit)
 
 	// The rest of this function only applies to successful commands.
 	if !result.Success() {
@@ -1049,6 +1049,8 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	}
 
 	if b.scan.BuildLog() != nil {
+		startTimeMillis := absoluteStartMillis - b.startTimeMillis
+		endTimeMillis := absoluteEndMillis - b.startTimeMillis
 		if err := b.scan.BuildLog().RecordCommand(edge, startTimeMillis, endTimeMillis, recordMtime); err != nil {
 			return false, fmt.Errorf("Error writing to build log: %s", err)
 		}
