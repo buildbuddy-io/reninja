@@ -54,10 +54,8 @@ func (l *Log) writeEntry(entry *spawnpb.ExecLogEntry) error {
 }
 
 func (l *Log) allocID() uint32 {
-	l.mu.Lock()
 	id := l.nextID
 	l.nextID++
-	l.mu.Unlock()
 	return id
 }
 
@@ -66,7 +64,10 @@ func (l *Log) createInputSet(inputIDs []uint32) (uint32, error) {
 		return 0, nil
 	}
 
+	l.mu.Lock()
 	id := l.allocID()
+	l.mu.Unlock()
+
 	entry := &spawnpb.ExecLogEntry{
 		Id: id,
 		Type: &spawnpb.ExecLogEntry_InputSet_{
@@ -93,22 +94,20 @@ func (l *Log) getOrCreateFileEntry(path string) (uint32, error) {
 		return id, nil
 	}
 
-	l.mu.Unlock() // Unlock while compute digest.
+	l.mu.Unlock() // Unlock while computing file digest.
 	d, err := digest.ComputeForFile(path, filetransfer.DigestFunction)
 	if err != nil {
 		return 0, err
 	}
-
-	newID := l.allocID()
 
 	l.mu.Lock() // Check again that this path has not been mapped.
 	if id, ok := l.fileIDs[path]; ok {
 		l.mu.Unlock()
 		return id, nil
 	}
-	l.fileIDs[path] = newID
+	id := l.allocID()
+	l.fileIDs[path] = id
 	l.mu.Unlock()
-	id := newID
 
 	digestProto := &spawnpb.Digest{
 		Hash:      d.GetHash(),
