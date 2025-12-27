@@ -99,11 +99,16 @@ func (l *Log) getOrCreateFileEntry(path string) (uint32, error) {
 		return 0, err
 	}
 
-	id := l.allocID()
+	newID := l.allocID()
 
-	l.mu.Lock()
-	l.fileIDs[path] = id
+	l.mu.Lock() // Check again that this path has not been mapped.
+	if id, ok := l.fileIDs[path]; ok {
+		l.mu.Unlock()
+		return id, nil
+	}
+	l.fileIDs[path] = newID
 	l.mu.Unlock()
+	id := newID
 
 	digestProto := &spawnpb.Digest{
 		Hash:      d.GetHash(),
