@@ -10,6 +10,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/graph"
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/remote_flags"
+	"github.com/buildbuddy-io/gin/internal/spawn"
 	"github.com/buildbuddy-io/gin/internal/subprocess"
 	"github.com/buildbuddy-io/gin/internal/util"
 )
@@ -17,7 +18,7 @@ import (
 type CommandRunner interface {
 	CanRunMore() int
 	StartCommand(edge *graph.Edge) error
-	WaitForCommand() *Result
+	WaitForCommand() *spawn.Result
 	GetActiveEdges() []*graph.Edge
 	Abort()
 	ClearJobTokens()
@@ -44,7 +45,7 @@ func (d *DryCommandRunner) StartCommand(edge *graph.Edge) error {
 	return nil
 }
 
-func (d *DryCommandRunner) WaitForCommand() *Result {
+func (d *DryCommandRunner) WaitForCommand() *spawn.Result {
 	if len(d.finished) == 0 {
 		return nil
 	}
@@ -52,9 +53,10 @@ func (d *DryCommandRunner) WaitForCommand() *Result {
 	front := d.finished[0]
 	d.finished = d.finished[1:]
 
-	r := &Result{
+	r := &spawn.Result{
 		Status:   exit_status.ExitSuccess,
 		Edge:     front,
+		Runner:   "local",
 		CacheHit: false,
 	}
 	return r
@@ -143,7 +145,7 @@ func (r *RealCommandRunner) StartCommand(edge *graph.Edge) error {
 	return nil
 }
 
-func (r *RealCommandRunner) WaitForCommand() *Result {
+func (r *RealCommandRunner) WaitForCommand() *spawn.Result {
 	var subproc *subprocess.Subprocess
 	for ; subproc == nil; subproc = r.subprocs.NextFinished() {
 		interrupted := r.subprocs.DoWork()
@@ -152,10 +154,11 @@ func (r *RealCommandRunner) WaitForCommand() *Result {
 		}
 	}
 
-	result := &Result{
+	result := &spawn.Result{
 		Status:   subproc.Finish(),
 		Output:   subproc.GetOutput(),
 		Edge:     r.subprocToEdge[subproc],
+		Runner:   "local",
 		CacheHit: false,
 	}
 

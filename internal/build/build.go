@@ -22,22 +22,12 @@ import (
 	"github.com/buildbuddy-io/gin/internal/jobserver"
 	"github.com/buildbuddy-io/gin/internal/metrics"
 	"github.com/buildbuddy-io/gin/internal/priority_queue"
+	"github.com/buildbuddy-io/gin/internal/spawn"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/status"
 	"github.com/buildbuddy-io/gin/internal/timestamp"
 	"github.com/buildbuddy-io/gin/internal/util"
 )
-
-type Result struct {
-	Edge     *graph.Edge
-	Status   exit_status.ExitStatusType
-	Output   string
-	CacheHit bool
-}
-
-func (r Result) Success() bool {
-	return r.Status == exit_status.ExitSuccess
-}
 
 // Enumerate possible steps we want for an edge.
 type Want int
@@ -964,7 +954,7 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 	return true, nil
 }
 
-func (b *Builder) FinishCommand(result *Result) (bool, error) {
+func (b *Builder) FinishCommand(result *spawn.Result) (bool, error) {
 	defer metrics.Record("FinishCommand")()
 	edge := result.Edge
 
@@ -992,7 +982,9 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	absoluteEnd := time.Now()
 	delete(b.runningEdges, edge)
 
-	b.status.BuildEdgeFinished(edge, absoluteStart, absoluteEnd, result.Status, result.Output, result.CacheHit)
+	result.Start = absoluteStart
+	result.End = absoluteEnd
+	b.status.BuildEdgeFinished(edge, result)
 
 	// The rest of this function only applies to successful commands.
 	if !result.Success() {
@@ -1072,7 +1064,7 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	return true, nil
 }
 
-func (b *Builder) ExtractDeps(result *Result, depsType, depsPrefix string) ([]*graph.Node, error) {
+func (b *Builder) ExtractDeps(result *spawn.Result, depsType, depsPrefix string) ([]*graph.Node, error) {
 	depsNodes := make([]*graph.Node, 0)
 
 	if depsType == "msvc" {

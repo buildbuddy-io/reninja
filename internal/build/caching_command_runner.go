@@ -19,6 +19,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/remote_flags"
 	"github.com/buildbuddy-io/gin/internal/remote_headers"
 	"github.com/buildbuddy-io/gin/internal/request_metadata"
+	"github.com/buildbuddy-io/gin/internal/spawn"
 	"github.com/buildbuddy-io/gin/internal/statuserr"
 	"github.com/buildbuddy-io/gin/internal/subprocess"
 	"github.com/buildbuddy-io/gin/internal/util"
@@ -44,7 +45,7 @@ type CachingCommandRunner struct {
 type activeEdgeState struct {
 	edge           *graph.Edge
 	subprocess     *subprocess.Subprocess
-	finishedResult chan *Result
+	finishedResult chan *spawn.Result
 }
 
 func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *CachingCommandRunner {
@@ -168,7 +169,7 @@ func (r *CachingCommandRunner) assembleAndHashAction(edge *graph.Edge) (*repb.Ac
 	return action, flattenedTree, nil
 }
 
-func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*Result, error) {
+func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*spawn.Result, error) {
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := filetransfer.DigestFunction
 	eg, gctx := errgroup.WithContext(ctx)
@@ -224,10 +225,11 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-	return &Result{
+	return &spawn.Result{
 		Status:   exit_status.ExitStatusType(actionResult.GetExitCode()),
 		Output:   output,
 		Edge:     edge,
+		Runner:   "local",
 		CacheHit: true,
 	}, nil
 }
@@ -235,7 +237,7 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	edgeState := &activeEdgeState{
 		edge:           edge,
-		finishedResult: make(chan *Result),
+		finishedResult: make(chan *spawn.Result),
 	}
 	r.mu.Lock()
 	r.activeEdges = append(r.activeEdges, edgeState)
@@ -246,8 +248,8 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		return err
 	}
 
-	makeFailureResult := func(err error) *Result {
-		return &Result{
+	makeFailureResult := func(err error) *spawn.Result {
+		return &spawn.Result{
 			Edge:   edge,
 			Status: exit_status.ExitFailure,
 			Output: err.Error(),
@@ -275,10 +277,11 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			return
 		}
 
-		edgeState.finishedResult <- &Result{
+		edgeState.finishedResult <- &spawn.Result{
 			Edge:     edge,
 			Status:   exitCode,
 			Output:   output,
+			Runner:   "local",
 			CacheHit: false,
 		}
 	}()
@@ -286,7 +289,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	return nil
 }
 
-func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*Result, error) {
+func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*spawn.Result, error) {
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := filetransfer.DigestFunction
 
@@ -360,7 +363,7 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 	return r.uploader.UploadActionResult(ctx, acrn, ar)
 }
 
-func (r *CachingCommandRunner) WaitForCommand() *Result {
+func (r *CachingCommandRunner) WaitForCommand() *spawn.Result {
 	for {
 		r.mu.Lock()
 		edges := make([]*activeEdgeState, len(r.activeEdges))

@@ -3,11 +3,11 @@ package compact_execution
 import (
 	"io"
 	"sync"
-	"time"
 
 	"github.com/buildbuddy-io/gin/internal/digest"
 	"github.com/buildbuddy-io/gin/internal/filetransfer"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/spawn"
 	"github.com/google/shlex"
 	"google.golang.org/protobuf/encoding/protodelim"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -15,17 +15,6 @@ import (
 
 	spawnpb "github.com/buildbuddy-io/gin/genproto/spawn"
 )
-
-// SpawnResult contains the result of executing an edge.
-type SpawnResult struct {
-	ExitCode int32
-	Status   string
-
-	StartTime time.Time
-	EndTime   time.Time
-	Runner    string
-	CacheHit  bool
-}
 
 type Log struct {
 	mu *sync.Mutex
@@ -133,7 +122,7 @@ func (l *Log) getOrCreateFileEntry(path string) (uint32, error) {
 
 // RecordEdge records an executed edge to the spawn log.
 // This should be called after the edge has finished executing.
-func (l *Log) RecordEdge(edge *graph.Edge, result *SpawnResult) error {
+func (l *Log) RecordEdge(edge *graph.Edge, result *spawn.Result) error {
 	if edge.IsPhony() {
 		return nil // Skip phony edges.
 	}
@@ -173,12 +162,12 @@ func (l *Log) RecordEdge(edge *graph.Edge, result *SpawnResult) error {
 
 	// Build metrics.
 	var metrics *spawnpb.SpawnMetrics
-	if result != nil && !result.StartTime.IsZero() && !result.EndTime.IsZero() {
-		wallTime := result.EndTime.Sub(result.StartTime)
+	if result != nil && !result.Start.IsZero() && !result.End.IsZero() {
+		wallTime := result.End.Sub(result.Start)
 		metrics = &spawnpb.SpawnMetrics{
 			TotalTime:         durationpb.New(wallTime),
 			ExecutionWallTime: durationpb.New(wallTime),
-			StartTime:         timestamppb.New(result.StartTime),
+			StartTime:         timestamppb.New(result.Start),
 			InputFiles:        int64(len(edge.Inputs())),
 		}
 	}
@@ -196,8 +185,8 @@ func (l *Log) RecordEdge(edge *graph.Edge, result *SpawnResult) error {
 	}
 
 	if result != nil {
-		spawnEntry.ExitCode = result.ExitCode
-		spawnEntry.Status = result.Status
+		spawnEntry.ExitCode = int32(result.Status)
+		spawnEntry.Status = result.Output
 		spawnEntry.Runner = result.Runner
 		spawnEntry.CacheHit = result.CacheHit
 	}

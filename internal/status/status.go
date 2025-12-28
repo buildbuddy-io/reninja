@@ -28,6 +28,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/remote_flags"
 	"github.com/buildbuddy-io/gin/internal/remote_headers"
 	"github.com/buildbuddy-io/gin/internal/request_metadata"
+	"github.com/buildbuddy-io/gin/internal/spawn"
 	"github.com/buildbuddy-io/gin/internal/util"
 	"github.com/google/uuid"
 
@@ -39,7 +40,7 @@ type Status interface {
 	EdgeRemovedFromPlan(edge *graph.Edge)
 
 	BuildEdgeStarted(edge *graph.Edge, absoluteStart time.Time)
-	BuildEdgeFinished(edge *graph.Edge, absoluteStart, absoluteEnd time.Time, exitCode exit_status.ExitStatusType, output string, cacheHit bool)
+	BuildEdgeFinished(edge *graph.Edge, result *spawn.Result)
 
 	// InitializeTool is called by ninja.go to report the program command
 	// line before work begins.
@@ -475,22 +476,12 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 	p.printer.Print(toPrint, elideMode)
 }
 
-func spawnResult(startTimeMillis, endTimeMillis int64, exitCode exit_status.ExitStatusType, output string, cacheHit bool) compact_execution.SpawnResult {
-	now := time.Now().UnixMilli()
-	elapsed := endTimeMillis - startTimeMillis
-	return compact_execution.SpawnResult{
-		ExitCode:  int32(exitCode),
-		Status:    output,
-		StartTime: time.UnixMilli(now - elapsed),
-		EndTime:   time.UnixMilli(now),
-		Runner:    "local",
-		CacheHit:  cacheHit,
-	}
-}
+func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result) {
+	startTimeMillis := result.Start.Sub(p.buildStart).Milliseconds()
+	endTimeMillis := result.End.Sub(p.buildStart).Milliseconds()
+	exitCode := result.Status
+	output := result.Output
 
-func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, absoluteStart, absoluteEnd time.Time, exitCode exit_status.ExitStatusType, output string, cacheHit bool) {
-	startTimeMillis := absoluteStart.Sub(p.buildStart).Milliseconds()
-	endTimeMillis := absoluteEnd.Sub(p.buildStart).Milliseconds()
 	p.timeMillis = endTimeMillis
 	p.finishedEdges += 1
 
@@ -534,8 +525,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, absoluteStart, absol
 		}
 
 		if p.compactExecutionLog != nil {
-			result := spawnResult(startTimeMillis, endTimeMillis, exitCode, output, cacheHit)
-			p.compactExecutionLog.RecordEdge(edge, &result)
+			p.compactExecutionLog.RecordEdge(edge, result)
 		}
 	}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/disk"
 	"github.com/buildbuddy-io/gin/internal/exit_status"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/spawn"
 	"github.com/buildbuddy-io/gin/internal/state"
 	"github.com/buildbuddy-io/gin/internal/status"
 	"github.com/buildbuddy-io/gin/internal/test"
@@ -687,7 +688,7 @@ func (d *FakeCommandRunner) StartCommand(edge *graph.Edge) error {
 	return nil
 }
 
-func (d *FakeCommandRunner) WaitForCommand() *build.Result {
+func (d *FakeCommandRunner) WaitForCommand() *spawn.Result {
 	if len(d.activeEdges) == 0 {
 		return nil
 	}
@@ -696,7 +697,7 @@ func (d *FakeCommandRunner) WaitForCommand() *build.Result {
 	// so we can pick any edge here.  Pick the last edge.  Tests can
 	// control the order of edges by the name of the first output.
 	edge := d.activeEdges[len(d.activeEdges)-1]
-	r := &build.Result{
+	r := &spawn.Result{
 		Edge: edge,
 	}
 
