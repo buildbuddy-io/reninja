@@ -639,7 +639,7 @@ func (p *Plan) ScheduleWork(edge *graph.Edge, want Want) {
 	}
 }
 
-type RunningEdgeMap = map[*graph.Edge]int64
+type RunningEdgeMap = map[*graph.Edge]time.Time
 
 type Builder struct {
 	state         *state.State
@@ -649,11 +649,11 @@ type Builder struct {
 	commandRunner CommandRunner
 	status        status.Status
 
-	runningEdges    RunningEdgeMap
-	startTimeMillis int64
-	lockFilePath    string
-	diskInterface   disk.Interface
-	explanations    *explanations.OptionalExplanations
+	runningEdges  RunningEdgeMap
+	startTime     time.Time
+	lockFilePath  string
+	diskInterface disk.Interface
+	explanations  *explanations.OptionalExplanations
 
 	scan     *dependency_scan.DependencyScan
 	exitCode exit_status.ExitStatusType
@@ -662,12 +662,12 @@ type Builder struct {
 func NewBuilder(state *state.State, config *build_config.Config, buildLog *build_log.BuildLog,
 	depsLog *deps_log.DepsLog, diskInterface disk.Interface, status status.Status, startTimeMillis int64) *Builder {
 	b := &Builder{
-		state:           state,
-		config:          config,
-		status:          status,
-		startTimeMillis: startTimeMillis,
-		diskInterface:   diskInterface,
-		runningEdges:    make(RunningEdgeMap, 0),
+		state:         state,
+		config:        config,
+		status:        status,
+		startTime:     time.UnixMilli(startTimeMillis),
+		diskInterface: diskInterface,
+		runningEdges:  make(RunningEdgeMap, 0),
 	}
 	b.plan = NewPlan(b)
 
@@ -793,7 +793,7 @@ func (b *Builder) Build() (exit_status.ExitStatusType, error) {
 	}
 
 	// We are about to start the build process.
-	b.status.BuildStarted(b.startTimeMillis)
+	b.status.BuildStarted(b.startTime)
 
 	// This main loop runs the entire build process.
 	// It is structured like this:
@@ -908,10 +908,9 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 	if edge.IsPhony() {
 		return true, nil
 	}
-	startTimeMillis := time.Now().UnixMilli()
-	b.runningEdges[edge] = startTimeMillis
-
-	b.status.BuildEdgeStarted(edge, startTimeMillis)
+	startTime := time.Now()
+	b.runningEdges[edge] = startTime
+	b.status.BuildEdgeStarted(edge, startTime)
 
 	var buildStart timestamp.TimeStamp
 	if b.config.DryRun {
@@ -989,11 +988,11 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 		depsNodes = dn
 	}
 
-	absoluteStartMillis := b.runningEdges[edge]
-	absoluteEndMillis := time.Now().UnixMilli()
+	absoluteStart := b.runningEdges[edge]
+	absoluteEnd := time.Now()
 	delete(b.runningEdges, edge)
 
-	b.status.BuildEdgeFinished(edge, absoluteStartMillis, absoluteEndMillis, result.Status, result.Output, result.CacheHit)
+	b.status.BuildEdgeFinished(edge, absoluteStart, absoluteEnd, result.Status, result.Output, result.CacheHit)
 
 	// The rest of this function only applies to successful commands.
 	if !result.Success() {
@@ -1049,8 +1048,8 @@ func (b *Builder) FinishCommand(result *Result) (bool, error) {
 	}
 
 	if b.scan.BuildLog() != nil {
-		startTimeMillis := absoluteStartMillis - b.startTimeMillis
-		endTimeMillis := absoluteEndMillis - b.startTimeMillis
+		startTimeMillis := absoluteStart.Sub(b.startTime).Milliseconds()
+		endTimeMillis := absoluteEnd.Sub(b.startTime).Milliseconds()
 		if err := b.scan.BuildLog().RecordCommand(edge, startTimeMillis, endTimeMillis, recordMtime); err != nil {
 			return false, fmt.Errorf("Error writing to build log: %s", err)
 		}

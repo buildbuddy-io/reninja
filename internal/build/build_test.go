@@ -2263,28 +2263,28 @@ build out: cc
 
 func TestStatusFormatElapsed_e(t *testing.T) {
 	th := newBuildTestHelper(t)
-	th.status.BuildStarted(time.Now().UnixMilli())
+	th.status.BuildStarted(time.Now())
 	// Before any task is done, the elapsed time must be zero.
 	assert.Equal(t, "[%/e0.000]", th.status.FormatProgressStatus("[%%/e%e]", 0))
 }
 
 func TestStatusFormatElapsed_w(t *testing.T) {
 	th := newBuildTestHelper(t)
-	th.status.BuildStarted(time.Now().UnixMilli())
+	th.status.BuildStarted(time.Now())
 	// Before any task is done, the elapsed time must be zero.
 	assert.Equal(t, "[%/e00:00]", th.status.FormatProgressStatus("[%%/e%w]", 0))
 }
 
 func TestStatusFormatETA(t *testing.T) {
 	th := newBuildTestHelper(t)
-	th.status.BuildStarted(time.Now().UnixMilli())
+	th.status.BuildStarted(time.Now())
 	// Before any task is done, the ETA time must be unknown.
 	assert.Equal(t, "[%/E?]", th.status.FormatProgressStatus("[%%/E%E]", 0))
 }
 
 func TestStatusFormatTimeProgress(t *testing.T) {
 	th := newBuildTestHelper(t)
-	th.status.BuildStarted(time.Now().UnixMilli())
+	th.status.BuildStarted(time.Now())
 	// Before any task is done, the percentage of elapsed time must be zero.
 	assert.Equal(t, "[%/p  0%]", th.status.FormatProgressStatus("[%%/p%p]", 0))
 }

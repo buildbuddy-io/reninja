@@ -12,7 +12,7 @@ import (
 func TestStatusFormatElapsed(t *testing.T) {
 	config := &build_config.Config{}
 	status := status.NewPrinter(config)
-	status.BuildStarted(time.Now().UnixMilli())
+	status.BuildStarted(time.Now())
 
 	// Before any task is done, the elapsed time must be zero.
 	assert.Equal(t, "[%/e0.000]", status.FormatProgressStatus("[%%/e%e]", 0))
