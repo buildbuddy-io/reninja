@@ -372,6 +372,10 @@ type uploadRetryResult = struct {
 // UploadFromReader confirms that the expected number of bytes have been written to the CAS
 // and returns a DataLossError if not.
 func UploadFromReader(ctx context.Context, bsClient bspb.ByteStreamClient, r *digest.CASResourceName, in io.Reader) (*repb.Digest, int64, error) {
+	if digest.IsEmptyHash(r.GetDigest(), r.GetDigestFunction()) {
+		// Skipping empty digest upload.
+		return r.GetDigest(), 0, nil
+	}
 	// We can only retry if we can rewind the reader back to the beginning.
 	seeker, retryable := in.(io.Seeker)
 	if retryable {

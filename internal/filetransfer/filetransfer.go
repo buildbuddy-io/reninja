@@ -201,9 +201,6 @@ func (u Uploader) HashDirectoryTree(files []string) (*repb.Digest, FlattenedTree
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(visited) == 0 {
-		return nil, nil, statuserr.InternalError("empty directory list after computing directory tree; this should never happen")
-	}
 	return rootDirectoryDigest, visited, nil
 }
 
@@ -249,15 +246,20 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 	uploadableNode := &UploadableNode{}
 	visited = append(visited, uploadableNode)
 
-	root := pathsToUpload[0]
-	rest := pathsToUpload[1:]
+	var root string
+	var rest []string
+
+	if len(pathsToUpload) > 0 {
+		root = pathsToUpload[0]
+		rest = pathsToUpload[1:]
+	}
 
 	for i, path := range rest {
 		if filepath.Dir(path) != root {
 			continue
 		}
-		name := strings.TrimPrefix(path, root)
-		entry, err := os.Stat(path)
+		name := filepath.Base(path)
+		entry, err := os.Lstat(path) // NB: Lstat.
 		if err != nil {
 			return nil, nil, err
 		}

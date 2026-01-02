@@ -150,9 +150,11 @@ func (r *CachingCommandRunner) assembleAndHashAction(edge *graph.Edge) (*repb.Ac
 		return nil, nil, err
 	}
 
-	files := make([]string, len(edge.ExplicitInputs()))
-	for i, input := range edge.ExplicitInputs() {
-		files[i] = input.Path()
+	files := make([]string, 0, len(edge.ExplicitInputs()))
+	for _, input := range edge.ExplicitInputs() {
+		if input.Exists() {
+			files = append(files, input.Path())
+		}
 	}
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
@@ -314,8 +316,8 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 
 	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	ar := &repb.ActionResult{
-		ExitCode:    int32(exitCode),
-		OutputFiles: make([]*repb.OutputFile, len(edge.Outputs())),
+		ExitCode: int32(exitCode),
+		OutputFiles: make([]*repb.OutputFile, 0, len(edge.Outputs())),
 	}
 
 	instanceName := remote_flags.RemoteInstanceName()
@@ -333,7 +335,10 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 	//}
 
 	// Upload outputs
-	for i, output := range edge.Outputs() {
+	for _, output := range edge.Outputs() {
+		if !output.Exists() {
+			continue  // Skip phony outputs.
+		}
 		fi, err := os.Stat(output.Path())
 		if err != nil {
 			return err
@@ -342,11 +347,11 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 		if err != nil {
 			return err
 		}
-		ar.OutputFiles[i] = &repb.OutputFile{
+		ar.OutputFiles = append(ar.OutputFiles, &repb.OutputFile{
 			Path:         output.Path(),
 			Digest:       d,
 			IsExecutable: cachetools.IsExecutable(fi),
-		}
+		})
 	}
 
 	// Upload stdout

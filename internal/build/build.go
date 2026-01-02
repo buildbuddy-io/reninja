@@ -948,7 +948,7 @@ func (b *Builder) StartEdge(edge *graph.Edge) (bool, error) {
 
 	// start command computing and run it
 	if err := b.commandRunner.StartCommand(edge); err != nil {
-		return false, fmt.Errorf("command '%s' failed.", edge.EvaluateCommand(false))
+		return false, fmt.Errorf("command '%s' failed: %w", edge.EvaluateCommand(false), err)
 	}
 
 	return true, nil
