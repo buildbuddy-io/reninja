@@ -389,17 +389,19 @@ func (r *CachingCommandRunner) WaitForCommand() *spawn.Result {
 		r.mu.Unlock()
 
 		for i := 0; i < len(edges); i++ {
-			if res, ok := <-edges[i].finishedResult; ok {
+			select {
+			case res := <-edges[i].finishedResult:
 				r.mu.Lock()
 				r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
 					return n == edges[i]
 				})
 				r.mu.Unlock()
 				return res
-			}
-			if subprocess.Interrupted() {
-				r.cancel()
-				return nil
+			default:
+				if subprocess.Interrupted() {
+					r.cancel()
+					return nil
+				}
 			}
 		}
 	}
