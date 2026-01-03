@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/buildbuddy-io/gin/internal/build_config"
 	"github.com/buildbuddy-io/gin/internal/cachetools"
@@ -46,6 +47,7 @@ type activeEdgeState struct {
 	edge           *graph.Edge
 	subprocess     *subprocess.Subprocess
 	finishedResult chan *spawn.Result
+	executing      atomic.Bool
 }
 
 func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *CachingCommandRunner {
@@ -99,7 +101,14 @@ func (r *CachingCommandRunner) Abort() {
 
 func (r *CachingCommandRunner) CanRunMore() int {
 	// returns number of running edges + number of uncollected edges.
-	subprocNumber := len(r.activeEdges)
+	subprocNumber := 0
+	r.mu.Lock()
+	for _, edgeState := range r.activeEdges {
+		if edgeState.executing.Load() {
+			subprocNumber += 1
+		}
+	}
+	r.mu.Unlock()
 	capacity := r.config.Parallelism - subprocNumber
 
 	if r.jobserver != nil {
@@ -240,6 +249,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	edgeState := &activeEdgeState{
 		edge:           edge,
 		finishedResult: make(chan *spawn.Result),
+		executing:      atomic.Bool{},
 	}
 	r.mu.Lock()
 	r.activeEdges = append(r.activeEdges, edgeState)
@@ -272,8 +282,11 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			return
 		}
 
+		edgeState.executing.Store(true)
 		exitCode := subproc.Finish()
+		edgeState.executing.Store(false)
 		output := subproc.GetOutput()
+
 		if err := r.uploadCompletedEdge(edge, exitCode, output, action, flattenedTree); err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
@@ -316,7 +329,7 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 
 	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	ar := &repb.ActionResult{
-		ExitCode: int32(exitCode),
+		ExitCode:    int32(exitCode),
 		OutputFiles: make([]*repb.OutputFile, 0, len(edge.Outputs())),
 	}
 
@@ -337,7 +350,7 @@ func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode ex
 	// Upload outputs
 	for _, output := range edge.Outputs() {
 		if !output.Exists() {
-			continue  // Skip phony outputs.
+			continue // Skip phony outputs.
 		}
 		fi, err := os.Stat(output.Path())
 		if err != nil {
