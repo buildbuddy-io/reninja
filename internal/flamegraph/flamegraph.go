@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/graph"
@@ -41,137 +42,136 @@ type Event struct {
 
 // Target represents an edge.
 type Target struct {
-	StartTimeMillis int64
-	EndTimeMillis   int64
-	Targets         []string
+	Start   time.Time
+	End     time.Time
+	Targets []string
 }
 
 type Float64Sample struct {
-	Value           float64
-	StartTimeMillis int64
+	Value float64
+	Time  time.Time
 }
 
 type Int64Sample struct {
-	Value           int64
-	StartTimeMillis int64
+	Value int64
+	Time  time.Time
 }
 
 // Example Event:
 // {"name":"System load average","pid":1,"tid":35,"cname":"generic_work","ph":"C","ts":196155,"args":{"load":0.5126953125000001}}
-func loadAverageEvent(sample Float64Sample) Event {
+func (g *Flamegraph) loadAverageEvent(sample Float64Sample) Event {
 	return Event{
 		Name:      "System load average",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  1,
 		CName:     "generic_work",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"load": sample.Value},
 	}
 }
 
 // Example Event:
 // {"name":"CPU usage (Bazel)","pid":1,"tid":35,"cname":"good","ph":"C","ts":81196155,"args":{"cpu":3.986242310474936}},
-func cpuUsageEvent(sample Float64Sample) Event {
+func (g *Flamegraph) cpuUsageEvent(sample Float64Sample) Event {
 	return Event{
 		Name:      "CPU usage (cores)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  35,
 		CName:     "good",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"cpu": sample.Value},
 	}
-
 }
 
 // Example Event:
 // {"name":"Memory usage (Bazel)","pid":1,"tid":35,"cname":"olive","ph":"C","ts":216196155,"args":{"memory":708.0}}
-func memoryUsageEvent(sample Float64Sample) Event {
+func (g *Flamegraph) memoryUsageEvent(sample Float64Sample) Event {
 	return Event{
 		Name:      "Memory usage (Bazel)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  35,
 		CName:     "olive",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"memory": sample.Value},
 	}
 }
 
 // Example Event:
 // {"name":"action count","pid":1,"tid":35,"ph":"C","ts":221790845,"args":{"action":1.0,"local action cache":0.0}},
-func actionCountEvent(sample Int64Sample) Event {
+func (g *Flamegraph) actionCountEvent(sample Int64Sample) Event {
 	return Event{
 		Name:      "action count",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  35,
 		CName:     "detailed_memory_dump",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"action": sample.Value},
 	}
 }
 
 // Example Event:
 // {"name":"CPU usage (total)","pid":1,"tid":35,"cname":"rail_load","ph":"C","ts":196155,"args":{"system cpu":2.980659307359308}}
-func systemCPUUsageEvent(sample Float64Sample) Event {
+func (g *Flamegraph) systemCPUUsageEvent(sample Float64Sample) Event {
 	return Event{
 		Name:      "CPU usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  35,
 		CName:     "rail_load",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system cpu": sample.Value},
 	}
-
 }
 
 // Example Event:
 // {"name":"Memory usage (total)","pid":1,"tid":35,"cname":"bad","ph":"C","ts":41196155,"args":{"system memory":2041.0009999999997}}
-func systemMemoryUsageEvent(sample Float64Sample) Event {
+func (g *Flamegraph) systemMemoryUsageEvent(sample Float64Sample) Event {
 	return Event{
 		Name:      "Memory usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  35,
 		CName:     "bad",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system memory": sample.Value},
 	}
 }
 
 // Example Event:
 // {"name":"Network Up usage (total)","pid":1,"tid":35,"cname":"rail_response","ph":"C","ts":134196155,"args":{"system network up (Mbps)":0.049276101143796214}}
-func systemNetworkUploadEvent(sample Float64Sample) Event {
+func (g *Flamegraph) systemNetworkUploadEvent(sample Float64Sample) Event {
 	return Event{
 		Name:      "Network Up usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  35,
 		CName:     "rail_response",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system network up (Mbps)": sample.Value},
 	}
 }
 
 // Example Event:
 // {"name":"Network Down usage (total)","pid":1,"tid":35,"cname":"rail_response","ph":"C","ts":81196155,"args":{"system network down (Mbps)":5.327599588506307}}
-func systemNetworkDownloadEvent(sample Float64Sample) Event {
+func (g *Flamegraph) systemNetworkDownloadEvent(sample Float64Sample) Event {
 	return Event{
 		Name:      "Network Down usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  35,
 		CName:     "rail_response",
-		Timestamp: sample.StartTimeMillis * 1000,
+		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system network down (Mbps)": sample.Value},
 	}
 }
 
 type Flamegraph struct {
 	mu                           *sync.Mutex
+	startTime                    time.Time
 	targets                      map[string]*Target
 	loadAverageSamples           []Float64Sample
 	cpuUsageSamples              []Float64Sample
@@ -184,9 +184,14 @@ type Flamegraph struct {
 	wroteFirst                   bool
 }
 
-func New() *Flamegraph {
+func (g *Flamegraph) toMicros(t time.Time) int64 {
+	return t.Sub(g.startTime).Microseconds()
+}
+
+func New(buildStart time.Time) *Flamegraph {
 	return &Flamegraph{
 		mu:                           &sync.Mutex{},
+		startTime:                    buildStart,
 		targets:                      make(map[string]*Target, 0),
 		loadAverageSamples:           make([]Float64Sample, 0),
 		cpuUsageSamples:              make([]Float64Sample, 0),
@@ -199,74 +204,74 @@ func New() *Flamegraph {
 	}
 }
 
-func (g *Flamegraph) RecordSystemNetworkUsage(upload, download float64, startTimeMillis int64) {
+func (g *Flamegraph) RecordSystemNetworkUsage(upload, download float64, t time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.systemNetworkUploadSamples = append(g.systemNetworkUploadSamples, Float64Sample{
-		Value:           upload,
-		StartTimeMillis: startTimeMillis,
+		Value: upload,
+		Time:  t,
 	})
 	g.systemNetworkDownloadSamples = append(g.systemNetworkDownloadSamples, Float64Sample{
-		Value:           download,
-		StartTimeMillis: startTimeMillis,
+		Value: download,
+		Time:  t,
 	})
 }
 
-func (g *Flamegraph) RecordLoadAverage(avg float64, startTimeMillis int64) {
+func (g *Flamegraph) RecordLoadAverage(avg float64, t time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.loadAverageSamples = append(g.loadAverageSamples, Float64Sample{
-		Value:           avg,
-		StartTimeMillis: startTimeMillis,
+		Value: avg,
+		Time:  t,
 	})
 }
 
-func (g *Flamegraph) RecordActionCount(count int64, startTimeMillis int64) {
+func (g *Flamegraph) RecordActionCount(count int64, t time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.actionCountSamples = append(g.actionCountSamples, Int64Sample{
-		Value:           count,
-		StartTimeMillis: startTimeMillis,
+		Value: count,
+		Time:  t,
 	})
 }
 
-func (g *Flamegraph) RecordCPUUsage(cores float64, startTimeMillis int64) {
+func (g *Flamegraph) RecordCPUUsage(cores float64, t time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.cpuUsageSamples = append(g.cpuUsageSamples, Float64Sample{
-		Value:           cores,
-		StartTimeMillis: startTimeMillis,
+		Value: cores,
+		Time:  t,
 	})
 }
 
-func (g *Flamegraph) RecordMemoryUsage(mb float64, startTimeMillis int64) {
+func (g *Flamegraph) RecordMemoryUsage(mb float64, t time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.memoryUsageSamples = append(g.memoryUsageSamples, Float64Sample{
-		Value:           mb,
-		StartTimeMillis: startTimeMillis,
+		Value: mb,
+		Time:  t,
 	})
 }
 
-func (g *Flamegraph) RecordSystemMemoryUsage(mb float64, startTimeMillis int64) {
+func (g *Flamegraph) RecordSystemMemoryUsage(mb float64, t time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.systemMemoryUsageSamples = append(g.systemMemoryUsageSamples, Float64Sample{
-		Value:           mb,
-		StartTimeMillis: startTimeMillis,
+		Value: mb,
+		Time:  t,
 	})
 }
 
-func (g *Flamegraph) RecordSystemCPUUsage(cores float64, startTimeMillis int64) {
+func (g *Flamegraph) RecordSystemCPUUsage(cores float64, t time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.systemCPUUsageSamples = append(g.systemCPUUsageSamples, Float64Sample{
-		Value:           cores,
-		StartTimeMillis: startTimeMillis,
+		Value: cores,
+		Time:  t,
 	})
 }
 
-func (g *Flamegraph) RecordEdge(edge *graph.Edge, startTimeMillis, endTimeMillis int64) {
+func (g *Flamegraph) RecordEdge(edge *graph.Edge, start, end time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	command := edge.EvaluateCommand(true)
@@ -275,7 +280,7 @@ func (g *Flamegraph) RecordEdge(edge *graph.Edge, startTimeMillis, endTimeMillis
 	for _, out := range edge.Outputs() {
 		target, ok := g.targets[commandHash]
 		if !ok {
-			target = &Target{startTimeMillis, endTimeMillis, make([]string, 0)}
+			target = &Target{start, end, make([]string, 0)}
 			g.targets[commandHash] = target
 		}
 		g.targets[commandHash].Targets = append(g.targets[commandHash].Targets, out.Path())
@@ -283,17 +288,17 @@ func (g *Flamegraph) RecordEdge(edge *graph.Edge, startTimeMillis, endTimeMillis
 }
 
 type ThreadTracker struct {
-	workers []int64
+	workers []time.Time
 }
 
 func (t *ThreadTracker) alloc(target *Target) (int, bool) {
 	for worker := range len(t.workers) {
-		if t.workers[worker] >= target.EndTimeMillis {
-			t.workers[worker] = target.StartTimeMillis
+		if !t.workers[worker].Before(target.End) {
+			t.workers[worker] = target.Start
 			return worker, false
 		}
 	}
-	t.workers = append(t.workers, target.StartTimeMillis)
+	t.workers = append(t.workers, target.Start)
 	return len(t.workers) - 1, true
 }
 
@@ -335,13 +340,13 @@ func (g *Flamegraph) Write(w io.Writer) error {
 
 	// Sort by descending end time.
 	slices.SortFunc(allTargets, func(a, b *Target) int {
-		return int(b.EndTimeMillis - a.EndTimeMillis)
+		return b.End.Compare(a.End)
 	})
 
 	if _, err := io.WriteString(w, `{"traceEvents":[`); err != nil {
 		return statuserr.WrapError(err, "write response")
 	}
-	threadTracker := &ThreadTracker{make([]int64, 0)}
+	threadTracker := &ThreadTracker{make([]time.Time, 0)}
 	for _, target := range allTargets {
 		tid, newThread := threadTracker.alloc(target)
 		tid += 100 // offset thread IDs by 100 to leave room for other stuff.
@@ -372,8 +377,8 @@ func (g *Flamegraph) Write(w io.Writer) error {
 			Category:  "targets",
 			Name:      fmt.Sprintf("%0s", strings.Join(target.Targets, ", ")),
 			Phase:     PhaseComplete,
-			Timestamp: target.StartTimeMillis * 1000,
-			Duration:  (target.EndTimeMillis - target.StartTimeMillis) * 1000,
+			Timestamp: g.toMicros(target.Start),
+			Duration:  target.End.Sub(target.Start).Microseconds(),
 			ProcessID: 1,
 			ThreadID:  int64(tid),
 			Args:      map[string]any{},
@@ -385,28 +390,28 @@ func (g *Flamegraph) Write(w io.Writer) error {
 	}
 
 	for _, sample := range g.actionCountSamples {
-		ev := actionCountEvent(sample)
+		ev := g.actionCountEvent(sample)
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}
 	}
 
 	for _, sample := range g.systemNetworkUploadSamples {
-		ev := systemNetworkUploadEvent(sample)
+		ev := g.systemNetworkUploadEvent(sample)
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}
 	}
 
 	for _, sample := range g.loadAverageSamples {
-		ev := loadAverageEvent(sample)
+		ev := g.loadAverageEvent(sample)
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}
 	}
 
 	for _, sample := range g.systemCPUUsageSamples {
-		ev := systemCPUUsageEvent(sample)
+		ev := g.systemCPUUsageEvent(sample)
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}
@@ -415,21 +420,21 @@ func (g *Flamegraph) Write(w io.Writer) error {
 	// TODO: ninja CPU
 
 	for _, sample := range g.systemMemoryUsageSamples {
-		ev := systemMemoryUsageEvent(sample)
+		ev := g.systemMemoryUsageEvent(sample)
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}
 	}
 
 	for _, sample := range g.systemNetworkDownloadSamples {
-		ev := systemNetworkDownloadEvent(sample)
+		ev := g.systemNetworkDownloadEvent(sample)
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}
 	}
 
 	for _, sample := range g.memoryUsageSamples {
-		ev := memoryUsageEvent(sample)
+		ev := g.memoryUsageEvent(sample)
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}

@@ -364,7 +364,7 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, absoluteStart time.Ti
 			util.Warningf("Failed to publish build metadata: %s", err)
 		}
 	}
-	p.recordSystemMetrics(startTimeMillis)
+	p.recordSystemMetrics(absoluteStart)
 }
 
 func (p *StatusPrinter) RecalculateProgressPrediction() {
@@ -520,8 +520,8 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		}
 
 		if p.flamegraph != nil {
-			p.flamegraph.RecordEdge(edge, startTimeMillis, endTimeMillis)
-			p.recordSystemMetrics(p.timeMillis)
+			p.flamegraph.RecordEdge(edge, result.Start, result.End)
+			p.recordSystemMetrics(result.End)
 		}
 
 		if p.compactExecutionLog != nil {
@@ -566,7 +566,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 	}
 }
 
-func (p *StatusPrinter) recordSystemMetrics(millisSinceStart int64) {
+func (p *StatusPrinter) recordSystemMetrics(t time.Time) {
 	if p.flamegraph == nil {
 		return
 	}
@@ -574,13 +574,13 @@ func (p *StatusPrinter) recordSystemMetrics(millisSinceStart int64) {
 	actionsRunning := p.runningEdges
 	p.mu.Unlock()
 
-	p.flamegraph.RecordActionCount(actionsRunning, millisSinceStart)
-	p.flamegraph.RecordLoadAverage(util.GetLoadAverage(), millisSinceStart)
-	p.flamegraph.RecordSystemMemoryUsage(util.GetSystemMemoryUsageMB(), millisSinceStart)
-	p.flamegraph.RecordSystemCPUUsage(util.GetSystemCPUUsageCores(), millisSinceStart)
+	p.flamegraph.RecordActionCount(actionsRunning, t)
+	p.flamegraph.RecordLoadAverage(util.GetLoadAverage(), t)
+	p.flamegraph.RecordSystemMemoryUsage(util.GetSystemMemoryUsageMB(), t)
+	p.flamegraph.RecordSystemCPUUsage(util.GetSystemCPUUsageCores(), t)
 	up, down := util.GetSystemNetworkUsage()
-	p.flamegraph.RecordSystemNetworkUsage(up, down, millisSinceStart)
-	p.flamegraph.RecordMemoryUsage(util.GetProgramMemoryUsageMB(), millisSinceStart)
+	p.flamegraph.RecordSystemNetworkUsage(up, down, t)
+	p.flamegraph.RecordMemoryUsage(util.GetProgramMemoryUsageMB(), t)
 }
 
 func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
@@ -589,22 +589,17 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 	p.runningEdges = 0
 	p.buildStart = buildStart
 
-	p.recordSystemMetrics(0)
+	p.recordSystemMetrics(buildStart)
 	p.initializeLogs()
 
 	// Periodically (every 1 second) update system metrics.
 	go func() {
-		lastTimeStamp := time.Now().UnixMilli()
-		elapsed := int64(0)
 		for {
 			select {
 			case <-p.done:
 				return
 			case t := <-p.ticker.C:
-				currentTimeStamp := t.UnixMilli()
-				elapsed += currentTimeStamp - lastTimeStamp
-				lastTimeStamp = currentTimeStamp
-				p.recordSystemMetrics(elapsed)
+				p.recordSystemMetrics(t)
 			}
 		}
 	}()
@@ -624,7 +619,7 @@ func (p *StatusPrinter) BuildFinished() {
 	p.done <- true
 
 	// Update system metrics one last time
-	p.recordSystemMetrics(p.timeMillis)
+	p.recordSystemMetrics(time.Now())
 }
 
 func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
@@ -756,7 +751,7 @@ func (p *StatusPrinter) initializeLogs() {
 	}
 
 	p.logsInitialized.Do(func() {
-		p.flamegraph = flamegraph.New()
+		p.flamegraph = flamegraph.New(time.Now())
 
 		execLogPath := ".ninja_compact_execution_log.binpb.zst"
 		if p.buildDir != "" {
