@@ -20,6 +20,7 @@ import (
 	"github.com/buildbuddy-io/gin/internal/remote_flags"
 	"github.com/buildbuddy-io/gin/internal/remote_headers"
 	"github.com/buildbuddy-io/gin/internal/request_metadata"
+	"github.com/buildbuddy-io/gin/internal/span"
 	"github.com/buildbuddy-io/gin/internal/spawn"
 	"github.com/buildbuddy-io/gin/internal/statuserr"
 	"github.com/buildbuddy-io/gin/internal/subprocess"
@@ -153,7 +154,9 @@ func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 	return cmdProto, nil
 }
 
-func (r *CachingCommandRunner) assembleAndHashAction(edge *graph.Edge) (*repb.Action, filetransfer.FlattenedTree, error) {
+func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*repb.Action, filetransfer.FlattenedTree, error) {
+	defer span.Record(ctx, "MerkleTreeComputer.buildForSpawn")()
+
 	cmd, err := assembleCommand(edge)
 	if err != nil {
 		return nil, nil, err
@@ -255,7 +258,10 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	r.activeEdges = append(r.activeEdges, edgeState)
 	r.mu.Unlock()
 
-	action, flattenedTree, err := r.assembleAndHashAction(edge)
+	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
+	ctx = span.BeginTracing(ctx)
+
+	action, flattenedTree, err := r.assembleAndHashAction(ctx, edge)
 	if err != nil {
 		return err
 	}
@@ -265,19 +271,22 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			Edge:   edge,
 			Status: exit_status.ExitFailure,
 			Output: err.Error(),
+			Events: span.Events(ctx),
 		}
 	}
 
 	go func() {
-		ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 		if res, err := r.downloadCompletedEdge(ctx, action, edge); err == nil {
+			res.Events = span.Events(ctx)
 			edgeState.finishedResult <- res
 			return
 		}
 
+		doneExecutingFn := span.Record(ctx, "subprocess.run")
 		command := edge.EvaluateCommand(false)
 		subproc, err := subprocess.NewSubprocess(command, edge.UseConsole())
 		if err != nil {
+			doneExecutingFn()
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
 		}
@@ -286,8 +295,9 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		exitCode := subproc.Finish()
 		edgeState.executing.Store(false)
 		output := subproc.GetOutput()
+		doneExecutingFn()
 
-		if err := r.uploadCompletedEdge(edge, exitCode, output, action, flattenedTree); err != nil {
+		if err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action, flattenedTree); err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
 		}
@@ -298,6 +308,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			Output:   output,
 			Runner:   "local",
 			CacheHit: false,
+			Events:   span.Events(ctx),
 		}
 	}()
 
@@ -305,6 +316,8 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 }
 
 func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*spawn.Result, error) {
+	defer span.Record(ctx, "remote output download")()
+
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := filetransfer.DigestFunction
 
@@ -321,13 +334,13 @@ func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action
 	return nil, statuserr.NotFoundError("ActionResult not found")
 }
 
-func (r *CachingCommandRunner) uploadCompletedEdge(edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action, tree filetransfer.FlattenedTree) error {
+func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action, tree filetransfer.FlattenedTree) error {
 	// Skip uploading failed actions.
 	if exitCode != exit_status.ExitSuccess {
 		return nil
 	}
+	defer span.Record(ctx, "upload outputs")()
 
-	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	ar := &repb.ActionResult{
 		ExitCode:    int32(exitCode),
 		OutputFiles: make([]*repb.OutputFile, 0, len(edge.Outputs())),

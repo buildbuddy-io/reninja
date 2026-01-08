@@ -12,6 +12,7 @@ import (
 
 	"github.com/buildbuddy-io/gin/internal/build_log"
 	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/gin/internal/span"
 	"github.com/buildbuddy-io/gin/internal/statuserr"
 )
 
@@ -42,9 +43,10 @@ type Event struct {
 
 // Target represents an edge.
 type Target struct {
-	Start   time.Time
-	End     time.Time
-	Targets []string
+	Start      time.Time
+	End        time.Time
+	Targets    []string
+	SpanEvents []span.Event
 }
 
 type Float64Sample struct {
@@ -78,7 +80,7 @@ func (g *Flamegraph) cpuUsageEvent(sample Float64Sample) Event {
 		Name:      "CPU usage (cores)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
-		ThreadID:  35,
+		ThreadID:  1,
 		CName:     "good",
 		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"cpu": sample.Value},
@@ -92,7 +94,7 @@ func (g *Flamegraph) memoryUsageEvent(sample Float64Sample) Event {
 		Name:      "Memory usage (Bazel)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
-		ThreadID:  35,
+		ThreadID:  1,
 		CName:     "olive",
 		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"memory": sample.Value},
@@ -106,7 +108,7 @@ func (g *Flamegraph) actionCountEvent(sample Int64Sample) Event {
 		Name:      "action count",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
-		ThreadID:  35,
+		ThreadID:  1,
 		CName:     "detailed_memory_dump",
 		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"action": sample.Value},
@@ -120,7 +122,7 @@ func (g *Flamegraph) systemCPUUsageEvent(sample Float64Sample) Event {
 		Name:      "CPU usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
-		ThreadID:  35,
+		ThreadID:  1,
 		CName:     "rail_load",
 		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system cpu": sample.Value},
@@ -134,7 +136,7 @@ func (g *Flamegraph) systemMemoryUsageEvent(sample Float64Sample) Event {
 		Name:      "Memory usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
-		ThreadID:  35,
+		ThreadID:  1,
 		CName:     "bad",
 		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system memory": sample.Value},
@@ -148,7 +150,7 @@ func (g *Flamegraph) systemNetworkUploadEvent(sample Float64Sample) Event {
 		Name:      "Network Up usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
-		ThreadID:  35,
+		ThreadID:  1,
 		CName:     "rail_response",
 		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system network up (Mbps)": sample.Value},
@@ -162,7 +164,7 @@ func (g *Flamegraph) systemNetworkDownloadEvent(sample Float64Sample) Event {
 		Name:      "Network Down usage (total)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
-		ThreadID:  35,
+		ThreadID:  1,
 		CName:     "rail_response",
 		Timestamp: g.toMicros(sample.Time),
 		Args:      map[string]any{"system network down (Mbps)": sample.Value},
@@ -181,6 +183,7 @@ type Flamegraph struct {
 	systemMemoryUsageSamples     []Float64Sample
 	systemNetworkUploadSamples   []Float64Sample
 	systemNetworkDownloadSamples []Float64Sample
+	generalEvents                []Event
 	wroteFirst                   bool
 }
 
@@ -201,6 +204,7 @@ func New(buildStart time.Time) *Flamegraph {
 		systemMemoryUsageSamples:     make([]Float64Sample, 0),
 		systemNetworkUploadSamples:   make([]Float64Sample, 0),
 		systemNetworkDownloadSamples: make([]Float64Sample, 0),
+		generalEvents:                make([]Event, 0),
 	}
 }
 
@@ -271,7 +275,20 @@ func (g *Flamegraph) RecordSystemCPUUsage(cores float64, t time.Time) {
 	})
 }
 
-func (g *Flamegraph) RecordEdge(edge *graph.Edge, start, end time.Time) {
+func (g *Flamegraph) RecordGeneralInformationEvent(name string, start time.Time, end time.Time) {
+	ev := Event{
+		Category:  "general information",
+		Name:      name,
+		Phase:     PhaseComplete,
+		ProcessID: 1,
+		ThreadID:  1,
+		Timestamp: g.toMicros(start),
+		Duration:  end.Sub(start).Microseconds(),
+	}
+	g.generalEvents = append(g.generalEvents, ev)
+}
+
+func (g *Flamegraph) RecordEdge(edge *graph.Edge, start, end time.Time, events ...span.Event) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	command := edge.EvaluateCommand(true)
@@ -280,10 +297,11 @@ func (g *Flamegraph) RecordEdge(edge *graph.Edge, start, end time.Time) {
 	for _, out := range edge.Outputs() {
 		target, ok := g.targets[commandHash]
 		if !ok {
-			target = &Target{start, end, make([]string, 0)}
+			target = &Target{start, end, make([]string, 0), nil}
 			g.targets[commandHash] = target
 		}
 		g.targets[commandHash].Targets = append(g.targets[commandHash].Targets, out.Path())
+		g.targets[commandHash].SpanEvents = append(g.targets[commandHash].SpanEvents, events...)
 	}
 }
 
@@ -387,6 +405,21 @@ func (g *Flamegraph) Write(w io.Writer) error {
 		if err := g.writeEvent(w, ev); err != nil {
 			return err
 		}
+
+		for _, spanEvent := range target.SpanEvents {
+			ev := Event{
+				Category:  "general information",
+				Name:      spanEvent.Name,
+				Phase:     PhaseComplete,
+				ProcessID: 1,
+				ThreadID:  int64(tid),
+				Timestamp: g.toMicros(spanEvent.Start),
+				Duration:  spanEvent.End.Sub(spanEvent.Start).Microseconds(),
+			}
+			if err := g.writeEvent(w, &ev); err != nil {
+				return err
+			}
+		}
 	}
 
 	for _, sample := range g.actionCountSamples {
@@ -435,6 +468,12 @@ func (g *Flamegraph) Write(w io.Writer) error {
 
 	for _, sample := range g.memoryUsageSamples {
 		ev := g.memoryUsageEvent(sample)
+		if err := g.writeEvent(w, &ev); err != nil {
+			return err
+		}
+	}
+
+	for _, ev := range g.generalEvents {
 		if err := g.writeEvent(w, &ev); err != nil {
 			return err
 		}

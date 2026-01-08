@@ -477,15 +477,15 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 }
 
 func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result) {
-	startTimeMillis := result.Start.Sub(p.buildStart).Milliseconds()
-	endTimeMillis := result.End.Sub(p.buildStart).Milliseconds()
+	startOffset := result.Start.Sub(p.buildStart)
+	endOffset := result.End.Sub(p.buildStart)
 	exitCode := result.Status
 	output := result.Output
 
-	p.timeMillis = endTimeMillis
+	p.timeMillis = endOffset.Milliseconds()
 	p.finishedEdges += 1
 
-	elapsed := endTimeMillis - startTimeMillis
+	elapsed := (endOffset - startOffset).Milliseconds()
 	p.cpuTimeMillis += elapsed
 
 	// Do we know how long did this edge take last time?
@@ -505,7 +505,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 	}
 
 	if !edge.UseConsole() {
-		p.PrintStatus(edge, endTimeMillis)
+		p.PrintStatus(edge, endOffset.Milliseconds())
 	}
 
 	p.runningEdges -= 1
@@ -520,7 +520,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		}
 
 		if p.flamegraph != nil {
-			p.flamegraph.RecordEdge(edge, result.Start, result.End)
+			p.flamegraph.RecordEdge(edge, result.Start, result.End, result.Events...)
 			p.recordSystemMetrics(result.End)
 		}
 
@@ -610,6 +610,9 @@ func (p *StatusPrinter) BuildFinished() {
 	p.printer.PrintOnNewline("")
 
 	if p.bes != nil {
+		if p.flamegraph != nil {
+			p.flamegraph.RecordGeneralInformationEvent("buildTargets", p.buildStart, time.Now())
+		}
 		if err := p.bes.Publish(bes_event.BuildMetricsEvent(p.startedEdges, p.finishedEdges, p.cpuTimeMillis, p.timeMillis)); err != nil {
 			util.Warningf("Failed to publish configuration: %s", err)
 		}
