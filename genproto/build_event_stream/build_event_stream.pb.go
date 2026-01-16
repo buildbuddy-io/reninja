@@ -23,11 +23,11 @@
 package build_event_stream
 
 import (
-	action_cache "github.com/buildbuddy-io/gin/genproto/action_cache"
-	command_line "github.com/buildbuddy-io/gin/genproto/command_line"
-	failure_details "github.com/buildbuddy-io/gin/genproto/failure_details"
-	invocation_policy "github.com/buildbuddy-io/gin/genproto/invocation_policy"
-	metrics "github.com/buildbuddy-io/gin/genproto/metrics"
+	action_cache "github.com/buildbuddy-io/reninja/genproto/action_cache"
+	command_line "github.com/buildbuddy-io/reninja/genproto/command_line"
+	failure_details "github.com/buildbuddy-io/reninja/genproto/failure_details"
+	invocation_policy "github.com/buildbuddy-io/reninja/genproto/invocation_policy"
+	metrics "github.com/buildbuddy-io/reninja/genproto/metrics"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -9281,8 +9281,8 @@ const file_proto_build_event_stream_proto_rawDesc = "" +
 	"INCOMPLETE\x10\x05\x12\x12\n" +
 	"\x0eREMOTE_FAILURE\x10\x06\x12\x13\n" +
 	"\x0fFAILED_TO_BUILD\x10\a\x12\x1e\n" +
-	"\x1aTOOL_HALTED_BEFORE_TESTING\x10\bB\x82\x01\n" +
-	".com.google.devtools.build.lib.buildeventstreamB\x16BuildEventStreamProtosZ8github.com/buildbuddy-io/gin/genproto/build_event_streamb\x06proto3"
+	"\x1aTOOL_HALTED_BEFORE_TESTING\x10\bB\x86\x01\n" +
+	".com.google.devtools.build.lib.buildeventstreamB\x16BuildEventStreamProtosZ<github.com/buildbuddy-io/reninja/genproto/build_event_streamb\x06proto3"
 
 var (
 	file_proto_build_event_stream_proto_rawDescOnce sync.Once

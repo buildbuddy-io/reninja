@@ -26,7 +26,7 @@ package remote_execution
 
 import (
 	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
-	semver "github.com/buildbuddy-io/gin/genproto/semver"
+	semver "github.com/buildbuddy-io/reninja/genproto/semver"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	status "google.golang.org/genproto/googleapis/rpc/status"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -5629,8 +5629,8 @@ const file_proto_remote_execution_proto_rawDesc = "" +
 	"\n" +
 	"SpliceBlob\x122.build.bazel.remote.execution.v2.SpliceBlobRequest\x1a3.build.bazel.remote.execution.v2.SpliceBlobResponse\"2\x82\xd3\xe4\x93\x02,:\x01*\"'/v2/{instance_name=**}/blobs:spliceBlob2\xbd\x01\n" +
 	"\fCapabilities\x12\xac\x01\n" +
-	"\x0fGetCapabilities\x127.build.bazel.remote.execution.v2.GetCapabilitiesRequest\x1a3.build.bazel.remote.execution.v2.ServerCapabilities\"+\x82\xd3\xe4\x93\x02%\x12#/v2/{instance_name=**}/capabilitiesB\x99\x01\n" +
-	"\x1fbuild.bazel.remote.execution.v2B\x14RemoteExecutionProtoP\x01Z6github.com/buildbuddy-io/gin/genproto/remote_execution\xa2\x02\x03REX\xaa\x02\x1fBuild.Bazel.Remote.Execution.V2b\x06proto3"
+	"\x0fGetCapabilities\x127.build.bazel.remote.execution.v2.GetCapabilitiesRequest\x1a3.build.bazel.remote.execution.v2.ServerCapabilities\"+\x82\xd3\xe4\x93\x02%\x12#/v2/{instance_name=**}/capabilitiesB\x9d\x01\n" +
+	"\x1fbuild.bazel.remote.execution.v2B\x14RemoteExecutionProtoP\x01Z:github.com/buildbuddy-io/reninja/genproto/remote_execution\xa2\x02\x03REX\xaa\x02\x1fBuild.Bazel.Remote.Execution.V2b\x06proto3"
 
 var (
 	file_proto_remote_execution_proto_rawDescOnce sync.Once

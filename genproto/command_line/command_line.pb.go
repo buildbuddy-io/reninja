@@ -21,7 +21,7 @@
 package command_line
 
 import (
-	option_filters "github.com/buildbuddy-io/gin/genproto/option_filters"
+	option_filters "github.com/buildbuddy-io/reninja/genproto/option_filters"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -427,8 +427,8 @@ const file_proto_command_line_proto_rawDesc = "" +
 	"\veffect_tags\x18\x04 \x03(\x0e2\x18.options.OptionEffectTagR\n" +
 	"effectTags\x12?\n" +
 	"\rmetadata_tags\x18\x05 \x03(\x0e2\x1a.options.OptionMetadataTagR\fmetadataTags\x12\x16\n" +
-	"\x06source\x18\x06 \x01(\tR\x06sourceBa\n" +
-	"+com.google.devtools.build.lib.runtime.protoZ2github.com/buildbuddy-io/gin/genproto/command_lineb\x06proto3"
+	"\x06source\x18\x06 \x01(\tR\x06sourceBe\n" +
+	"+com.google.devtools.build.lib.runtime.protoZ6github.com/buildbuddy-io/reninja/genproto/command_lineb\x06proto3"
 
 var (
 	file_proto_command_line_proto_rawDescOnce sync.Once

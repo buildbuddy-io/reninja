@@ -21,7 +21,7 @@ syntax = "proto3";
 
 package failure_details;
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/failure_details";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/failure_details";
 option java_package = "com.google.devtools.build.lib.server";
 
 import "google/protobuf/descriptor.proto";

@@ -18,7 +18,7 @@ package command_line;
 
 import "proto/option_filters.proto";
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/command_line";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/command_line";
 
 // option java_api_version = 2;
 option java_package = "com.google.devtools.build.lib.runtime.proto";

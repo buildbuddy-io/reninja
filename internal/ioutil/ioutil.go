@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/buildbuddy-io/gin/internal/bytebufferpool"
-	"github.com/buildbuddy-io/gin/internal/statuserr"
+	"github.com/buildbuddy-io/reninja/internal/bytebufferpool"
+	"github.com/buildbuddy-io/reninja/internal/statuserr"
 )
 
 // A Committer implements the Commit method, to finalize a write.

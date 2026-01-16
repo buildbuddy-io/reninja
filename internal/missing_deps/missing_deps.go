@@ -5,13 +5,13 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/buildbuddy-io/gin/internal/depfile_parser"
-	"github.com/buildbuddy-io/gin/internal/deps_log"
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/eval_env"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/implicit_dep_loader"
-	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/depfile_parser"
+	"github.com/buildbuddy-io/reninja/internal/deps_log"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/implicit_dep_loader"
+	"github.com/buildbuddy-io/reninja/internal/state"
 )
 
 type InnerAdjacencyMap map[*graph.Edge]struct{}

@@ -3,8 +3,8 @@ package state_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/eval_env"
-	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/state"
 	"github.com/stretchr/testify/assert"
 )
 

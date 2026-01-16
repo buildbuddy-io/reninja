@@ -2,7 +2,7 @@ package command_collector
 
 import (
 	"fmt"
-	"github.com/buildbuddy-io/gin/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/graph"
 )
 
 type CommandCollector struct {

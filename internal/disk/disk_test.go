@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/timestamp"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/timestamp"
 	"github.com/stretchr/testify/require"
 )
 

@@ -19,7 +19,7 @@ package tools.protos;
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/spawn";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/spawn";
 option java_package = "com.google.devtools.build.lib.exec";
 option java_outer_classname = "Protos";
 

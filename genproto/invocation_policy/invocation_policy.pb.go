@@ -21,7 +21,7 @@
 package invocation_policy
 
 import (
-	strategy_policy "github.com/buildbuddy-io/gin/genproto/strategy_policy"
+	strategy_policy "github.com/buildbuddy-io/reninja/genproto/strategy_policy"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -715,8 +715,8 @@ const file_proto_invocation_policy_proto_rawDesc = "" +
 	"\tnew_value\x18\x03 \x01(\tH\x00R\bnewValue\x12F\n" +
 	"\vuse_default\x18\x04 \x01(\v2#.blaze.invocation_policy.UseDefaultH\x00R\n" +
 	"useDefaultB\x13\n" +
-	"\x11replacement_valueJ\x04\b\x02\x10\x03Bf\n" +
-	"+com.google.devtools.build.lib.runtime.protoZ7github.com/buildbuddy-io/gin/genproto/invocation_policy"
+	"\x11replacement_valueJ\x04\b\x02\x10\x03Bj\n" +
+	"+com.google.devtools.build.lib.runtime.protoZ;github.com/buildbuddy-io/reninja/genproto/invocation_policy"
 
 var (
 	file_proto_invocation_policy_proto_rawDescOnce sync.Once

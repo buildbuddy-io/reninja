@@ -21,7 +21,7 @@
 package build_events
 
 import (
-	build_status "github.com/buildbuddy-io/gin/genproto/build_status"
+	build_status "github.com/buildbuddy-io/reninja/genproto/build_status"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -910,8 +910,8 @@ const file_proto_build_events_proto_rawDesc = "" +
 	"\n" +
 	"\x06STDOUT\x10\x01\x12\n" +
 	"\n" +
-	"\x06STDERR\x10\x02B\x80\x01\n" +
-	"\x1ccom.google.devtools.build.v1B\x0fBuildEventProtoP\x01Z2github.com/buildbuddy-io/gin/genproto/build_events\xf8\x01\x01\xca\x02\x15Google\\Cloud\\Build\\V1b\x06proto3"
+	"\x06STDERR\x10\x02B\x84\x01\n" +
+	"\x1ccom.google.devtools.build.v1B\x0fBuildEventProtoP\x01Z6github.com/buildbuddy-io/reninja/genproto/build_events\xf8\x01\x01\xca\x02\x15Google\\Cloud\\Build\\V1b\x06proto3"
 
 var (
 	file_proto_build_events_proto_rawDescOnce sync.Once

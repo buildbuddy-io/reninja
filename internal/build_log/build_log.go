@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/metrics"
-	"github.com/buildbuddy-io/gin/internal/timestamp"
-	rapidhash "github.com/buildbuddy-io/gin/third_party/rapidhash_v1"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/metrics"
+	"github.com/buildbuddy-io/reninja/internal/timestamp"
+	rapidhash "github.com/buildbuddy-io/reninja/third_party/rapidhash_v1"
 )
 
 const (

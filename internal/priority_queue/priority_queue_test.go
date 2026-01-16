@@ -3,7 +3,7 @@ package priority_queue_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/priority_queue"
+	"github.com/buildbuddy-io/reninja/internal/priority_queue"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -3,13 +3,13 @@ package dependency_scan_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/dependency_scan"
-	"github.com/buildbuddy-io/gin/internal/depfile_parser"
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/manifest_parser"
-	"github.com/buildbuddy-io/gin/internal/state"
-	"github.com/buildbuddy-io/gin/internal/test"
+	"github.com/buildbuddy-io/reninja/internal/dependency_scan"
+	"github.com/buildbuddy-io/reninja/internal/depfile_parser"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/manifest_parser"
+	"github.com/buildbuddy-io/reninja/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

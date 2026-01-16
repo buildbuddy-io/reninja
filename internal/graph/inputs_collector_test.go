@@ -4,9 +4,9 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/state"
-	"github.com/buildbuddy-io/gin/internal/test"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -141,8 +141,8 @@ const file_proto_package_load_metrics_proto_rawDesc = "" +
 	"numTargets\x12+\n" +
 	"\x11computation_steps\x18\x04 \x01(\x04R\x10computationSteps\x120\n" +
 	"\x14num_transitive_loads\x18\x05 \x01(\x04R\x12numTransitiveLoads\x12)\n" +
-	"\x10package_overhead\x18\x06 \x01(\x04R\x0fpackageOverheadBa\n" +
-	".com.google.devtools.build.lib.packages.metricsP\x01Z-github.com/buildbuddy-io/gin/genproto/metrics"
+	"\x10package_overhead\x18\x06 \x01(\x04R\x0fpackageOverheadBe\n" +
+	".com.google.devtools.build.lib.packages.metricsP\x01Z1github.com/buildbuddy-io/reninja/genproto/metrics"
 
 var (
 	file_proto_package_load_metrics_proto_rawDescOnce sync.Once

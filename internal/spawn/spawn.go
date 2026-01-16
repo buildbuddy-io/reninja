@@ -3,9 +3,9 @@ package spawn
 import (
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/exit_status"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/span"
+	"github.com/buildbuddy-io/reninja/internal/exit_status"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/span"
 )
 
 type Result struct {

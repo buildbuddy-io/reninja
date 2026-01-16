@@ -3,9 +3,9 @@ package command_collector_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/command_collector"
-	"github.com/buildbuddy-io/gin/internal/state"
-	"github.com/buildbuddy-io/gin/internal/test"
+	"github.com/buildbuddy-io/reninja/internal/command_collector"
+	"github.com/buildbuddy-io/reninja/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

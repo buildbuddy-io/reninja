@@ -5,14 +5,14 @@ import (
 	"math"
 	"slices"
 
-	"github.com/buildbuddy-io/gin/internal/build_config"
-	"github.com/buildbuddy-io/gin/internal/exit_status"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/jobserver"
-	"github.com/buildbuddy-io/gin/internal/remote_flags"
-	"github.com/buildbuddy-io/gin/internal/spawn"
-	"github.com/buildbuddy-io/gin/internal/subprocess"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/build_config"
+	"github.com/buildbuddy-io/reninja/internal/exit_status"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/jobserver"
+	"github.com/buildbuddy-io/reninja/internal/remote_flags"
+	"github.com/buildbuddy-io/reninja/internal/spawn"
+	"github.com/buildbuddy-io/reninja/internal/subprocess"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 type CommandRunner interface {

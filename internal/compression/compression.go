@@ -6,8 +6,8 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/buildbuddy-io/gin/internal/bytebufferpool"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/bytebufferpool"
+	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/klauspost/compress/zstd"
 )
 

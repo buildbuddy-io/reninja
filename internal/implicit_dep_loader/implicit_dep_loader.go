@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"io/fs"
 
-	"github.com/buildbuddy-io/gin/internal/depfile_parser"
-	"github.com/buildbuddy-io/gin/internal/deps_log"
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/explanations"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/metrics"
-	"github.com/buildbuddy-io/gin/internal/state"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/depfile_parser"
+	"github.com/buildbuddy-io/reninja/internal/deps_log"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/explanations"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/metrics"
+	"github.com/buildbuddy-io/reninja/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 type ImplicitDepLoader struct {

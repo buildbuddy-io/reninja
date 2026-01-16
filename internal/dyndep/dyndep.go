@@ -3,11 +3,11 @@ package dyndep
 import (
 	"fmt"
 
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/dyndep_parser"
-	"github.com/buildbuddy-io/gin/internal/explanations"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/dyndep_parser"
+	"github.com/buildbuddy-io/reninja/internal/explanations"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/state"
 )
 
 type Dyndeps = dyndep_parser.Dyndeps

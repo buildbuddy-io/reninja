@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buildbuddy-io/gin/internal/build_log"
-	"github.com/buildbuddy-io/gin/internal/depfile_parser"
-	"github.com/buildbuddy-io/gin/internal/deps_log"
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/dyndep"
-	"github.com/buildbuddy-io/gin/internal/dyndep_parser"
-	"github.com/buildbuddy-io/gin/internal/explanations"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/implicit_dep_loader"
-	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/build_log"
+	"github.com/buildbuddy-io/reninja/internal/depfile_parser"
+	"github.com/buildbuddy-io/reninja/internal/deps_log"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/dyndep"
+	"github.com/buildbuddy-io/reninja/internal/dyndep_parser"
+	"github.com/buildbuddy-io/reninja/internal/explanations"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/implicit_dep_loader"
+	"github.com/buildbuddy-io/reninja/internal/state"
 )
 
 type DependencyScan struct {

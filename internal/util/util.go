@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/edit_distance"
+	"github.com/buildbuddy-io/reninja/internal/edit_distance"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"

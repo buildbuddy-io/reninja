@@ -240,8 +240,8 @@ const file_proto_strategy_policy_proto_rawDesc = "" +
 	"\x12strategy_allowlist\x18\x02 \x03(\v2,.blaze.strategy_policy.StrategiesForMnemonicR\x11strategyAllowlist\"O\n" +
 	"\x15StrategiesForMnemonic\x12\x1a\n" +
 	"\bmnemonic\x18\x01 \x01(\tR\bmnemonic\x12\x1a\n" +
-	"\bstrategy\x18\x02 \x03(\tR\bstrategyBf\n" +
-	"+com.google.devtools.build.lib.runtime.protoP\x01Z5github.com/buildbuddy-io/gin/genproto/strategy_policy"
+	"\bstrategy\x18\x02 \x03(\tR\bstrategyBj\n" +
+	"+com.google.devtools.build.lib.runtime.protoP\x01Z9github.com/buildbuddy-io/reninja/genproto/strategy_policy"
 
 var (
 	file_proto_strategy_policy_proto_rawDescOnce sync.Once

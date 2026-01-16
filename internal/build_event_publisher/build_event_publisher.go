@@ -6,18 +6,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/grpc_client"
-	"github.com/buildbuddy-io/gin/internal/retry"
-	"github.com/buildbuddy-io/gin/internal/statuserr"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/grpc_client"
+	"github.com/buildbuddy-io/reninja/internal/retry"
+	"github.com/buildbuddy-io/reninja/internal/statuserr"
+	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	bespb "github.com/buildbuddy-io/gin/genproto/build_event_stream"
-	bepb "github.com/buildbuddy-io/gin/genproto/build_events"
-	pepb "github.com/buildbuddy-io/gin/genproto/publish_build_event"
+	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
+	bepb "github.com/buildbuddy-io/reninja/genproto/build_events"
+	pepb "github.com/buildbuddy-io/reninja/genproto/publish_build_event"
 )
 
 const (

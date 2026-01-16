@@ -21,7 +21,7 @@
 package publish_build_event
 
 import (
-	build_events "github.com/buildbuddy-io/gin/genproto/build_events"
+	build_events "github.com/buildbuddy-io/reninja/genproto/build_events"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -439,8 +439,8 @@ const file_proto_publish_build_event_proto_rawDesc = "" +
 	"(check_preceding_lifecycle_events_present\x18\a \x01(\bR$checkPrecedingLifecycleEventsPresent2\xde\x04\n" +
 	"\x11PublishBuildEvent\x12\xc9\x01\n" +
 	"\x15PublishLifecycleEvent\x126.google.devtools.build.v1.PublishLifecycleEventRequest\x1a\x16.google.protobuf.Empty\"`\x82\xd3\xe4\x93\x02Z:\x01*Z :\x01*\"\x1b/v1/lifecycleEvents:publish\"3/v1/projects/{project_id=*}/lifecycleEvents:publish\x12\xa6\x02\n" +
-	"\x1bPublishBuildToolEventStream\x12<.google.devtools.build.v1.PublishBuildToolEventStreamRequest\x1a=.google.devtools.build.v1.PublishBuildToolEventStreamResponse\"\x85\x01\xdaA4ordered_build_event,notification_keywords,project_id\x82\xd3\xe4\x93\x02H:\x01*Z\x17:\x01*\"\x12/v1/events:publish\"*/v1/projects/{project_id=*}/events:publish(\x010\x01\x1aT\xcaA buildeventservice.googleapis.com\xd2A.https://www.googleapis.com/auth/cloud-platformB\x84\x01\n" +
-	"\x1ccom.google.devtools.build.v1B\fBackendProtoP\x01Z9github.com/buildbuddy-io/gin/genproto/publish_build_event\xf8\x01\x01\xca\x02\x15Google\\Cloud\\Build\\V1b\x06proto3"
+	"\x1bPublishBuildToolEventStream\x12<.google.devtools.build.v1.PublishBuildToolEventStreamRequest\x1a=.google.devtools.build.v1.PublishBuildToolEventStreamResponse\"\x85\x01\xdaA4ordered_build_event,notification_keywords,project_id\x82\xd3\xe4\x93\x02H:\x01*Z\x17:\x01*\"\x12/v1/events:publish\"*/v1/projects/{project_id=*}/events:publish(\x010\x01\x1aT\xcaA buildeventservice.googleapis.com\xd2A.https://www.googleapis.com/auth/cloud-platformB\x88\x01\n" +
+	"\x1ccom.google.devtools.build.v1B\fBackendProtoP\x01Z=github.com/buildbuddy-io/reninja/genproto/publish_build_event\xf8\x01\x01\xca\x02\x15Google\\Cloud\\Build\\V1b\x06proto3"
 
 var (
 	file_proto_publish_build_event_proto_rawDescOnce sync.Once

@@ -3,13 +3,13 @@ package dyndep_parser
 import (
 	"fmt"
 
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/eval_env"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/lexer"
-	"github.com/buildbuddy-io/gin/internal/state"
-	"github.com/buildbuddy-io/gin/internal/util"
-	"github.com/buildbuddy-io/gin/internal/version"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/lexer"
+	"github.com/buildbuddy-io/reninja/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/version"
 )
 
 // / Store dynamically-discovered dependency information for one edge.

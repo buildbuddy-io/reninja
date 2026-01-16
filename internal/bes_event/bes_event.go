@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/digest"
-	"github.com/buildbuddy-io/gin/internal/exit_status"
-	"github.com/buildbuddy-io/gin/internal/version"
+	"github.com/buildbuddy-io/reninja/internal/digest"
+	"github.com/buildbuddy-io/reninja/internal/exit_status"
+	"github.com/buildbuddy-io/reninja/internal/version"
 
-	bespb "github.com/buildbuddy-io/gin/genproto/build_event_stream"
-	bepb "github.com/buildbuddy-io/gin/genproto/build_events"
-	clpb "github.com/buildbuddy-io/gin/genproto/command_line"
+	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
+	bepb "github.com/buildbuddy-io/reninja/genproto/build_events"
+	clpb "github.com/buildbuddy-io/reninja/genproto/command_line"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 

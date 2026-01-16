@@ -27,7 +27,7 @@ import "proto/invocation_policy.proto";
 import "proto/failure_details.proto";
 import "proto/package_load_metrics.proto";
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/build_event_stream";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/build_event_stream";
 option java_package = "com.google.devtools.build.lib.buildeventstream";
 option java_outer_classname = "BuildEventStreamProtos";
 

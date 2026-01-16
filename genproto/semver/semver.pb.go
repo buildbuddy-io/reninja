@@ -121,8 +121,8 @@ const file_proto_semver_proto_rawDesc = "" +
 	"\x05patch\x18\x03 \x01(\x05R\x05patch\x12\x1e\n" +
 	"\n" +
 	"prerelease\x18\x04 \x01(\tR\n" +
-	"prereleaseBl\n" +
-	"\x12build.bazel.semverB\vSemverProtoP\x01Z,github.com/buildbuddy-io/gin/genproto/semver\xa2\x02\x03SMV\xaa\x02\x12Build.Bazel.Semverb\x06proto3"
+	"prereleaseBp\n" +
+	"\x12build.bazel.semverB\vSemverProtoP\x01Z0github.com/buildbuddy-io/reninja/genproto/semver\xa2\x02\x03SMV\xaa\x02\x12Build.Bazel.Semverb\x06proto3"
 
 var (
 	file_proto_semver_proto_rawDescOnce sync.Once

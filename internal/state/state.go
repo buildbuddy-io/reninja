@@ -3,10 +3,10 @@ package state
 import (
 	"fmt"
 
-	"github.com/buildbuddy-io/gin/internal/edit_distance"
-	"github.com/buildbuddy-io/gin/internal/eval_env"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/edit_distance"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 var (

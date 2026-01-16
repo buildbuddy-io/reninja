@@ -1,7 +1,7 @@
 package build_config
 
 import (
-	"github.com/buildbuddy-io/gin/internal/depfile_parser"
+	"github.com/buildbuddy-io/reninja/internal/depfile_parser"
 )
 
 type VerbosityLevel int

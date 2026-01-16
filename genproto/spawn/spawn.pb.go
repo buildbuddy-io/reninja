@@ -2109,8 +2109,8 @@ const file_proto_spawn_proto_rawDesc = "" +
 	"outputPath\x12!\n" +
 	"\ftarget_label\x18\x03 \x01(\tR\vtargetLabel\x12\x1a\n" +
 	"\bmnemonic\x18\x04 \x01(\tR\bmnemonicB\x06\n" +
-	"\x04typeBY\n" +
-	"\"com.google.devtools.build.lib.execB\x06ProtosZ+github.com/buildbuddy-io/gin/genproto/spawnb\x06proto3"
+	"\x04typeB]\n" +
+	"\"com.google.devtools.build.lib.execB\x06ProtosZ/github.com/buildbuddy-io/reninja/genproto/spawnb\x06proto3"
 
 var (
 	file_proto_spawn_proto_rawDescOnce sync.Once

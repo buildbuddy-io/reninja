@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/statuserr"
+	"github.com/buildbuddy-io/reninja/internal/statuserr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/experimental"

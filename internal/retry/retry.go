@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/jonboulle/clockwork"
 )
 

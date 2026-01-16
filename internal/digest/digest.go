@@ -19,14 +19,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/buildbuddy-io/gin/internal/statuserr"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/statuserr"
+	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/zeebo/blake3"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/proto"
 
-	repb "github.com/buildbuddy-io/gin/genproto/remote_execution"
-	rspb "github.com/buildbuddy-io/gin/genproto/resource"
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
+	rspb "github.com/buildbuddy-io/reninja/genproto/resource"
 	guuid "github.com/google/uuid"
 	gcodes "google.golang.org/grpc/codes"
 	gmetadata "google.golang.org/grpc/metadata"

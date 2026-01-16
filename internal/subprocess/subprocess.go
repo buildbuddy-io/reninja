@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/buildbuddy-io/gin/internal/exit_status"
+	"github.com/buildbuddy-io/reninja/internal/exit_status"
 )
 
 var (

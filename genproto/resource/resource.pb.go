@@ -7,7 +7,7 @@
 package resource
 
 import (
-	remote_execution "github.com/buildbuddy-io/gin/genproto/remote_execution"
+	remote_execution "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -180,7 +180,7 @@ const file_proto_resource_proto_rawDesc = "" +
 	"\tCacheType\x12\x16\n" +
 	"\x12UNKNOWN_CACHE_TYPE\x10\x00\x12\x06\n" +
 	"\x02AC\x10\x01\x12\a\n" +
-	"\x03CAS\x10\x02B0Z.github.com/buildbuddy-io/gin/genproto/resourceb\x06proto3"
+	"\x03CAS\x10\x02B4Z2github.com/buildbuddy-io/reninja/genproto/resourceb\x06proto3"
 
 var (
 	file_proto_resource_proto_rawDescOnce sync.Once

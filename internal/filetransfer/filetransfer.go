@@ -10,17 +10,17 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/buildbuddy-io/gin/internal/cachetools"
-	"github.com/buildbuddy-io/gin/internal/digest"
-	"github.com/buildbuddy-io/gin/internal/grpc_client"
-	"github.com/buildbuddy-io/gin/internal/remote_flags"
-	"github.com/buildbuddy-io/gin/internal/remote_headers"
-	"github.com/buildbuddy-io/gin/internal/statuserr"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/cachetools"
+	"github.com/buildbuddy-io/reninja/internal/digest"
+	"github.com/buildbuddy-io/reninja/internal/grpc_client"
+	"github.com/buildbuddy-io/reninja/internal/remote_flags"
+	"github.com/buildbuddy-io/reninja/internal/remote_headers"
+	"github.com/buildbuddy-io/reninja/internal/statuserr"
+	"github.com/buildbuddy-io/reninja/internal/util"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
-	repb "github.com/buildbuddy-io/gin/genproto/remote_execution"
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 	bspb "google.golang.org/genproto/googleapis/bytestream"
 )
 

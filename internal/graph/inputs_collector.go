@@ -3,7 +3,7 @@ package graph
 import (
 	"runtime"
 
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 type InputsCollector struct {

@@ -5,15 +5,15 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/buildbuddy-io/gin/internal/build_config"
-	"github.com/buildbuddy-io/gin/internal/build_log"
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/dyndep"
-	"github.com/buildbuddy-io/gin/internal/dyndep_parser"
-	"github.com/buildbuddy-io/gin/internal/eval_env"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/state"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/build_config"
+	"github.com/buildbuddy-io/reninja/internal/build_log"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/dyndep"
+	"github.com/buildbuddy-io/reninja/internal/dyndep_parser"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 // Cleaner removes built files

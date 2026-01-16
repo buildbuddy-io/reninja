@@ -3,7 +3,7 @@ package edit_distance_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/edit_distance"
+	"github.com/buildbuddy-io/reninja/internal/edit_distance"
 	"github.com/stretchr/testify/require"
 )
 

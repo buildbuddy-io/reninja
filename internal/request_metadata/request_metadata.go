@@ -3,11 +3,11 @@ package request_metadata
 import (
 	"context"
 
-	"github.com/buildbuddy-io/gin/internal/version"
+	"github.com/buildbuddy-io/reninja/internal/version"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
-	repb "github.com/buildbuddy-io/gin/genproto/remote_execution"
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
 const headerName = "build.bazel.remote.execution.v2.requestmetadata-bin"

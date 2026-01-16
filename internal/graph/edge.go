@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buildbuddy-io/gin/internal/eval_env"
-	"github.com/buildbuddy-io/gin/internal/jobserver"
-	"github.com/buildbuddy-io/gin/internal/timestamp"
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/jobserver"
+	"github.com/buildbuddy-io/reninja/internal/timestamp"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 // VisitMark represents the visitation state during graph traversal

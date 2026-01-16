@@ -209,8 +209,8 @@ const file_proto_build_status_proto_rawDesc = "" +
 	"\x12RESOURCE_EXHAUSTED\x10\x05\x12 \n" +
 	"\x1cINVOCATION_DEADLINE_EXCEEDED\x10\x06\x12\x1d\n" +
 	"\x19REQUEST_DEADLINE_EXCEEDED\x10\b\x12\r\n" +
-	"\tCANCELLED\x10\aB\x81\x01\n" +
-	"\x1ccom.google.devtools.build.v1B\x10BuildStatusProtoP\x01Z2github.com/buildbuddy-io/gin/genproto/build_status\xf8\x01\x01\xca\x02\x15Google\\Cloud\\Build\\V1b\x06proto3"
+	"\tCANCELLED\x10\aB\x85\x01\n" +
+	"\x1ccom.google.devtools.build.v1B\x10BuildStatusProtoP\x01Z6github.com/buildbuddy-io/reninja/genproto/build_status\xf8\x01\x01\xca\x02\x15Google\\Cloud\\Build\\V1b\x06proto3"
 
 var (
 	file_proto_build_status_proto_rawDescOnce sync.Once

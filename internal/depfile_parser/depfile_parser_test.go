@@ -3,7 +3,7 @@ package depfile_parser_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/depfile_parser"
+	"github.com/buildbuddy-io/reninja/internal/depfile_parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

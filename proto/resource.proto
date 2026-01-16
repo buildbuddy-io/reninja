@@ -4,7 +4,7 @@ import "proto/remote_execution.proto";
 
 package resource;
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/resource";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/resource";
 
 ////////////////////////////////////////////////////////////////////////////////
 //

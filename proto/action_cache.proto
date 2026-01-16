@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package blaze;
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/action_cache";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/action_cache";
 option java_package = "com.google.devtools.build.lib.actions.cache";
 option java_outer_classname = "Protos";
 

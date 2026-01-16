@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/metrics"
-	"github.com/buildbuddy-io/gin/internal/timestamp"
+	"github.com/buildbuddy-io/reninja/internal/metrics"
+	"github.com/buildbuddy-io/reninja/internal/timestamp"
 )
 
 // Interface provides file system operations

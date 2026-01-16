@@ -3,7 +3,7 @@ package util_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/stretchr/testify/assert"
 )
 

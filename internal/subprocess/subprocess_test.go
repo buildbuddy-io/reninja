@@ -6,8 +6,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/exit_status"
-	"github.com/buildbuddy-io/gin/internal/subprocess"
+	"github.com/buildbuddy-io/reninja/internal/exit_status"
+	"github.com/buildbuddy-io/reninja/internal/subprocess"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -16,7 +16,7 @@ syntax = "proto2";
 
 package blaze.strategy_policy;
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/strategy_policy";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/strategy_policy";
 option java_multiple_files = true;
 // option java_api_version = 2;
 option java_package = "com.google.devtools.build.lib.runtime.proto";

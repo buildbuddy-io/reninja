@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/buildbuddy-io/gin/internal/priority_queue"
+	"github.com/buildbuddy-io/reninja/internal/priority_queue"
 )
 
 // Pool represents a resource pool for limiting parallel execution

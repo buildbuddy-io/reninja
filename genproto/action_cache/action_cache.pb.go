@@ -280,8 +280,8 @@ const file_proto_action_cache_proto_rawDesc = "" +
 	"\n" +
 	"NOT_CACHED\x10\x05\x12\x1b\n" +
 	"\x17UNCONDITIONAL_EXECUTION\x10\x06\x12\x13\n" +
-	"\x0fDIGEST_MISMATCH\x10\aBi\n" +
-	"+com.google.devtools.build.lib.actions.cacheB\x06ProtosZ2github.com/buildbuddy-io/gin/genproto/action_cacheb\x06proto3"
+	"\x0fDIGEST_MISMATCH\x10\aBm\n" +
+	"+com.google.devtools.build.lib.actions.cacheB\x06ProtosZ6github.com/buildbuddy-io/reninja/genproto/action_cacheb\x06proto3"
 
 var (
 	file_proto_action_cache_proto_rawDescOnce sync.Once

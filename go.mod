@@ -1,4 +1,4 @@
-module github.com/buildbuddy-io/gin
+module github.com/buildbuddy-io/reninja
 
 go 1.24.0
 

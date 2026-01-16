@@ -3,7 +3,7 @@ package eval_env_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
 	"github.com/stretchr/testify/require"
 )
 

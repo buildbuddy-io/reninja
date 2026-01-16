@@ -15,7 +15,7 @@ syntax = "proto3";
 
 package options;
 
-option go_package = "github.com/buildbuddy-io/gin/genproto/option_filters";
+option go_package = "github.com/buildbuddy-io/reninja/genproto/option_filters";
 // option java_api_version = 2;
 option java_package = "com.google.devtools.common.options.proto";
 

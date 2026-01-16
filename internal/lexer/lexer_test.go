@@ -3,7 +3,7 @@ package lexer_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/lexer"
+	"github.com/buildbuddy-io/reninja/internal/lexer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

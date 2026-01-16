@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buildbuddy-io/gin/internal/disk"
-	"github.com/buildbuddy-io/gin/internal/timestamp"
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/timestamp"
 )
 
 // ExistenceStatus represents the existence state of a file

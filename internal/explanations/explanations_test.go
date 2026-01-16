@@ -3,7 +3,7 @@ package explanations_test
 import (
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/explanations"
+	"github.com/buildbuddy-io/reninja/internal/explanations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

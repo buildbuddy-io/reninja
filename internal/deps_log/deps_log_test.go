@@ -5,11 +5,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/buildbuddy-io/gin/internal/deps_log"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/state"
-	"github.com/buildbuddy-io/gin/internal/test"
-	"github.com/buildbuddy-io/gin/internal/timestamp"
+	"github.com/buildbuddy-io/reninja/internal/deps_log"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/test"
+	"github.com/buildbuddy-io/reninja/internal/timestamp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

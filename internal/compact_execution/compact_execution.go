@@ -4,16 +4,16 @@ import (
 	"io"
 	"sync"
 
-	"github.com/buildbuddy-io/gin/internal/digest"
-	"github.com/buildbuddy-io/gin/internal/filetransfer"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/spawn"
+	"github.com/buildbuddy-io/reninja/internal/digest"
+	"github.com/buildbuddy-io/reninja/internal/filetransfer"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/spawn"
 	"github.com/google/shlex"
 	"google.golang.org/protobuf/encoding/protodelim"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	spawnpb "github.com/buildbuddy-io/gin/genproto/spawn"
+	spawnpb "github.com/buildbuddy-io/reninja/genproto/spawn"
 )
 
 type Log struct {

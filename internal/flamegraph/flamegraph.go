@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/build_log"
-	"github.com/buildbuddy-io/gin/internal/graph"
-	"github.com/buildbuddy-io/gin/internal/span"
-	"github.com/buildbuddy-io/gin/internal/statuserr"
+	"github.com/buildbuddy-io/reninja/internal/build_log"
+	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/span"
+	"github.com/buildbuddy-io/reninja/internal/statuserr"
 )
 
 // Phase constants

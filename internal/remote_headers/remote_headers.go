@@ -4,7 +4,7 @@ import (
 	"flag"
 	"strings"
 
-	"github.com/buildbuddy-io/gin/internal/util"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 var (

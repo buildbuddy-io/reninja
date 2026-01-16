@@ -212,8 +212,8 @@ const file_proto_option_filters_proto_rawDesc = "" +
 	"\n" +
 	"\x06HIDDEN\x10\x03\x12\f\n" +
 	"\bINTERNAL\x10\x04\x12\r\n" +
-	"\tIMMUTABLE\x10\a\"\x04\b\x05\x10\x05\"\x04\b\x06\x10\x06*%TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES*\x17EXPLICIT_IN_OUTPUT_PATHB`\n" +
-	"(com.google.devtools.common.options.protoZ4github.com/buildbuddy-io/gin/genproto/option_filtersb\x06proto3"
+	"\tIMMUTABLE\x10\a\"\x04\b\x05\x10\x05\"\x04\b\x06\x10\x06*%TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES*\x17EXPLICIT_IN_OUTPUT_PATHBd\n" +
+	"(com.google.devtools.common.options.protoZ8github.com/buildbuddy-io/reninja/genproto/option_filtersb\x06proto3"
 
 var (
 	file_proto_option_filters_proto_rawDescOnce sync.Once

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 	
-	"github.com/buildbuddy-io/gin/internal/eval_env"
+	"github.com/buildbuddy-io/reninja/internal/eval_env"
 )
 
 // Token represents a lexical token

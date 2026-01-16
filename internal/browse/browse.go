@@ -3,7 +3,7 @@ package browse
 import (
 	"bytes"
 	"fmt"
-	"github.com/buildbuddy-io/gin/internal/state"
+	"github.com/buildbuddy-io/reninja/internal/state"
 	"io"
 	"os"
 	"os/exec"

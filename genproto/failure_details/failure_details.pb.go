@@ -9511,8 +9511,8 @@ const file_proto_failure_details_proto_rawDesc = "" +
 	"\x11INVALID_ARGUMENTS\x10\x03\x1a\x05\xb2C\x02\b\x02\x12\x1b\n" +
 	"\x10BUILDOZER_FAILED\x10\x04\x1a\x05\xb2C\x02\b\x02\x12(\n" +
 	"\x1dERROR_DURING_GRAPH_INSPECTION\x10\x05\x1a\x05\xb2C\x02\b\x02:f\n" +
-	"\bmetadata\x12!.google.protobuf.EnumValueOptions\x18\xb6\b \x01(\v2&.failure_details.FailureDetailMetadataR\bmetadataB]\n" +
-	"$com.google.devtools.build.lib.serverZ5github.com/buildbuddy-io/gin/genproto/failure_detailsb\x06proto3"
+	"\bmetadata\x12!.google.protobuf.EnumValueOptions\x18\xb6\b \x01(\v2&.failure_details.FailureDetailMetadataR\bmetadataBa\n" +
+	"$com.google.devtools.build.lib.serverZ9github.com/buildbuddy-io/reninja/genproto/failure_detailsb\x06proto3"
 
 var (
 	file_proto_failure_details_proto_rawDescOnce sync.Once

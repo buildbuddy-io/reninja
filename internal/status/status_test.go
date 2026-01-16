@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buildbuddy-io/gin/internal/build_config"
-	"github.com/buildbuddy-io/gin/internal/status"
+	"github.com/buildbuddy-io/reninja/internal/build_config"
+	"github.com/buildbuddy-io/reninja/internal/status"
 	"github.com/stretchr/testify/assert"
 )
 
