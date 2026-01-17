@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -514,6 +513,12 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		targetLabel := ""
 		if outputs := edge.Outputs(); len(outputs) > 0 {
 			targetLabel = outputs[0].Path()
+
+			if len(result.UploadedOutputs) > 0 {
+				if err := p.bes.Publish(bes_event.NamedSetOfFilesEvent(targetLabel, result.UploadedOutputs)); err != nil {
+					util.Warningf("Failed to publish build metadata: %s", err)
+				}
+			}
 		}
 		if err := p.bes.Publish(bes_event.TargetCompletedEvent(targetLabel, exitCode)); err != nil {
 			util.Warningf("Failed to publish build metadata: %s", err)
@@ -699,11 +704,7 @@ func (p *StatusPrinter) uploadFlamegraph() (*digest.CASResourceName, error) {
 }
 
 func (p *StatusPrinter) writeBuildLogEvent() error {
-	backendURL, err := url.Parse(remote_flags.RemoteCache())
-	if err != nil {
-		return err
-	}
-	bytestreamURIPrefix := "bytestream://" + backendURL.Host
+	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
 
 	commandProfileGz, err := p.uploadFlamegraph()
 	if err != nil {

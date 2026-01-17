@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/metadata"
 
+	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
 	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
@@ -261,7 +263,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	ctx = span.BeginTracing(ctx)
 
-	action, flattenedTree, err := r.assembleAndHashAction(ctx, edge)
+	action, _, err := r.assembleAndHashAction(ctx, edge)
 	if err != nil {
 		return err
 	}
@@ -297,18 +299,20 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		output := subproc.GetOutput()
 		doneExecutingFn()
 
-		if err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action, flattenedTree); err != nil {
+		uploadedOutputs, err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action)
+		if err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
 		}
 
 		edgeState.finishedResult <- &spawn.Result{
-			Edge:     edge,
-			Status:   exitCode,
-			Output:   output,
-			Runner:   "local",
-			CacheHit: false,
-			Events:   span.Events(ctx),
+			Edge:            edge,
+			Status:          exitCode,
+			Output:          output,
+			Runner:          "local",
+			CacheHit:        false,
+			Events:          span.Events(ctx),
+			UploadedOutputs: uploadedOutputs,
 		}
 	}()
 
@@ -334,10 +338,10 @@ func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action
 	return nil, statuserr.NotFoundError("ActionResult not found")
 }
 
-func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action, tree filetransfer.FlattenedTree) error {
+func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action) ([]*bespb.File, error) {
 	// Skip uploading failed actions.
 	if exitCode != exit_status.ExitSuccess {
-		return nil
+		return nil, nil
 	}
 	defer span.Record(ctx, "upload outputs")()
 
@@ -350,48 +354,54 @@ func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *gr
 	digestFunction := filetransfer.DigestFunction
 	actionDigest, err := digest.ComputeForMessage(action, digestFunction)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ul := cachetools.NewBatchCASUploader(ctx, r.uploader, r.uploader, instanceName, digestFunction)
-
-	// only needed for remote execution.
-	//if err := filetransfer.UploadDirectoryTreeToCAS(ul, tree); err != nil {
-	//	return err
-	//}
+	uploadedOutputs := make([]*bespb.File, 0, len(edge.Outputs()))
+	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
 
 	// Upload outputs
 	for _, output := range edge.Outputs() {
-		if !output.Exists() {
-			continue // Skip phony outputs.
-		}
 		fi, err := os.Stat(output.Path())
 		if err != nil {
-			return err
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
 		}
 		d, err := ul.UploadFile(output.Path())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ar.OutputFiles = append(ar.OutputFiles, &repb.OutputFile{
 			Path:         output.Path(),
 			Digest:       d,
 			IsExecutable: cachetools.IsExecutable(fi),
 		})
+
+		rn := digest.NewCASResourceName(d, instanceName, digestFunction)
+		uri := fmt.Sprintf("%s/%s", bytestreamURIPrefix, rn.DownloadString())
+		uploadedOutputs = append(uploadedOutputs, &bespb.File{
+			Name:   output.Path(),
+			File:   &bespb.File_Uri{Uri: uri},
+			Digest: d.GetHash(),
+			Length: d.GetSizeBytes(),
+		})
 	}
 
 	// Upload stdout
 	ar.StdoutDigest, err = ul.UploadBlob([]byte(output))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := ul.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Upload the actual action result.
 	acrn := digest.NewACResourceName(actionDigest, instanceName, digestFunction)
-	return r.uploader.UploadActionResult(ctx, acrn, ar)
+	return uploadedOutputs, r.uploader.UploadActionResult(ctx, acrn, ar)
 }
 
 func (r *CachingCommandRunner) WaitForCommand() *spawn.Result {
