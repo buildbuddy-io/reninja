@@ -16,4 +16,4 @@ actions:
             echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
             source ~/.bashrc
           fi
-      - run: "go test ./..."
+      - run: "/usr/local/go/bin/go test ./..."
