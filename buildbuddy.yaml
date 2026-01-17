@@ -1,5 +1,6 @@
 actions:
   - name: "Run Unit Tests"
+    container_image: "ubuntu-24.04"
     triggers:
       push:
         branches:
