@@ -1,0 +1,11 @@
+actions:
+  - name: "Run Unit Tests"
+    triggers:
+      push:
+        branches:
+          - "main"
+      pull_request:
+        branches:
+          - "*"
+    steps:
+      - run: "go test ./..."
