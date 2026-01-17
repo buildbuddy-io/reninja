@@ -162,11 +162,15 @@ func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *
 		return nil, nil, err
 	}
 
-	files := make([]string, 0, len(edge.ExplicitInputs()))
-	for _, input := range edge.ExplicitInputs() {
-		if input.Exists() {
-			files = append(files, input.Path())
+	files := make([]string, 0, len(edge.Inputs()))
+	for _, input := range edge.Inputs() {
+		if _, err := os.Stat(input.Path()); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, nil, err
 		}
+		files = append(files, input.Path())
 	}
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
@@ -198,6 +202,7 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 				}
 			}
 			if !matchedEdgeOutput {
+				util.Errorf("ActionResult contained output (%s) not found in edge!", outputFile)
 				return nil // Skip writing any outputs that aren't outputs of this edge.
 			}
 
@@ -261,7 +266,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	ctx = span.BeginTracing(ctx)
 
-	action, flattenedTree, err := r.assembleAndHashAction(ctx, edge)
+	action, _, err := r.assembleAndHashAction(ctx, edge)
 	if err != nil {
 		return err
 	}
@@ -297,7 +302,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		output := subproc.GetOutput()
 		doneExecutingFn()
 
-		if err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action, flattenedTree); err != nil {
+		if err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action); err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
 		}
@@ -334,7 +339,7 @@ func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action
 	return nil, statuserr.NotFoundError("ActionResult not found")
 }
 
-func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action, tree filetransfer.FlattenedTree) error {
+func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action) error {
 	// Skip uploading failed actions.
 	if exitCode != exit_status.ExitSuccess {
 		return nil
@@ -362,11 +367,11 @@ func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *gr
 
 	// Upload outputs
 	for _, output := range edge.Outputs() {
-		if !output.Exists() {
-			continue // Skip phony outputs.
-		}
 		fi, err := os.Stat(output.Path())
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return err
 		}
 		d, err := ul.UploadFile(output.Path())
