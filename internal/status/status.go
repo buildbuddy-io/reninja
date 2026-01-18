@@ -576,6 +576,7 @@ func (p *StatusPrinter) recordSystemMetrics(t time.Time) {
 
 	p.flamegraph.RecordActionCount(actionsRunning, t)
 	p.flamegraph.RecordLoadAverage(util.GetLoadAverage(), t)
+	p.flamegraph.RecordCPUUsage(util.GetProgramCPUUsage(), t)
 	p.flamegraph.RecordSystemMemoryUsage(util.GetSystemMemoryUsageMB(), t)
 	p.flamegraph.RecordSystemCPUUsage(util.GetSystemCPUUsageCores(), t)
 	up, down := util.GetSystemNetworkUsage()
