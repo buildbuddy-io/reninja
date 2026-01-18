@@ -81,3 +81,11 @@ func TestTabs(t *testing.T) {
 	assert.Equal(t, lexer.ERROR, token)
 	assert.Equal(t, "tabs are not allowed, use spaces", l.DescribeLastError())
 }
+
+func TestEscapedNewlines(t *testing.T) {
+	l := lexer.NewWithInput("foo$\nbar$^newline foo\n")
+
+	eval, err := l.ReadVarValue()
+	require.NoError(t, err)
+	assert.Equal(t, "[foobar\nnewline foo]", eval.Serialize())
+}
