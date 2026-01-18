@@ -2,8 +2,9 @@ package version
 
 import (
 	"fmt"
-	"log"
 	"strings"
+
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 const NinjaVersion = "1.14.0.git"
@@ -40,12 +41,12 @@ func CheckNinjaVersion(fileVersion string) {
 	fileMajor, fileMinor := ParseVersion(fileVersion)
 
 	if binMajor > fileMajor {
-		log.Printf("ninja executable version (%s) greater than build file "+
+		util.Warningf("ninja executable version (%s) greater than build file "+
 			"ninja_required_version (%s); versions may be incompatible.",
 			NinjaVersion, fileVersion)
 	}
 	if (binMajor == fileMajor && binMinor < fileMinor) || binMajor < fileMajor {
-		log.Fatalf("ninja executable version (%s) greater than build file "+
+		util.Fatalf("ninja executable version (%s) greater than build file "+
 			"ninja_required_version (%s); versions may be incompatible.",
 			NinjaVersion, fileVersion)
 	}

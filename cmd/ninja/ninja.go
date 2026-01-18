@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -355,7 +354,7 @@ func (m *NinjaMain) CollectTarget(cpath string) (*graph.Node, error) {
 				edge := node.OutEdges()[0]
 				if len(edge.Outputs()) == 0 {
 					edge.Dump("")
-					log.Fatalf("edge has no outputs")
+					util.Fatal("edge has no outputs")
 				}
 				node = edge.Outputs()[0]
 			}
@@ -1190,11 +1189,11 @@ options:
 	for _, targetArg := range targets {
 		node, err := m.CollectTarget(targetArg)
 		if err != nil {
-			log.Fatalf("%s", err)
+			util.Fatalf("%s", err)
 			return 1
 		}
 		if node.InEdge() == nil {
-			log.Fatalf("'%s' is not a target (i.e. it is not an output of any `build` statement)", node.Path())
+			util.Fatalf("'%s' is not a target (i.e. it is not an output of any `build` statement)", node.Path())
 		}
 		collector.CollectFrom(node)
 	}
@@ -1399,9 +1398,9 @@ func ChooseTool(toolName string) *Tool {
 	}
 	suggestion := util.SpellcheckString(toolName, words...)
 	if suggestion != "" {
-		log.Fatalf("unknown tool '%s', did you mean '%s'?", toolName, suggestion)
+		util.Fatalf("unknown tool '%s', did you mean '%s'?", toolName, suggestion)
 	} else {
-		log.Fatalf("unknown tool '%s'", toolName)
+		util.Fatalf("unknown tool '%s'", toolName)
 	}
 	return nil // Not reached.
 }
@@ -1612,7 +1611,7 @@ func main() {
 
 	rcRules, err := ninjarc.ParseRCFiles(options.WorkingDir, "~/.ninjarc")
 	if err != nil {
-		log.Fatal(err.Error())
+		util.Fatal(err.Error())
 	}
 
 	flag.Parse()
@@ -1659,7 +1658,7 @@ func main() {
 			status.Info("Entering directory `%s'", options.WorkingDir)
 		}
 		if err := os.Chdir(options.WorkingDir); err != nil {
-			log.Fatalf("chdir to '%s' - %s", options.WorkingDir, err)
+			util.Fatalf("chdir to '%s' - %s", options.WorkingDir, err)
 		}
 	}
 

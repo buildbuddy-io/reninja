@@ -2,7 +2,6 @@ package build
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sort"
 	"time"
@@ -1104,7 +1103,7 @@ func (b *Builder) ExtractDeps(result *spawn.Result, depsType, depsPrefix string)
 			}
 		}
 	} else {
-		log.Fatalf("unknown deps type: '%s'", depsType)
+		util.Fatalf("unknown deps type: '%s'", depsType)
 	}
 
 	return depsNodes, nil

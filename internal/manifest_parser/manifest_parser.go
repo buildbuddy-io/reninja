@@ -2,7 +2,6 @@ package manifest_parser
 
 import (
 	"fmt"
-	"log"
 	"slices"
 	"strconv"
 
@@ -361,7 +360,7 @@ func (p *ManifestParser) parseEdge() error {
 		out := edge.Outputs()[0]
 		if edge.RemoveInput(out) {
 			if !p.quiet {
-				log.Printf("phony target '%s' names itself as an input; ignoring [-w phonycycle=warn]", out.Path())
+				util.Warningf("phony target '%s' names itself as an input; ignoring [-w phonycycle=warn]", out.Path())
 			}
 		}
 	}

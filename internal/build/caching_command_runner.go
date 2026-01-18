@@ -3,7 +3,6 @@ package build
 import (
 	"bytes"
 	"context"
-	"log"
 	"math"
 	"os"
 	"slices"
@@ -53,7 +52,7 @@ type activeEdgeState struct {
 
 func NewCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *CachingCommandRunner {
 	if filetransfer.DefaultUploader() == nil || filetransfer.DefaultDownloader() == nil {
-		log.Fatalf("--cache requires --remote_cache to be set")
+		util.Fatalf("--cache requires --remote_cache to be set")
 	}
 	ctx, cancelFunc := context.WithCancel(context.TODO())
 

@@ -319,6 +319,14 @@ func SpellcheckString(text string, words ...string) string {
 	return result
 }
 
+func Info(msg string) {
+	fmt.Fprintf(os.Stdout, "ninja: %s\n", msg)
+}
+
+func Infof(format string, args ...interface{}) {
+	Info(fmt.Sprintf(format, args...))
+}
+
 func Warning(msg string) {
 	fmt.Fprintf(os.Stderr, "ninja: warning: %s\n", msg)
 }
@@ -328,17 +336,18 @@ func Warningf(format string, args ...interface{}) {
 }
 
 func Error(msg string) {
-	fmt.Fprintf(os.Stderr, "ninja: err: %s\n", msg)
+	fmt.Fprintf(os.Stderr, "ninja: error: %s\n", msg)
 }
 
 func Errorf(format string, args ...interface{}) {
 	Error(fmt.Sprintf(format, args...))
 }
 
-func Info(msg string) {
-	fmt.Fprintf(os.Stdout, "ninja: %s\n", msg)
+func Fatal(msg string) {
+	fmt.Fprintf(os.Stderr, "ninja: fatal: %s\n", msg)
+	os.Exit(1)
 }
 
-func Infof(format string, args ...interface{}) {
-	Info(fmt.Sprintf(format, args...))
+func Fatalf(format string, args ...interface{}) {
+	Fatal(fmt.Sprintf(format, args...))
 }
