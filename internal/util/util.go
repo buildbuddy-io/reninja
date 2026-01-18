@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/metrics"
 	"strings"
 	"sync"
 	"time"
@@ -127,6 +128,39 @@ func GetSystemNetworkUsage() (float64, float64) {
 		return -1, -1
 	}
 	return uploadedBytesSinceLast / secondsPassed, downloadBytesSinceLast / secondsPassed
+}
+
+var (
+	cpuUsageMu          = sync.Mutex{}
+	lastUserCPUSeconds  float64
+	lastTotalCPUSeconds float64
+)
+
+func GetProgramCPUUsage() float64 {
+	samples := make([]metrics.Sample, 2)
+	samples[0].Name = "/cpu/classes/user:cpu-seconds"
+	samples[1].Name = "/cpu/classes/total:cpu-seconds"
+	metrics.Read(samples)
+
+	userCPUSeconds := samples[0].Value.Float64()
+	totalCPUSeconds := samples[1].Value.Float64()
+
+	cpuUsageMu.Lock()
+	defer cpuUsageMu.Unlock()
+
+	userCPUUsed := userCPUSeconds - lastUserCPUSeconds
+	totalCPUUsed := totalCPUSeconds - lastTotalCPUSeconds
+
+	if totalCPUUsed == 0 {
+		return -1
+	}
+
+	coresUsed := (userCPUUsed / totalCPUUsed) * float64(runtime.GOMAXPROCS(0))
+
+	lastUserCPUSeconds = userCPUSeconds
+	lastTotalCPUSeconds = totalCPUSeconds
+
+	return coresUsed
 }
 
 func IsKnownShellSafeCharacter(ch rune) bool {

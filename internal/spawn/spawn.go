@@ -24,7 +24,7 @@ type Result struct {
 
 	Events []span.Event
 
-	UploadedOutputs []*bespb.File
+	Outputs []*bespb.File
 }
 
 func (r Result) Success() bool {

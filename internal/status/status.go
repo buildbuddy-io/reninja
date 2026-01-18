@@ -514,8 +514,8 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		if outputs := edge.Outputs(); len(outputs) > 0 {
 			targetLabel = outputs[0].Path()
 
-			if len(result.UploadedOutputs) > 0 {
-				if err := p.bes.Publish(bes_event.NamedSetOfFilesEvent(targetLabel, result.UploadedOutputs)); err != nil {
+			if len(result.Outputs) > 0 {
+				if err := p.bes.Publish(bes_event.NamedSetOfFilesEvent(targetLabel, result.Outputs)); err != nil {
 					util.Warningf("Failed to publish build metadata: %s", err)
 				}
 			}
@@ -581,6 +581,7 @@ func (p *StatusPrinter) recordSystemMetrics(t time.Time) {
 
 	p.flamegraph.RecordActionCount(actionsRunning, t)
 	p.flamegraph.RecordLoadAverage(util.GetLoadAverage(), t)
+	p.flamegraph.RecordCPUUsage(util.GetProgramCPUUsage(), t)
 	p.flamegraph.RecordSystemMemoryUsage(util.GetSystemMemoryUsageMB(), t)
 	p.flamegraph.RecordSystemCPUUsage(util.GetSystemCPUUsageCores(), t)
 	up, down := util.GetSystemNetworkUsage()

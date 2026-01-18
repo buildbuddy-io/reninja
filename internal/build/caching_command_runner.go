@@ -164,11 +164,15 @@ func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *
 		return nil, nil, err
 	}
 
-	files := make([]string, 0, len(edge.ExplicitInputs()))
-	for _, input := range edge.ExplicitInputs() {
-		if input.Exists() {
-			files = append(files, input.Path())
+	files := make([]string, 0, len(edge.Inputs()))
+	for _, input := range edge.Inputs() {
+		if _, err := os.Stat(input.Path()); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, nil, err
 		}
+		files = append(files, input.Path())
 	}
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
@@ -189,6 +193,10 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := filetransfer.DigestFunction
 	eg, gctx := errgroup.WithContext(ctx)
+
+	actionOutputs := make([]*bespb.File, 0, len(edge.Outputs()))
+	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
+
 	for _, outputFile := range actionResult.GetOutputFiles() {
 		eg.Go(func() error {
 			matchedEdgeOutput := false
@@ -200,6 +208,7 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 				}
 			}
 			if !matchedEdgeOutput {
+				util.Errorf("ActionResult contained output (%s) not found in edge!", outputFile)
 				return nil // Skip writing any outputs that aren't outputs of this edge.
 			}
 
@@ -218,6 +227,14 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 					return err
 				}
 			}
+
+			uri := fmt.Sprintf("%s/%s", bytestreamURIPrefix, casDigest.DownloadString())
+			actionOutputs = append(actionOutputs, &bespb.File{
+				Name:   outputFile.GetPath(),
+				File:   &bespb.File_Uri{Uri: uri},
+				Digest: outputFile.GetDigest().GetHash(),
+				Length: outputFile.GetDigest().GetSizeBytes(),
+			})
 			return nil
 		})
 	}
@@ -247,6 +264,7 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 		Edge:     edge,
 		Runner:   "local",
 		CacheHit: true,
+		Outputs:  actionOutputs,
 	}, nil
 }
 
@@ -306,13 +324,13 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		}
 
 		edgeState.finishedResult <- &spawn.Result{
-			Edge:            edge,
-			Status:          exitCode,
-			Output:          output,
-			Runner:          "local",
-			CacheHit:        false,
-			Events:          span.Events(ctx),
-			UploadedOutputs: uploadedOutputs,
+			Edge:     edge,
+			Status:   exitCode,
+			Output:   output,
+			Runner:   "local",
+			CacheHit: false,
+			Events:   span.Events(ctx),
+			Outputs:  uploadedOutputs,
 		}
 	}()
 

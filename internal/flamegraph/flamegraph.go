@@ -77,7 +77,7 @@ func (g *Flamegraph) loadAverageEvent(sample Float64Sample) Event {
 // {"name":"CPU usage (Bazel)","pid":1,"tid":35,"cname":"good","ph":"C","ts":81196155,"args":{"cpu":3.986242310474936}},
 func (g *Flamegraph) cpuUsageEvent(sample Float64Sample) Event {
 	return Event{
-		Name:      "CPU usage (cores)",
+		Name:      "CPU usage (ninja)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  1,
@@ -91,7 +91,7 @@ func (g *Flamegraph) cpuUsageEvent(sample Float64Sample) Event {
 // {"name":"Memory usage (Bazel)","pid":1,"tid":35,"cname":"olive","ph":"C","ts":216196155,"args":{"memory":708.0}}
 func (g *Flamegraph) memoryUsageEvent(sample Float64Sample) Event {
 	return Event{
-		Name:      "Memory usage (Bazel)",
+		Name:      "Memory usage (ninja)",
 		Phase:     PhaseCounter,
 		ProcessID: 1,
 		ThreadID:  1,
@@ -367,13 +367,13 @@ func (g *Flamegraph) Write(w io.Writer) error {
 	threadTracker := &ThreadTracker{make([]time.Time, 0)}
 	for _, target := range allTargets {
 		tid, newThread := threadTracker.alloc(target)
-		tid += 100 // offset thread IDs by 100 to leave room for other stuff.
+		tid += 2 // offset thread IDs by 2 because system stuff is on thread 1.
 		if newThread {
 			ev := &Event{
 				ProcessID: 1,
 				ThreadID:  int64(tid),
 				Name:      "thread_name",
-				Args:      map[string]any{"name": fmt.Sprintf("ninja-%d", tid)},
+				Args:      map[string]any{"name": fmt.Sprintf("thread-%d", tid)},
 				Phase:     PhaseMetadata,
 			}
 			if err := g.writeEvent(w, ev); err != nil {
@@ -450,7 +450,12 @@ func (g *Flamegraph) Write(w io.Writer) error {
 		}
 	}
 
-	// TODO: ninja CPU
+	for _, sample := range g.cpuUsageSamples {
+		ev := g.cpuUsageEvent(sample)
+		if err := g.writeEvent(w, &ev); err != nil {
+			return err
+		}
+	}
 
 	for _, sample := range g.systemMemoryUsageSamples {
 		ev := g.systemMemoryUsageEvent(sample)
