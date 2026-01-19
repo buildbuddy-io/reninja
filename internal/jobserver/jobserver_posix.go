@@ -14,10 +14,11 @@ type unixClient struct {
 	hasImplicitSlot bool
 }
 
-func IsFifoDescriptor(fd int) bool {
+// Return true if |fd| is a fifo or character device.
+func IsJobserverDescriptor(fd int) bool {
 	stat_t := &syscall.Stat_t{}
 	err := syscall.Fstat(fd, stat_t)
-	return err == nil && stat_t.Mode&syscall.S_IFMT == syscall.S_IFIFO
+	return err == nil && (stat_t.Mode&syscall.S_IFMT == syscall.S_IFIFO) || (stat_t.Mode&syscall.S_IFMT == syscall.S_IFCHR)
 }
 
 func (c *unixClient) TryAcquire() Slot {
@@ -76,7 +77,7 @@ func (c *unixClient) InitWithFifo(fifoPath string) error {
 	if err != nil {
 		return fmt.Errorf("Error opening fifo for reading: %s", err)
 	}
-	if !IsFifoDescriptor(readFD) {
+	if !IsJobserverDescriptor(readFD) {
 		syscall.Close(readFD)
 		return fmt.Errorf("Not a fifo path: %s", fifoPath)
 	}
