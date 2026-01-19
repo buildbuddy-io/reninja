@@ -1,6 +1,7 @@
 package build_log_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -169,8 +170,8 @@ func TestObsoleteOldVersion(t *testing.T) {
 
 	log := build_log.NewBuildLog()
 	err = log.Load(testFilename)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "version")
+	// Old version returns a sentinel error, not a hard error
+	assert.True(t, errors.Is(err, build_log.ErrBuildLogVersionOld))
 }
 
 func TestSpacesInOutput(t *testing.T) {

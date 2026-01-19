@@ -9,7 +9,6 @@ require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0
 	github.com/jonboulle/clockwork v0.5.0
-	github.com/jwalton/go-supportscolor v1.2.0
 	github.com/klauspost/compress v1.18.1
 	github.com/mattn/go-isatty v0.0.20
 	github.com/pkg/errors v0.9.1

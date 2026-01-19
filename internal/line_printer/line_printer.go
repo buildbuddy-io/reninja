@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jwalton/go-supportscolor"
 	"github.com/mattn/go-isatty"
 	"golang.org/x/term"
 )
@@ -34,15 +33,33 @@ type LinePrinter struct {
 }
 
 func SmartTerminal() bool {
-	return isatty.IsTerminal(os.Stdout.Fd())
+	// A smart terminal supports escape sequences. Check that stdout is a tty
+	// and that TERM is set (even if empty) and not "dumb".
+	// This matches C++ ninja behavior: TERM="" is smart, TERM not set is not.
+	if !isatty.IsTerminal(os.Stdout.Fd()) {
+		return false
+	}
+	term, isSet := os.LookupEnv("TERM")
+	if !isSet {
+		return false
+	}
+	return term != "dumb"
 }
 
 func SupportsColor() bool {
-	return supportscolor.Stdout().SupportsColor
+	// C++ ninja: supports_color = smart_terminal, then check CLICOLOR_FORCE
+	if SmartTerminal() {
+		return true
+	}
+	// CLICOLOR_FORCE overrides when not a smart terminal
+	if clicolor := os.Getenv("CLICOLOR_FORCE"); clicolor != "" && clicolor != "0" {
+		return true
+	}
+	return false
 }
 
 func New() *LinePrinter {
-	return NewCustom(os.Stdout, isatty.IsTerminal(os.Stdout.Fd()), supportscolor.Stdout().SupportsColor)
+	return NewCustom(os.Stdout, SmartTerminal(), SupportsColor())
 }
 
 func NewCustom(out io.Writer, smartTerminal, supportsColor bool) *LinePrinter {

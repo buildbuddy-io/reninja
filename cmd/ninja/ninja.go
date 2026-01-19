@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math"
@@ -21,6 +22,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/build_log"
 	"github.com/buildbuddy-io/reninja/internal/clean"
 	"github.com/buildbuddy-io/reninja/internal/command_collector"
+	"github.com/buildbuddy-io/reninja/internal/debug_flags"
 	"github.com/buildbuddy-io/reninja/internal/deps_log"
 	"github.com/buildbuddy-io/reninja/internal/disk"
 	"github.com/buildbuddy-io/reninja/internal/dyndep"
@@ -35,6 +37,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/ninjarc"
 	"github.com/buildbuddy-io/reninja/internal/state"
 	"github.com/buildbuddy-io/reninja/internal/status"
+	"github.com/buildbuddy-io/reninja/internal/subprocess"
 	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/buildbuddy-io/reninja/internal/version"
 )
@@ -392,12 +395,7 @@ func (m *NinjaMain) CollectTargetsFromArgs(args []string) ([]*graph.Node, error)
 	return targets, nil
 }
 
-var (
-	gExplaining            bool
-	gKeepDepfile           bool
-	gKeepRsp               bool
-	gExperimentalStatcache bool
-)
+var gExperimentalStatcache bool
 
 func DebugEnable(names []string) bool {
 	for _, name := range names {
@@ -414,11 +412,11 @@ multiple modes can be enabled via -d FOO -d BAR
 		case "stats":
 			metrics.Enable()
 		case "explain":
-			gExplaining = true
+			debug_flags.Explaining = true
 		case "keepdepfile":
-			gKeepDepfile = true
+			debug_flags.KeepDepfile = true
 		case "keeprsp":
-			gKeepRsp = true
+			debug_flags.KeepRsp = true
 		case "nostatcache":
 			gExperimentalStatcache = false
 		default:
@@ -483,7 +481,10 @@ func (m *NinjaMain) OpenBuildLog(recompactOnly bool) bool {
 	}
 
 	err := m.buildLog.Load(logPath)
-	if err != nil {
+	if errors.Is(err, build_log.ErrBuildLogVersionOld) {
+		// Print warning but don't fail - version is too old, we just start fresh
+		util.Warningf("%s", err)
+	} else if err != nil {
 		util.Errorf("loading build log %s: %s", logPath, err)
 		return false
 	}
@@ -1076,16 +1077,25 @@ func EvaluateCommandWithRspfile(edge *graph.Edge, mode EvaluateCommandMode) stri
 	return string(commandBytes)
 }
 
-func PrintOneCompdbObject(directory string, edge *graph.Edge, mode EvaluateCommandMode) {
-	fmt.Printf("\n  {\n    \"directory\": ")
-	PrintJSONString(directory)
-	fmt.Printf(",\n    \"command\": ")
-	PrintJSONString(EvaluateCommandWithRspfile(edge, mode))
-	fmt.Printf(",\n    \"file\": ")
-	PrintJSONString(edge.Inputs()[0].Path())
-	fmt.Printf(",\n    \"output\": ")
-	PrintJSONString(edge.Outputs()[0].Path())
-	fmt.Printf("\n  }")
+// PrintCompdbObjectsForEdge prints one JSON object per input of the edge.
+func PrintCompdbObjectsForEdge(directory string, edge *graph.Edge, mode EvaluateCommandMode) {
+	command := EvaluateCommandWithRspfile(edge, mode)
+	first := true
+	for _, input := range edge.Inputs() {
+		if !first {
+			fmt.Printf(",")
+		}
+		fmt.Printf("\n  {\n    \"directory\": ")
+		PrintJSONString(directory)
+		fmt.Printf(",\n    \"command\": ")
+		PrintJSONString(command)
+		fmt.Printf(",\n    \"file\": ")
+		PrintJSONString(input.Path())
+		fmt.Printf(",\n    \"output\": ")
+		PrintJSONString(edge.Outputs()[0].Path())
+		fmt.Printf("\n  }")
+		first = false
+	}
 }
 
 func (m *NinjaMain) ToolCompilationDatabase(opts *Options, args []string) int {
@@ -1122,7 +1132,7 @@ options:
 			if !first {
 				fmt.Printf(",")
 			}
-			PrintOneCompdbObject(directory, edge, evalMode)
+			PrintCompdbObjectsForEdge(directory, edge, evalMode)
 			first = false
 		} else {
 			for _, arg := range args {
@@ -1130,7 +1140,7 @@ options:
 					if !first {
 						fmt.Printf(",")
 					}
-					PrintOneCompdbObject(directory, edge, evalMode)
+					PrintCompdbObjectsForEdge(directory, edge, evalMode)
 					first = false
 				}
 			}
@@ -1151,7 +1161,7 @@ func PrintCompdb(directory string, edges []*graph.Edge, mode EvaluateCommandMode
 		if !first {
 			fmt.Printf(",")
 		}
-		PrintOneCompdbObject(directory, edge, mode)
+		PrintCompdbObjectsForEdge(directory, edge, mode)
 		first = false
 	}
 	fmt.Printf("\n]\n")
@@ -1159,8 +1169,7 @@ func PrintCompdb(directory string, edges []*graph.Edge, mode EvaluateCommandMode
 
 func (m *NinjaMain) ToolCompilationDatabaseForTargets(opts *Options, args []string) int {
 	toolUsage := func() {
-		fmt.Printf(`
-usage: ninja -t compdb [-hx] target [targets]
+		fmt.Printf(`usage: ninja -t compdb [-hx] target [targets]
 
 options:
   -h     display this help message
@@ -1174,7 +1183,7 @@ options:
 		return 1
 	}
 
-	if len(args) == 0 {
+	if len(fs.Args()) == 0 {
 		util.Errorf("compdb-targets expects the name of at least one target")
 		toolUsage()
 		return 1
@@ -1246,7 +1255,9 @@ usage: ninja -t restat [outputs]
 	}
 
 	err = m.buildLog.Load(logPath)
-	if err != nil {
+	if errors.Is(err, build_log.ErrBuildLogVersionOld) {
+		util.Warningf("%s", err)
+	} else if err != nil {
 		util.Errorf("loading build log %s: %s", logPath, err)
 		return int(exit_status.ExitFailure)
 	}
@@ -1574,6 +1585,41 @@ func parseArg(arg string) (isFlag bool, isTerminator bool, flagName string, hasI
 	return true, false, flagName, hasInlineValue
 }
 
+// preprocessGetoptStyleFlags converts getopt-style flags like "-j3" to "-j=3"
+// for single-character flags that take values. This is needed because Go's
+// flag package doesn't support the getopt-style syntax.
+func preprocessGetoptStyleFlags(args []string, valueFlagNames map[string]bool) []string {
+	result := make([]string, 0, len(args))
+	for _, arg := range args {
+		// Only process single-dash flags (not --flags)
+		if len(arg) > 2 && arg[0] == '-' && arg[1] != '-' && !strings.Contains(arg, "=") {
+			// Check if the first character after '-' is a known value flag
+			flagName := string(arg[1])
+			if valueFlagNames[flagName] {
+				// Convert -jN to -j=N
+				result = append(result, "-"+flagName+"="+arg[2:])
+				continue
+			}
+		}
+		result = append(result, arg)
+	}
+	return result
+}
+
+// getValueFlagNames returns the set of single-character flag names that take values
+func getValueFlagNames() map[string]bool {
+	return map[string]bool{
+		"j": true, // jobs
+		"C": true, // working dir
+		"f": true, // build file
+		"k": true, // allowed failures
+		"l": true, // max load
+		"t": true, // tool
+		"d": true, // debugging
+		"w": true, // warnings
+	}
+}
+
 // optional interface to indicate boolean flags that can be
 // supplied without "=value" text
 type boolFlag interface {
@@ -1595,6 +1641,9 @@ func getFormalFlagNames(flagSet *flag.FlagSet) map[string]bool {
 }
 
 func main() {
+	// Set up signal handling early to catch interrupts before any subprocesses start.
+	subprocess.SetupSignalHandling()
+
 	config := build_config.Create()
 	options := &Options{}
 	options.InputFile = "build.ninja"
@@ -1606,7 +1655,10 @@ func main() {
 	// the same way that ninja does. Because we're not using getopt and parsing
 	// iteratively, sub-command flags will throw off the main flag parser. So they
 	// are first stripped, then passed in via the positionalArgs slice.
-	knownFlags, unknownFlags := StripUnknownFlags(flag.CommandLine, os.Args)
+	//
+	// First, preprocess args to convert getopt-style flags like "-j3" to "-j=3"
+	preprocessedArgs := preprocessGetoptStyleFlags(os.Args, getValueFlagNames())
+	knownFlags, unknownFlags := StripUnknownFlags(flag.CommandLine, preprocessedArgs)
 	os.Args = knownFlags
 
 	rcRules, err := ninjarc.ParseRCFiles(options.WorkingDir, "~/.ninjarc")

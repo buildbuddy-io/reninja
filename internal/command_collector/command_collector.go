@@ -1,7 +1,6 @@
 package command_collector
 
 import (
-	"fmt"
 	"github.com/buildbuddy-io/reninja/internal/graph"
 )
 
@@ -27,7 +26,6 @@ func (c *CommandCollector) CollectFrom(node *graph.Node) {
 		panic("node should not be nil")
 	}
 	if _, ok := c.visitedNodes[node]; ok {
-		fmt.Printf("already seen %s\n", node.Path())
 		return
 	}
 	c.visitedNodes[node] = struct{}{}

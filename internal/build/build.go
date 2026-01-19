@@ -665,6 +665,7 @@ func NewBuilder(state *state.State, config *build_config.Config, buildLog *build
 		realExp = explanations.New()
 	}
 	b.explanations = explanations.NewOptional(realExp)
+	status.SetExplanations(realExp)
 
 	lockFilePath := ".ninja_lock"
 	if buildDir := state.Bindings().LookupVariable("builddir"); buildDir != "" {
