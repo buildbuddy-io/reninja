@@ -10,6 +10,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/metrics"
 	"github.com/buildbuddy-io/reninja/internal/state"
 	"github.com/buildbuddy-io/reninja/internal/timestamp"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 const (
@@ -404,13 +405,7 @@ func (d *DepsLog) Recompact(path string) error {
 	d.deps = newLog.deps
 	d.nodes = newLog.nodes
 
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-	return nil
+	return util.ReplaceFileContent(path, tempPath)
 }
 
 func (d *DepsLog) IsDepsEntryLiveFor(node *graph.Node) bool {

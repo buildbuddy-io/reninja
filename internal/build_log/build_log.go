@@ -13,6 +13,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/metrics"
 	"github.com/buildbuddy-io/reninja/internal/timestamp"
+	"github.com/buildbuddy-io/reninja/internal/util"
 	rapidhash "github.com/buildbuddy-io/reninja/third_party/rapidhash_v1"
 )
 
@@ -330,15 +331,7 @@ func (b *BuildLog) Recompact(path string, user BuildLogUser) error {
 		return err
 	}
 
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-
-	return nil
+	return util.ReplaceFileContent(path, tempPath)
 }
 
 func (b *BuildLog) Restat(path string, diskInterface disk.Interface, outputCount int, outputs []string) error {
@@ -383,13 +376,6 @@ func (b *BuildLog) Restat(path string, diskInterface disk.Interface, outputCount
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil {
-		return err
-	}
 
-	if err := os.Rename(tempPath, path); err != nil {
-		return err
-	}
-
-	return nil
+	return util.ReplaceFileContent(path, tempPath)
 }
