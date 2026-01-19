@@ -2,7 +2,6 @@ package graph
 
 import (
 	"fmt"
-	"log"
 	"runtime"
 	"slices"
 	"sort"
@@ -576,7 +575,7 @@ func (e *EdgeEnv) LookupVariable(v string) string {
 				cycle += s + " -> "
 			}
 			cycle += v
-			log.Fatal("cycle in rule variables: " + cycle)
+			util.Fatal("cycle in rule variables: " + cycle)
 		}
 	}
 

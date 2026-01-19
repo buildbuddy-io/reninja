@@ -370,6 +370,10 @@ func (l *Lexer) ReadEvalString(path bool) (*eval_env.EvalString, error) {
       eval.AddText(":")
       continue
     }
+    "$^" {
+      eval.AddText("\n")
+      continue
+    }
     "$". {
       l.lastToken = start
       return nil, l.Error("bad $-escape (literal $ must be written as $$)")

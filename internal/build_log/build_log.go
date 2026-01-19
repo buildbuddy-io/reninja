@@ -2,6 +2,7 @@ package build_log
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,10 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/timestamp"
 	rapidhash "github.com/buildbuddy-io/reninja/third_party/rapidhash_v1"
 )
+
+// ErrBuildLogVersionOld is returned when the build log version is too old or too new.
+// This is a warning, not a fatal error - the log file is simply removed and we start fresh.
+var ErrBuildLogVersionOld = errors.New("build log version is too old; starting over")
 
 const (
 	fileSignature          = "# ninja log v%d\n"
@@ -156,8 +161,9 @@ func (b *BuildLog) OpenForWriteIfNeeded() error {
 	return nil
 }
 
-// cpp version returns LoadStatus -- we're just returning an error,
-// caller can look at it to determine if it was notfound or something else.
+// Load loads the build log from disk.
+// Returns ErrBuildLogVersionOld if the log version is outdated (a warning, not fatal).
+// The caller should check for this sentinel error and print a warning instead of failing.
 func (b *BuildLog) Load(path string) error {
 	defer metrics.Record(".ninja_log load")()
 	f, err := os.Open(path)
@@ -207,13 +213,10 @@ func (b *BuildLog) Load(path string) error {
 			if _, err := fmt.Sscanf(lineStr, fileSignature, &logVersion); err != nil {
 				return err
 			}
-			if logVersion < oldestSupportedVersion {
-				defer os.Remove(path)
-				return fmt.Errorf("build log version is too old; starting over")
-			}
-			if logVersion > currentVersion {
-				defer os.Remove(path)
-				return fmt.Errorf("build log version is too new; starting over")
+			if logVersion < oldestSupportedVersion || logVersion > currentVersion {
+				os.Remove(path)
+				// Return sentinel error - caller should treat as warning, not failure
+				return ErrBuildLogVersionOld
 			}
 			successfullyParsedVersion = true
 			continue

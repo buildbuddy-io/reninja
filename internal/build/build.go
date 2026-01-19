@@ -2,7 +2,6 @@ package build
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sort"
 	"time"
@@ -666,6 +665,7 @@ func NewBuilder(state *state.State, config *build_config.Config, buildLog *build
 		realExp = explanations.New()
 	}
 	b.explanations = explanations.NewOptional(realExp)
+	status.SetExplanations(realExp)
 
 	lockFilePath := ".ninja_lock"
 	if buildDir := state.Bindings().LookupVariable("builddir"); buildDir != "" {
@@ -1104,7 +1104,7 @@ func (b *Builder) ExtractDeps(result *spawn.Result, depsType, depsPrefix string)
 			}
 		}
 	} else {
-		log.Fatalf("unknown deps type: '%s'", depsType)
+		util.Fatalf("unknown deps type: '%s'", depsType)
 	}
 
 	return depsNodes, nil

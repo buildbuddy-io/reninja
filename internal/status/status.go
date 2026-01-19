@@ -166,17 +166,19 @@ type StatusPrinter struct {
 }
 
 func NewPrinter(config *build_config.Config) *StatusPrinter {
+	// Check for NINJA_STATUS. Use default only if not set, not if set to empty.
+	progressStatusFormat := "[%f/%t] "
+	if progressFormatOverride, ok := os.LookupEnv("NINJA_STATUS"); ok {
+		progressStatusFormat = progressFormatOverride
+	}
 	sp := &StatusPrinter{
 		config:               config,
 		currentRate:          NewSlidingRateInfo(config.Parallelism),
-		progressStatusFormat: os.Getenv("NINJA_STATUS"),
+		progressStatusFormat: progressStatusFormat,
 		ticker:               time.NewTicker(500 * time.Millisecond),
 		done:                 make(chan bool),
 		mu:                   &sync.Mutex{},
 		logsInitialized:      &sync.Once{},
-	}
-	if sp.progressStatusFormat == "" {
-		sp.progressStatusFormat = "[%f/%t] "
 	}
 
 	if remote_flags.EnableBES() {
@@ -350,7 +352,10 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, absoluteStart time.Ti
 	startTimeMillis := absoluteStart.Sub(p.buildStart).Milliseconds()
 	p.timeMillis = startTimeMillis
 
-	if edge.UseConsole() || p.printer.SmartTerminal() {
+	// In verbose mode, the status line ends with a newline and can't be
+	// overwritten, so only print status at start for non-verbose smart terminal.
+	isVerbose := p.config.Verbosity == build_config.Verbose
+	if (edge.UseConsole() || p.printer.SmartTerminal()) && !isVerbose {
 		p.PrintStatus(edge, startTimeMillis)
 	}
 
@@ -562,7 +567,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		// (Launching subprocesses in pseudo ttys doesn't work because there are
 		// only a few hundred available on some systems, and ninja can launch
 		// thousands of parallel compile commands.)
-		if p.printer.SupportsColor() && !strings.Contains(output, "\x1b") {
+		if p.printer.SupportsColor() || !strings.Contains(output, "\x1b") {
 			p.printer.PrintOnNewline(output)
 		} else {
 			finalOutput := util.StripAnsiEscapeCodes(output)

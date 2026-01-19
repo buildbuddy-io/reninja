@@ -932,7 +932,7 @@ func TestOneStep(t *testing.T) {
 	require.Equal(t, exit_status.ExitSuccess, buildRes)
 
 	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
-	require.Equal(t, "cat in1 > cat1", th.commandRunner.commandsRan[0])
+	require.Equal(t, []string{"cat in1 > cat1"}, th.commandRunner.commandsRan)
 }
 
 func TestOneStep2(t *testing.T) {
@@ -949,7 +949,7 @@ func TestOneStep2(t *testing.T) {
 	require.Equal(t, exit_status.ExitSuccess, buildRes)
 
 	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
-	require.Equal(t, "cat in1 > cat1", th.commandRunner.commandsRan[0])
+	require.Equal(t, []string{"cat in1 > cat1"}, th.commandRunner.commandsRan)
 }
 
 func TestTwoStep(t *testing.T) {
@@ -982,8 +982,7 @@ func TestTwoStep(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, exit_status.ExitSuccess, buildRes)
 	assert.Equal(t, 5, len(th.commandRunner.commandsRan))
-	require.Equal(t, th.commandRunner.commandsRan[3], "cat in1 in2 > cat2")
-	require.Equal(t, th.commandRunner.commandsRan[4], "cat cat1 cat2 > cat12")
+	require.Equal(t, []string{"cat in1 > cat1", "cat in1 in2 > cat2", "cat cat1 cat2 > cat12", "cat in1 in2 > cat2", "cat cat1 cat2 > cat12"}, th.commandRunner.commandsRan)
 }
 
 func TestTwoOutputs(t *testing.T) {
@@ -1001,7 +1000,7 @@ build out1 out2: touch in.txt
 	require.NoError(t, err)
 	require.Equal(t, exit_status.ExitSuccess, buildRes)
 	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
-	require.Equal(t, th.commandRunner.commandsRan[0], "touch out1 out2")
+	require.Equal(t, []string{"touch out1 out2"}, th.commandRunner.commandsRan)
 }
 
 func TestImplicitOutput(t *testing.T) {
@@ -1019,7 +1018,7 @@ build out | out.imp: touch in.txt
 	require.NoError(t, err)
 	require.Equal(t, exit_status.ExitSuccess, buildRes)
 	assert.Equal(t, 1, len(th.commandRunner.commandsRan))
-	require.Equal(t, "touch out out.imp", th.commandRunner.commandsRan[0])
+	require.Equal(t, []string{"touch out out.imp"}, th.commandRunner.commandsRan)
 }
 
 func TestMultiOutIn(t *testing.T) {
@@ -3862,10 +3861,8 @@ build tmp | tmp.imp: dyndep
 	buildRes, err := th.builder.Build()
 	require.NoError(t, err)
 	require.Equal(t, exit_status.ExitSuccess, buildRes)
-	require.Len(t, th.commandRunner.commandsRan, 3)
-	require.Equal(t, "cp dd-in dd", th.commandRunner.commandsRan[0])
-	require.Equal(t, "touch tmp tmp.imp", th.commandRunner.commandsRan[1])
-	require.Equal(t, "touch out out.imp", th.commandRunner.commandsRan[2])
+
+	require.Equal(t, []string{"cp dd-in dd", "touch tmp tmp.imp", "touch out out.imp"}, th.commandRunner.commandsRan)
 }
 
 // TestDyndepBuildDiscoverNowWantEdgeAndDependent verifies that a dyndep file

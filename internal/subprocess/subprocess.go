@@ -22,12 +22,18 @@ var (
 func handleSignals() {
 	once.Do(func() {
 		signalChannel := make(chan os.Signal, 1)
-		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		go func() {
 			<-signalChannel
 			interrupted.Store(true)
 		}()
 	})
+}
+
+// SetupSignalHandling should be called at the start of main() to ensure
+// signals are caught before any subprocesses are started.
+func SetupSignalHandling() {
+	handleSignals()
 }
 
 func Interrupted() bool {
