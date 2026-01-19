@@ -261,7 +261,7 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 		Status:   exit_status.ExitStatusType(actionResult.GetExitCode()),
 		Output:   output,
 		Edge:     edge,
-		Runner:   "local",
+		Runner:   "remote-cache",
 		CacheHit: true,
 		Outputs:  actionOutputs,
 	}, nil
