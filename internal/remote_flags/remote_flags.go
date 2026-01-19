@@ -2,6 +2,7 @@ package remote_flags
 
 import (
 	"flag"
+	"net/url"
 )
 
 var (
@@ -41,4 +42,12 @@ func InvocationID() string {
 
 func RemoteInstanceName() string {
 	return *remoteInstanceName
+}
+
+func BytestreamURIPrefix() string {
+	backendURL, err := url.Parse(RemoteCache())
+	if err != nil {
+		return ""
+	}
+	return "bytestream://" + backendURL.Host
 }
