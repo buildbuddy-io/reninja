@@ -192,6 +192,17 @@ func TargetConfiguredEvent(targetLabel, targetKind, configID string) *bespb.Buil
 	}
 }
 
+func NamedSetOfFilesEvent(namedSetID string, files []*bespb.File) *bespb.BuildEvent {
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{Id: &bespb.BuildEventId_NamedSet{
+			NamedSet: &bespb.BuildEventId_NamedSetOfFilesId{Id: namedSetID},
+		}},
+		Payload: &bespb.BuildEvent_NamedSetOfFiles{NamedSetOfFiles: &bespb.NamedSetOfFiles{
+			Files: files,
+		}},
+	}
+}
+
 func TargetCompletedEvent(targetLabel string, exitCode exit_status.ExitStatusType) *bespb.BuildEvent {
 	return &bespb.BuildEvent{
 		Id: &bespb.BuildEventId{Id: &bespb.BuildEventId_TargetCompleted{
@@ -201,13 +212,13 @@ func TargetCompletedEvent(targetLabel string, exitCode exit_status.ExitStatusTyp
 		}},
 		Payload: &bespb.BuildEvent_Completed{Completed: &bespb.TargetComplete{
 			Success: exitCode == exit_status.ExitSuccess,
-			//                                OutputGroup: []*bespb.OutputGroup{
-			//                                        {
-			//                                                FileSets: []*bespb.BuildEventId_NamedSetOfFilesId{
-			//                                                        {Id: namedSetID},
-			//                                                },
-			//                                        },
-			//                                },
+			OutputGroup: []*bespb.OutputGroup{
+				{
+					FileSets: []*bespb.BuildEventId_NamedSetOfFilesId{
+						{Id: targetLabel},
+					},
+				},
+			},
 		}},
 	}
 }

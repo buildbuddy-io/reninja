@@ -6,6 +6,8 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/exit_status"
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/span"
+
+	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
 )
 
 type Result struct {
@@ -21,6 +23,8 @@ type Result struct {
 	CacheHit bool
 
 	Events []span.Event
+
+	Outputs []*bespb.File
 }
 
 func (r Result) Success() bool {

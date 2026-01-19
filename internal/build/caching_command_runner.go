@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"os"
 	"slices"
@@ -28,6 +29,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/metadata"
 
+	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
 	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
@@ -190,6 +192,10 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := filetransfer.DigestFunction
 	eg, gctx := errgroup.WithContext(ctx)
+
+	actionOutputs := make([]*bespb.File, 0, len(edge.Outputs()))
+	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
+
 	for _, outputFile := range actionResult.GetOutputFiles() {
 		eg.Go(func() error {
 			matchedEdgeOutput := false
@@ -220,6 +226,14 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 					return err
 				}
 			}
+
+			uri := fmt.Sprintf("%s/%s", bytestreamURIPrefix, casDigest.DownloadString())
+			actionOutputs = append(actionOutputs, &bespb.File{
+				Name:   outputFile.GetPath(),
+				File:   &bespb.File_Uri{Uri: uri},
+				Digest: outputFile.GetDigest().GetHash(),
+				Length: outputFile.GetDigest().GetSizeBytes(),
+			})
 			return nil
 		})
 	}
@@ -247,8 +261,9 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 		Status:   exit_status.ExitStatusType(actionResult.GetExitCode()),
 		Output:   output,
 		Edge:     edge,
-		Runner:   "local",
+		Runner:   "remote-cache",
 		CacheHit: true,
+		Outputs:  actionOutputs,
 	}, nil
 }
 
@@ -301,7 +316,8 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		output := subproc.GetOutput()
 		doneExecutingFn()
 
-		if err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action); err != nil {
+		uploadedOutputs, err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action)
+		if err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
 		}
@@ -313,6 +329,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			Runner:   "local",
 			CacheHit: false,
 			Events:   span.Events(ctx),
+			Outputs:  uploadedOutputs,
 		}
 	}()
 
@@ -338,10 +355,10 @@ func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action
 	return nil, statuserr.NotFoundError("ActionResult not found")
 }
 
-func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action) error {
+func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action) ([]*bespb.File, error) {
 	// Skip uploading failed actions.
 	if exitCode != exit_status.ExitSuccess {
-		return nil
+		return nil, nil
 	}
 	defer span.Record(ctx, "upload outputs")()
 
@@ -354,15 +371,12 @@ func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *gr
 	digestFunction := filetransfer.DigestFunction
 	actionDigest, err := digest.ComputeForMessage(action, digestFunction)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ul := cachetools.NewBatchCASUploader(ctx, r.uploader, r.uploader, instanceName, digestFunction)
-
-	// only needed for remote execution.
-	//if err := filetransfer.UploadDirectoryTreeToCAS(ul, tree); err != nil {
-	//	return err
-	//}
+	uploadedOutputs := make([]*bespb.File, 0, len(edge.Outputs()))
+	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
 
 	// Upload outputs
 	for _, output := range edge.Outputs() {
@@ -371,31 +385,40 @@ func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *gr
 			if os.IsNotExist(err) {
 				continue
 			}
-			return err
+			return nil, err
 		}
 		d, err := ul.UploadFile(output.Path())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ar.OutputFiles = append(ar.OutputFiles, &repb.OutputFile{
 			Path:         output.Path(),
 			Digest:       d,
 			IsExecutable: cachetools.IsExecutable(fi),
 		})
+
+		rn := digest.NewCASResourceName(d, instanceName, digestFunction)
+		uri := fmt.Sprintf("%s/%s", bytestreamURIPrefix, rn.DownloadString())
+		uploadedOutputs = append(uploadedOutputs, &bespb.File{
+			Name:   output.Path(),
+			File:   &bespb.File_Uri{Uri: uri},
+			Digest: d.GetHash(),
+			Length: d.GetSizeBytes(),
+		})
 	}
 
 	// Upload stdout
 	ar.StdoutDigest, err = ul.UploadBlob([]byte(output))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := ul.Wait(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Upload the actual action result.
 	acrn := digest.NewACResourceName(actionDigest, instanceName, digestFunction)
-	return r.uploader.UploadActionResult(ctx, acrn, ar)
+	return uploadedOutputs, r.uploader.UploadActionResult(ctx, acrn, ar)
 }
 
 func (r *CachingCommandRunner) WaitForCommand() *spawn.Result {
