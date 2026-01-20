@@ -230,3 +230,32 @@ func TestRemoveDirectory(t *testing.T) {
 	result = diskInterface.RemoveFile("does not exist")
 	require.Equal(t, 1, result)
 }
+
+func TestStatSymlink(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "Ninja-DiskInterfaceTest")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.RemoveAll(tempDir)
+	})
+
+	err = os.Chdir(tempDir)
+	require.NoError(t, err)
+
+	diskInterface := disk.NewRealDiskInterface()
+	err = os.WriteFile("file", []byte("content"), 0644)
+	require.NoError(t, err)
+
+	fileMtime, err := diskInterface.Stat("file")
+	require.NoError(t, err)
+	require.Greater(t, fileMtime, timestamp.TimeStamp(1))
+
+	// Create a symlink to the file.
+	err = os.Symlink("file", "symlink")
+	require.NoError(t, err)
+
+	// Assert that stating the symlink will resolve the timestamp for the
+	// linked file.
+	symlinkMtime, err := diskInterface.Stat("symlink")
+	require.NoError(t, err)
+	require.Equal(t, fileMtime, symlinkMtime)
+}
