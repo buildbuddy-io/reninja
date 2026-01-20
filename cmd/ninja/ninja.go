@@ -1456,6 +1456,10 @@ func ReadFlags(args []string, options *Options, config *build_config.Config) int
 		config.DisableJobserverClient = true
 	}
 
+	if *workingDir != "" {
+		options.WorkingDir = *workingDir
+	}
+
 	if *tool != "" {
 		options.Tool = ChooseTool(*tool)
 		if options.Tool == nil {
@@ -1475,9 +1479,6 @@ func ReadFlags(args []string, options *Options, config *build_config.Config) int
 		if !WarningEnable(warnings, options) {
 			return 1
 		}
-	}
-	if *workingDir != "" {
-		options.WorkingDir = *workingDir
 	}
 
 	if *printVersion {

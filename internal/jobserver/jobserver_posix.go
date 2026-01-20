@@ -47,7 +47,7 @@ func (c *unixClient) Release(slot Slot) {
 		return
 	}
 	if slot.Implicit() {
-		if !c.hasImplicitSlot {
+		if c.hasImplicitSlot {
 			panic("Implicit slot cannot be released twice!")
 		}
 		c.hasImplicitSlot = true
