@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/buildbuddy-io/reninja/internal/elide_middle"
 	"github.com/mattn/go-isatty"
 	"golang.org/x/term"
 )
@@ -114,11 +115,6 @@ func (p *LinePrinter) printOrBuffer(data string) {
 	}
 }
 
-func ElideMiddleInPlace(in string, width int) string {
-	// TODO(tylerw): go write elide_middle.cc
-	return in
-}
-
 func (p *LinePrinter) Print(toPrint string, lineType LineType) {
 	if p.consoleLocked {
 		p.lineBuffer = toPrint
@@ -133,7 +129,7 @@ func (p *LinePrinter) Print(toPrint string, lineType LineType) {
 	if p.smartTerminal && lineType == Elide {
 		width, _, err := term.GetSize(int(os.Stdin.Fd()))
 		if err == nil {
-			toPrint = ElideMiddleInPlace(toPrint, width)
+			toPrint = elide_middle.ElideMiddle(toPrint, width)
 		}
 		fmt.Fprintf(p.out, "%s", toPrint)
 		fmt.Fprintf(p.out, "\x1B[K")
