@@ -17,7 +17,7 @@ actions:
             source ~/.bashrc
           fi
       - run: "/usr/local/go/bin/go test ./..."
-  - name: "[Reninja] Output Test"
+  - name: "[Reninja] Output Tests"
     container_image: "ubuntu-24.04"
     triggers:
       push:
