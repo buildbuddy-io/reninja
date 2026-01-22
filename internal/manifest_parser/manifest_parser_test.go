@@ -651,7 +651,9 @@ func TestImplicit(t *testing.T) {
 build foo: cat bar | baz
 `, s)
 	edge := s.LookupNode("foo").InEdge()
-	assert.True(t, edge.IsImplicit(1))
+	require.Equal(t, 1, len(edge.ExplicitInputs()))
+	require.Equal(t, 1, len(edge.ImplicitInputs()))
+	assert.Equal(t, "baz", edge.ImplicitInputs()[0].Path())
 }
 
 func TestOrderOnly(t *testing.T) {
@@ -662,7 +664,9 @@ func TestOrderOnly(t *testing.T) {
 build foo: cat bar || baz
 `, s)
 	edge := s.LookupNode("foo").InEdge()
-	assert.True(t, edge.IsOrderOnly(1))
+	require.Equal(t, 1, len(edge.ExplicitInputs()))
+	require.Equal(t, 1, len(edge.OrderOnlyInputs()))
+	assert.Equal(t, "baz", edge.OrderOnlyInputs()[0].Path())
 }
 
 func TestValidations(t *testing.T) {

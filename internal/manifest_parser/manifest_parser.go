@@ -39,10 +39,12 @@ type ManifestParser struct {
 	env     *eval_env.BindingEnv
 	options ManifestParserOptions
 
-	subparser   *ManifestParser
-	ins         []*eval_env.EvalString
-	outs        []*eval_env.EvalString
-	validations []*eval_env.EvalString
+	subparser    *ManifestParser
+	explicitIns  []*eval_env.EvalString
+	implicitIns  []*eval_env.EvalString
+	orderOnlyIns []*eval_env.EvalString
+	outs         []*eval_env.EvalString
+	validations  []*eval_env.EvalString
 
 	quiet bool
 }
@@ -171,7 +173,9 @@ func (p *ManifestParser) parsePool() error {
 }
 
 func (p *ManifestParser) parseEdge() error {
-	p.ins = p.ins[:0]
+	p.explicitIns = p.explicitIns[:0]
+	p.implicitIns = p.implicitIns[:0]
+	p.orderOnlyIns = p.orderOnlyIns[:0]
 	p.outs = p.outs[:0]
 	p.validations = p.validations[:0]
 
@@ -232,11 +236,10 @@ func (p *ManifestParser) parseEdge() error {
 		if in.Empty() {
 			break
 		}
-		p.ins = append(p.ins, in)
+		p.explicitIns = append(p.explicitIns, in)
 	}
 
-	// Add all implicit deps, counting how many as we go.
-	implicit := 0
+	// Add all implicit deps.
 	if p.lexer.PeekToken(lexer.PIPE) {
 		for {
 			in, err := p.lexer.ReadPath()
@@ -246,13 +249,11 @@ func (p *ManifestParser) parseEdge() error {
 			if in.Empty() {
 				break
 			}
-			p.ins = append(p.ins, in)
-			implicit++
+			p.implicitIns = append(p.implicitIns, in)
 		}
 	}
 
-	// Add all order-only deps, counting how many as we go.
-	orderOnly := 0
+	// Add all order-only deps.
 	if p.lexer.PeekToken(lexer.PIPE2) {
 		for {
 			in, err := p.lexer.ReadPath()
@@ -262,8 +263,7 @@ func (p *ManifestParser) parseEdge() error {
 			if in.Empty() {
 				break
 			}
-			p.ins = append(p.ins, in)
-			orderOnly++
+			p.orderOnlyIns = append(p.orderOnlyIns, in)
 		}
 	}
 
@@ -332,16 +332,30 @@ func (p *ManifestParser) parseEdge() error {
 	}
 	edge.SetImplicitOuts(implicitOuts)
 
-	for i := range len(p.ins) {
-		path := p.ins[i].Evaluate(env)
+	for i := range len(p.explicitIns) {
+		path := p.explicitIns[i].Evaluate(env)
 		if path == "" {
 			return p.lexer.Error("empty path")
 		}
 		path, _ = util.CanonicalizePath(path)
-		p.state.AddIn(path, edge)
+		p.state.AddExplicitIn(path, edge)
 	}
-	edge.SetImplicitDeps(implicit)
-	edge.SetOrderOnlyDeps(orderOnly)
+	for i := range len(p.implicitIns) {
+		path := p.implicitIns[i].Evaluate(env)
+		if path == "" {
+			return p.lexer.Error("empty path")
+		}
+		path, _ = util.CanonicalizePath(path)
+		p.state.AddImplicitIn(path, edge)
+	}
+	for i := range len(p.orderOnlyIns) {
+		path := p.orderOnlyIns[i].Evaluate(env)
+		if path == "" {
+			return p.lexer.Error("empty path")
+		}
+		path, _ = util.CanonicalizePath(path)
+		p.state.AddOrderOnlyIn(path, edge)
+	}
 
 	for i := range len(p.validations) {
 		path := p.validations[i].Evaluate(env)

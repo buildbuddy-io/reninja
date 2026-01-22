@@ -22,8 +22,8 @@ func TestBasic(t *testing.T) {
 	s.Bindings().AddRule(rule)
 
 	edge := s.AddEdge(rule)
-	s.AddIn("in1", edge)
-	s.AddIn("in2", edge)
+	s.AddExplicitIn("in1", edge)
+	s.AddExplicitIn("in2", edge)
 	s.AddOut("out", edge)
 
 	assert.Equal(t, "cat in1 in2 > out", edge.EvaluateCommand(false))

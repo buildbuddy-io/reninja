@@ -64,12 +64,14 @@ func (v *Graphviz) AddTarget(node *graph.Node) {
 		for _, out := range edge.Outputs() {
 			fmt.Printf("\"%p\" -> \"%p\"\n", edge, out)
 		}
-		for i, in := range edge.Inputs() {
-			orderOnly := ""
-			if edge.IsOrderOnly(i) {
-				orderOnly = " style=dotted"
-			}
-			fmt.Printf("\"%p\" -> \"%p\" [arrowhead=none%s]\n", in, edge, orderOnly)
+		for _, in := range edge.ExplicitInputs() {
+			fmt.Printf("\"%p\" -> \"%p\" [arrowhead=none]\n", in, edge)
+		}
+		for _, in := range edge.ImplicitInputs() {
+			fmt.Printf("\"%p\" -> \"%p\" [arrowhead=none]\n", in, edge)
+		}
+		for _, in := range edge.OrderOnlyInputs() {
+			fmt.Printf("\"%p\" -> \"%p\" [arrowhead=none style=dotted]\n", in, edge)
 		}
 	}
 

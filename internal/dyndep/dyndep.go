@@ -89,8 +89,7 @@ func (l *DyndepLoader) UpdateEdge(edge *graph.Edge, dyndeps *Dyndeps) error {
 	}
 
 	// Add the dyndep-discovered inputs to the edge.
-	edge.PrependInputs(dyndeps.ImplicitInputs)
-	edge.SetImplicitDeps(len(edge.ImplicitInputs()) + len(dyndeps.ImplicitInputs))
+	edge.AddImplicitInputs(dyndeps.ImplicitInputs)
 
 	// Add this edge as outgoing from each new input.
 	for _, node := range dyndeps.ImplicitInputs {

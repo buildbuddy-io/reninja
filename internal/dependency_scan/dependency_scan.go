@@ -167,32 +167,55 @@ func (s *DependencyScan) RecomputeNodeDirty(node *graph.Node, stack, validationN
 
 	// Visit all inputs; we're dirty if any of the inputs are dirty.
 	var mostRecentInput *graph.Node
-	for inputIndex, i := range edge.Inputs() {
-		// Visit this input.
+
+	// Helper to visit an input and check for readiness
+	visitInput := func(i *graph.Node) error {
 		if vNodes, err := s.RecomputeNodeDirty(i, stack, validationNodes); err != nil {
-			return nil, err
+			return err
 		} else {
 			validationNodes = vNodes
 		}
-
 		// If an input is not ready, neither are our outputs.
 		if inEdge := i.InEdge(); inEdge != nil {
 			if !inEdge.OutputsReady() {
 				edge.SetOutputsReady(false)
 			}
 		}
+		return nil
+	}
 
-		if !edge.IsOrderOnly(inputIndex) {
-			// If a regular input is dirty (or missing), we're dirty.
-			// Otherwise consider mtime.
-			if i.Dirty() {
-				s.explanations.Record(node, "%s is dirty", i.Path())
-				dirty = true
-			} else {
-				if mostRecentInput == nil || i.Mtime() > mostRecentInput.Mtime() {
-					mostRecentInput = i
-				}
+	// Helper to check if a non-order-only input makes us dirty
+	checkDirty := func(i *graph.Node) {
+		if i.Dirty() {
+			s.explanations.Record(node, "%s is dirty", i.Path())
+			dirty = true
+		} else {
+			if mostRecentInput == nil || i.Mtime() > mostRecentInput.Mtime() {
+				mostRecentInput = i
 			}
+		}
+	}
+
+	// Visit explicit inputs (dirty check applies)
+	for _, i := range edge.ExplicitInputs() {
+		if err := visitInput(i); err != nil {
+			return nil, err
+		}
+		checkDirty(i)
+	}
+
+	// Visit implicit inputs (dirty check applies)
+	for _, i := range edge.ImplicitInputs() {
+		if err := visitInput(i); err != nil {
+			return nil, err
+		}
+		checkDirty(i)
+	}
+
+	// Visit order-only inputs (no dirty check)
+	for _, i := range edge.OrderOnlyInputs() {
+		if err := visitInput(i); err != nil {
+			return nil, err
 		}
 	}
 

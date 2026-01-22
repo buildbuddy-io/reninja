@@ -632,14 +632,14 @@ func (m *NinjaMain) ToolQuery(opts *Options, args []string) int {
 				}
 			}
 			fmt.Printf("  input: %s\n", edge.Rule().Name())
-			for in := 0; in < len(edge.Inputs()); in++ {
-				label := ""
-				if edge.IsImplicit(in) {
-					label = "| "
-				} else if edge.IsOrderOnly(in) {
-					label = "|| "
-				}
-				fmt.Printf("    %s%s\n", label, edge.Inputs()[in].Path())
+			for _, in := range edge.ExplicitInputs() {
+				fmt.Printf("    %s\n", in.Path())
+			}
+			for _, in := range edge.ImplicitInputs() {
+				fmt.Printf("    | %s\n", in.Path())
+			}
+			for _, in := range edge.OrderOnlyInputs() {
+				fmt.Printf("    || %s\n", in.Path())
 			}
 			if len(edge.Validations()) > 0 {
 				fmt.Printf("  validations:\n")

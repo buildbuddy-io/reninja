@@ -185,10 +185,24 @@ func (s *State) Bindings() *eval_env.BindingEnv {
 	return s.bindings
 }
 
-func (s *State) AddIn(canonicalPath string, edge *graph.Edge) {
+func (s *State) AddExplicitIn(canonicalPath string, edge *graph.Edge) {
 	node := s.GetNode(canonicalPath)
 	node.SetGeneratedByDepLoader(false)
-	edge.AddInput(node)
+	edge.AddExplicitInput(node)
+	node.AddOutEdge(edge)
+}
+
+func (s *State) AddImplicitIn(canonicalPath string, edge *graph.Edge) {
+	node := s.GetNode(canonicalPath)
+	node.SetGeneratedByDepLoader(false)
+	edge.AddImplicitInput(node)
+	node.AddOutEdge(edge)
+}
+
+func (s *State) AddOrderOnlyIn(canonicalPath string, edge *graph.Edge) {
+	node := s.GetNode(canonicalPath)
+	node.SetGeneratedByDepLoader(false)
+	edge.AddOrderOnlyInput(node)
 	node.AddOutEdge(edge)
 }
 

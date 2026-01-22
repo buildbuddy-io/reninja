@@ -44,9 +44,11 @@ type Edge struct {
 	rule *eval_env.Rule
 	pool *Pool
 
-	// These should be stored in separate lists by type.
-	// It's error prone and confusing to do it this way.
-	inputs        []*Node
+	// Input slices separated by type
+	explicitInputs  []*Node
+	implicitInputs  []*Node
+	orderOnlyInputs []*Node
+
 	outputs       []*Node
 	validations   []*Node
 	dyndep        *Node
@@ -70,10 +72,6 @@ type Edge struct {
 
 	// Historical timing info from ninja log
 	prevElapsedTimeMillis int64
-
-	// Input categorization
-	implicitDeps  int // Number of implicit dependencies
-	orderOnlyDeps int // Number of order-only dependencies
 
 	// Output categorization
 	implicitOuts int // Number of implicit outputs
@@ -136,7 +134,7 @@ func (e *Edge) SetPool(pool *Pool) {
 
 // Inputs returns all input nodes
 func (e *Edge) Inputs() []*Node {
-	return e.inputs
+	return slices.Concat(e.explicitInputs, e.implicitInputs, e.orderOnlyInputs)
 }
 
 // Outputs returns all output nodes
@@ -242,17 +240,6 @@ func (e *Edge) Weight() int {
 	return 1
 }
 
-// IsImplicit checks if an input at the given index is implicit
-func (e *Edge) IsImplicit(index int) bool {
-	return index >= len(e.inputs)-e.orderOnlyDeps-e.implicitDeps &&
-		!e.IsOrderOnly(index)
-}
-
-// IsOrderOnly checks if an input at the given index is order-only
-func (e *Edge) IsOrderOnly(index int) bool {
-	return index >= len(e.inputs)-e.orderOnlyDeps
-}
-
 // IsImplicitOut checks if an output at the given index is implicit
 func (e *Edge) IsImplicitOut(index int) bool {
 	return index >= len(e.outputs)-e.implicitOuts
@@ -260,33 +247,21 @@ func (e *Edge) IsImplicitOut(index int) bool {
 
 // ExplicitInputs returns only the explicit input nodes
 func (e *Edge) ExplicitInputs() []*Node {
-	explicitCount := len(e.inputs) - e.implicitDeps - e.orderOnlyDeps
-	if explicitCount <= 0 {
-		return nil
-	}
-	return e.inputs[:explicitCount]
+	return e.explicitInputs
 }
 
 // ImplicitInputs returns only the implicit input nodes
 func (e *Edge) ImplicitInputs() []*Node {
-	if e.implicitDeps == 0 {
-		return nil
-	}
-	start := len(e.inputs) - e.orderOnlyDeps - e.implicitDeps
-	end := len(e.inputs) - e.orderOnlyDeps
-	return e.inputs[start:end]
+	return e.implicitInputs
 }
 
 // OrderOnlyInputs returns only the order-only input nodes
 func (e *Edge) OrderOnlyInputs() []*Node {
-	if e.orderOnlyDeps == 0 {
-		return nil
-	}
-	return e.inputs[len(e.inputs)-e.orderOnlyDeps:]
+	return e.orderOnlyInputs
 }
 
 func (e *Edge) NonOrderOnlyInputs() []*Node {
-	return e.inputs[:len(e.inputs)-e.orderOnlyDeps]
+	return slices.Concat(e.explicitInputs, e.implicitInputs)
 }
 
 // ExplicitOutputs returns only the explicit output nodes
@@ -306,25 +281,38 @@ func (e *Edge) ImplicitOutputs() []*Node {
 	return e.outputs[len(e.outputs)-e.implicitOuts:]
 }
 
-func (e *Edge) PrependInputs(nodes []*Node) {
-	cutoff := len(e.inputs) - e.orderOnlyDeps
-	e.inputs = append(e.inputs[:cutoff], append(nodes, e.inputs[cutoff:]...)...)
+// AddExplicitInput adds an explicit input node
+func (e *Edge) AddExplicitInput(node *Node) {
+	e.explicitInputs = append(e.explicitInputs, node)
 }
 
-// AddInput adds an input node
-func (e *Edge) AddInput(node *Node) {
-	e.inputs = append(e.inputs, node)
+// AddImplicitInput adds an implicit input node
+func (e *Edge) AddImplicitInput(node *Node) {
+	e.implicitInputs = append(e.implicitInputs, node)
+}
+
+// AddOrderOnlyInput adds an order-only input node
+func (e *Edge) AddOrderOnlyInput(node *Node) {
+	e.orderOnlyInputs = append(e.orderOnlyInputs, node)
+}
+
+// AddImplicitInputs adds multiple implicit input nodes
+func (e *Edge) AddImplicitInputs(nodes []*Node) {
+	e.implicitInputs = append(e.implicitInputs, nodes...)
 }
 
 func (e *Edge) RemoveInput(node *Node) bool {
 	deletedSomething := false
-	e.inputs = slices.DeleteFunc(e.inputs, func(n *Node) bool {
+	deleteFunc := func(n *Node) bool {
 		match := n == node
 		if match {
 			deletedSomething = true
 		}
 		return match
-	})
+	}
+	e.explicitInputs = slices.DeleteFunc(e.explicitInputs, deleteFunc)
+	e.implicitInputs = slices.DeleteFunc(e.implicitInputs, deleteFunc)
+	e.orderOnlyInputs = slices.DeleteFunc(e.orderOnlyInputs, deleteFunc)
 	return deletedSomething
 }
 
@@ -344,20 +332,6 @@ func (e *Edge) AddValidation(node *Node) {
 	e.validations = append(e.validations, node)
 }
 
-// SetImplicitDeps sets the number of implicit dependencies
-func (e *Edge) SetImplicitDeps(count int) {
-	e.implicitDeps = count
-}
-
-func (e *Edge) GetImplicitDeps() int {
-	return e.implicitDeps
-}
-
-// SetOrderOnlyDeps sets the number of order-only dependencies
-func (e *Edge) SetOrderOnlyDeps(count int) {
-	e.orderOnlyDeps = count
-}
-
 // SetImplicitOuts sets the number of implicit outputs
 func (e *Edge) SetImplicitOuts(count int) {
 	e.implicitOuts = count
@@ -365,12 +339,15 @@ func (e *Edge) SetImplicitOuts(count int) {
 
 // AllInputsReady returns true if all inputs' in-edges are ready
 func (e *Edge) AllInputsReady() bool {
-	for _, input := range e.inputs {
-		if input.InEdge() != nil && !input.InEdge().OutputsReady() {
-			return false
+	checkReady := func(inputs []*Node) bool {
+		for _, input := range inputs {
+			if input.InEdge() != nil && !input.InEdge().OutputsReady() {
+				return false
+			}
 		}
+		return true
 	}
-	return true
+	return checkReady(e.explicitInputs) && checkReady(e.implicitInputs) && checkReady(e.orderOnlyInputs)
 }
 
 // IsPhony returns true if this is a phony edge
@@ -433,7 +410,7 @@ func (e *Edge) MaybePhonycycleDiagnostic() bool {
 
 func (e *Edge) Dump(prefix string) {
 	fmt.Printf("%s[ ", prefix)
-	for _, node := range e.inputs {
+	for _, node := range e.Inputs() {
 		fmt.Printf("%s ", node.Path())
 	}
 	fmt.Printf("--%s-> ", e.rule.Name())
@@ -527,8 +504,7 @@ func (e *EdgeEnv) LookupVariable(v string) string {
 		if v == "in" {
 			sep = ' '
 		}
-		explicitDepsCount := len(e.edge.inputs) - e.edge.implicitDeps - e.edge.orderOnlyDeps
-		return e.MakePathList(e.edge.Inputs()[:explicitDepsCount], sep)
+		return e.MakePathList(e.edge.ExplicitInputs(), sep)
 	} else if v == "out" {
 		explicitOutsCount := len(e.edge.outputs) - e.edge.implicitOuts
 		return e.MakePathList(e.edge.Outputs()[:explicitOutsCount], ' ')

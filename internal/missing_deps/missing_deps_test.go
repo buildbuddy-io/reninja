@@ -82,7 +82,7 @@ func (h *testHelper) CreateInitialState() {
 func (h *testHelper) CreateGraphDependencyBetween(from, to string) {
 	fromNode := h.state.LookupNode(from)
 	fromEdge := fromNode.InEdge()
-	h.state.AddIn(to, fromEdge)
+	h.state.AddExplicitIn(to, fromEdge)
 }
 
 func (h *testHelper) AssertMissingDependencyBetween(flaky, generated string, rule *eval_env.Rule) {
