@@ -348,7 +348,7 @@ func (r *CachingCommandRunner) uploadDepsOnlyResult(ctx context.Context, staticA
 	}
 
 	ar := &repb.ActionResult{
-		ExitCode: 0,
+		ExitCode:     0,
 		StdoutDigest: blobDigest.GetDigest(),
 	}
 
