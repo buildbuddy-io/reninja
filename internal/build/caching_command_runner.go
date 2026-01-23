@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -140,8 +141,7 @@ func (r *CachingCommandRunner) CanRunMore() int {
 }
 
 func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
-	command := edge.EvaluateCommand(false)
-	splitCommand, err := shlex.Split(command)
+	splitCommand, err := shlex.Split(edge.EvaluateCommand(false))
 	if err != nil {
 		return nil, err
 	}
@@ -155,16 +155,27 @@ func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 	return cmdProto, nil
 }
 
-func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*repb.Action, filetransfer.FlattenedTree, error) {
-	defer span.Record(ctx, "MerkleTreeComputer.buildForSpawn")()
-
-	cmd, err := assembleCommand(edge)
-	if err != nil {
-		return nil, nil, err
+// encodeDynamicDepPaths encodes dynamic dependency paths as newline-separated string.
+func encodeDynamicDepPaths(nodes []*graph.Node) string {
+	paths := make([]string, len(nodes))
+	for i, n := range nodes {
+		paths[i] = n.Path()
 	}
+	return strings.Join(paths, "\n")
+}
 
-	files := make([]string, 0, len(edge.Inputs()))
-	for _, input := range edge.Inputs() {
+// decodeDynamicDepPaths decodes dynamic dependency paths from newline-separated string.
+func decodeDynamicDepPaths(encoded string) []string {
+	if encoded == "" {
+		return nil
+	}
+	return strings.Split(encoded, "\n")
+}
+
+// assembleAction creates an Action proto for the given inputs.
+func (r *CachingCommandRunner) assembleAction(ctx context.Context, cmd *repb.Command, inputs []*graph.Node) (*repb.Action, filetransfer.FlattenedTree, error) {
+	files := make([]string, 0, len(inputs))
+	for _, input := range inputs {
 		if _, err := os.Stat(input.Path()); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -186,6 +197,28 @@ func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *
 		InputRootDigest: inputRootDigest,
 	}
 	return action, flattenedTree, nil
+}
+
+// assembleAndHashAction creates an Action proto using all inputs (for backwards compatibility).
+func (r *CachingCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*repb.Action, filetransfer.FlattenedTree, error) {
+	defer span.Record(ctx, "MerkleTreeComputer.buildForSpawn")()
+	cmd, err := assembleCommand(edge)
+	if err != nil {
+		return nil, nil, err
+	}
+	return r.assembleAction(ctx, cmd, edge.Inputs())
+}
+
+// assembleStaticAction creates an Action proto using only static inputs (for deps metadata lookup).
+func (r *CachingCommandRunner) assembleStaticAction(ctx context.Context, edge *graph.Edge) (*repb.Action, error) {
+	defer span.Record(ctx, "assembleStaticAction")()
+	cmd, err := assembleCommand(edge)
+	if err != nil {
+		return nil, err
+	}
+	staticInputs := edge.StaticInputs()
+	action, _, err := r.assembleAction(ctx, cmd, staticInputs)
+	return action, err
 }
 
 func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*spawn.Result, error) {
@@ -267,6 +300,62 @@ func (r *CachingCommandRunner) fetchOutputsAndResult(ctx context.Context, action
 	}, nil
 }
 
+// isDepsFileResult returns true if the ActionResult is a pointer to another action
+// (contains dep paths but no actual outputs).
+func isDepsFileResult(ar *repb.ActionResult) bool {
+	return len(ar.GetOutputFiles()) == 0 && len(ar.GetOutputDirectories()) == 0
+}
+
+// extractDepPathsFromPointer extracts dynamic dep paths from a pointer ActionResult.
+func (r *CachingCommandRunner) extractDepPathsFromPointer(ctx context.Context, ar *repb.ActionResult) ([]string, error) {
+	instanceName := remote_flags.RemoteInstanceName()
+	digestFunction := filetransfer.DigestFunction
+
+	var encoded string
+	if len(ar.StdoutRaw) > 0 {
+		encoded = string(ar.StdoutRaw)
+	} else if !digest.IsEmptyHash(ar.GetStdoutDigest(), digestFunction) {
+		buf := &bytes.Buffer{}
+		casDigest := digest.NewCASResourceName(ar.GetStdoutDigest(), instanceName, digestFunction)
+		if err := r.downloader.GetBlob(ctx, casDigest, buf); err != nil {
+			return nil, err
+		}
+		encoded = buf.String()
+	}
+
+	return decodeDynamicDepPaths(encoded), nil
+}
+
+// uploadDepsOnlyResult uploads a deps only ActionResult reference.
+// The reference contains the dynamic dep paths, allowing future lookups to
+// discover the full set of inputs needed to compute the actual action key and
+// look up the full result of an edge.
+func (r *CachingCommandRunner) uploadDepsOnlyResult(ctx context.Context, staticAction *repb.Action, dynamicInputs []*graph.Node) error {
+	defer span.Record(ctx, "uploadDepsOnlyResult")()
+
+	instanceName := remote_flags.RemoteInstanceName()
+	digestFunction := filetransfer.DigestFunction
+
+	staticActionDigest, err := digest.ComputeForMessage(staticAction, digestFunction)
+	if err != nil {
+		return err
+	}
+
+	encoded := encodeDynamicDepPaths(dynamicInputs)
+	blobDigest, err := r.uploader.UploadInMemoryBlob(ctx, strings.NewReader(encoded))
+	if err != nil {
+		return err
+	}
+
+	ar := &repb.ActionResult{
+		ExitCode: 0,
+		StdoutDigest: blobDigest.GetDigest(),
+	}
+
+	acrn := digest.NewACResourceName(staticActionDigest, instanceName, digestFunction)
+	return r.uploader.UploadActionResult(ctx, acrn, ar)
+}
+
 func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	edgeState := &activeEdgeState{
 		edge:           edge,
@@ -280,6 +369,12 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	ctx = span.BeginTracing(ctx)
 
+	// Check if this edge has depfile support (i.e., may have dynamic deps)
+	hasDepfile := edge.GetUnescapedDepfile() != ""
+
+	// Compute the action for current known inputs.
+	// If deps have been loaded from .ninja_deps, this will include them.
+	// If not, this will only include manifest inputs.
 	action, _, err := r.assembleAndHashAction(ctx, edge)
 	if err != nil {
 		return err
@@ -295,7 +390,9 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	}
 
 	go func() {
-		if res, err := r.downloadCompletedEdge(ctx, action, edge); err == nil {
+		res, lookupErr := r.downloadCompletedEdge(ctx, action, edge)
+
+		if lookupErr == nil && res != nil {
 			res.Events = span.Events(ctx)
 			edgeState.finishedResult <- res
 			return
@@ -316,7 +413,7 @@ func (r *CachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		output := subproc.GetOutput()
 		doneExecutingFn()
 
-		uploadedOutputs, err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action)
+		uploadedOutputs, err := r.uploadCompletedEdge(ctx, edge, exitCode, output, action, hasDepfile)
 		if err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
@@ -349,13 +446,67 @@ func (r *CachingCommandRunner) downloadCompletedEdge(ctx context.Context, action
 
 	acrn := digest.NewACResourceName(d, instanceName, digestFunction)
 	actionResult, err := r.downloader.DownloadActionResult(ctx, acrn)
-	if err == nil && actionResult != nil && actionResult.GetExitCode() == 0 {
-		return r.fetchOutputsAndResult(ctx, actionResult, edge)
+	if err != nil {
+		return nil, err
 	}
-	return nil, statuserr.NotFoundError("ActionResult not found")
+	if actionResult == nil || actionResult.GetExitCode() != 0 {
+		return nil, statuserr.NotFoundError("ActionResult not found")
+	}
+
+	if isDepsFileResult(actionResult) {
+		fmt.Printf("looked up depfile only result\n")
+		// Extract dynamic dep paths from the pointer
+		dynamicDepPaths, err := r.extractDepPathsFromPointer(ctx, actionResult)
+		if err != nil {
+			return nil, err
+		}
+
+		// Build the full input list: current inputs + dynamic deps from pointer
+		allInputs := make([]*graph.Node, 0, len(edge.Inputs())+len(dynamicDepPaths))
+		allInputs = append(allInputs, edge.Inputs()...)
+
+		// Add dynamic deps from the pointer, verifying they exist
+		for _, path := range dynamicDepPaths {
+			if _, err := os.Stat(path); err != nil {
+				if os.IsNotExist(err) {
+					return nil, statuserr.NotFoundError("dynamic dep missing: " + path)
+				}
+				return nil, err
+			}
+			allInputs = append(allInputs, graph.NewNode(path, 0))
+		}
+
+		// Compute full action with all inputs and follow the pointer
+		cmd, err := assembleCommand(edge)
+		if err != nil {
+			return nil, err
+		}
+		fullAction, _, err := r.assembleAction(ctx, cmd, allInputs)
+		if err != nil {
+			return nil, err
+		}
+
+		fullDigest, err := digest.ComputeForMessage(fullAction, digestFunction)
+		if err != nil {
+			return nil, err
+		}
+
+		fullAcrn := digest.NewACResourceName(fullDigest, instanceName, digestFunction)
+		actionResult, err = r.downloader.DownloadActionResult(ctx, fullAcrn)
+		if err != nil {
+			return nil, err
+		}
+		if actionResult == nil || actionResult.GetExitCode() != 0 {
+			return nil, statuserr.NotFoundError("ActionResult not found after following pointer")
+		}
+	} else {
+		fmt.Printf("looked up real result\n")
+	}
+
+	return r.fetchOutputsAndResult(ctx, actionResult, edge)
 }
 
-func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action) ([]*bespb.File, error) {
+func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *graph.Edge, exitCode exit_status.ExitStatusType, output string, action *repb.Action, hasDepfile bool) ([]*bespb.File, error) {
 	// Skip uploading failed actions.
 	if exitCode != exit_status.ExitSuccess {
 		return nil, nil
@@ -416,9 +567,34 @@ func (r *CachingCommandRunner) uploadCompletedEdge(ctx context.Context, edge *gr
 		return nil, err
 	}
 
-	// Upload the actual action result.
+	// Upload the actual action result under the current action key.
 	acrn := digest.NewACResourceName(actionDigest, instanceName, digestFunction)
-	return uploadedOutputs, r.uploader.UploadActionResult(ctx, acrn, ar)
+	if err := r.uploader.UploadActionResult(ctx, acrn, ar); err != nil {
+		return nil, err
+	}
+
+	// For edges with depfiles and known dynamic deps, also upload a pointer
+	// under the static action key. This allows future builds on machines without
+	// .ninja_deps to discover the dynamic deps and follow the pointer to find
+	// the actual result.
+	if hasDepfile {
+		dynamicInputs := edge.DynamicInputs()
+		if len(dynamicInputs) > 0 {
+			staticAction, err := r.assembleStaticAction(ctx, edge)
+			if err != nil {
+				util.Warningf("failed to compute static action for pointer: %v", err)
+				return uploadedOutputs, nil
+			}
+			fmt.Printf("Uploaded static action\n")
+			if err := r.uploadDepsOnlyResult(ctx, staticAction, dynamicInputs); err != nil {
+				// Log but don't fail - the main action result was uploaded successfully
+				util.Warningf("failed to upload pointer: %v", err)
+			}
+			fmt.Printf("Uploaded deps only result\n")
+		}
+	}
+
+	return uploadedOutputs, nil
 }
 
 func (r *CachingCommandRunner) WaitForCommand() *spawn.Result {
