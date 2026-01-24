@@ -978,6 +978,16 @@ func (b *Builder) FinishCommand(result *spawn.Result) (bool, error) {
 		depsNodes = dn
 	}
 
+	// At this point, dyndeps have been read, if they exist.
+	// If the command runner implements the caching interface, notify it
+	// so that it can cache the result under the correct key (including all
+	// depfiles as inputs)
+	if cacher, ok := b.commandRunner.(CachingCommandRunner); ok {
+		if err := cacher.CacheResult(result, depsNodes); err != nil {
+			util.Errorf("Error caching result of command: %s", result.Edge.EvaluateCommand(false))
+		}
+	}
+
 	absoluteStart := b.runningEdges[edge]
 	absoluteEnd := time.Now()
 	delete(b.runningEdges, edge)

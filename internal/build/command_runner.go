@@ -77,7 +77,7 @@ type RealCommandRunner struct {
 
 func NewRealCommandRunner(config *build_config.Config, jobserver jobserver.Client) CommandRunner {
 	if remote_flags.EnableCache() {
-		return NewCachingCommandRunner(config, jobserver)
+		return NewRemoteCachingCommandRunner(config, jobserver)
 	}
 	return &RealCommandRunner{
 		config:        config,

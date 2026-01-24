@@ -7,7 +7,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/span"
 
-	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
 type Result struct {
@@ -24,7 +24,8 @@ type Result struct {
 
 	Events []span.Event
 
-	Outputs []*bespb.File
+	Outputs      []*repb.OutputFile
+	StdoutDigest *repb.Digest
 }
 
 func (r Result) Success() bool {

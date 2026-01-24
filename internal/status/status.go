@@ -31,7 +31,9 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/google/uuid"
 
+	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
 	bepb "github.com/buildbuddy-io/reninja/genproto/build_events"
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
 type Status interface {
@@ -480,6 +482,26 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 	p.printer.Print(toPrint, elideMode)
 }
 
+func computeBESFiles(uploadedFiles []*repb.OutputFile) []*bespb.File {
+	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
+	instanceName := remote_flags.RemoteInstanceName()
+	digestFunction := filetransfer.DigestFunction
+
+	besFiles := make([]*bespb.File, len(uploadedFiles))
+	for _, file := range uploadedFiles {
+		d := file.GetDigest()
+		rn := digest.NewCASResourceName(d, instanceName, digestFunction)
+		uri := fmt.Sprintf("%s/%s", bytestreamURIPrefix, rn.DownloadString())
+		besFiles = append(besFiles, &bespb.File{
+			Name:   file.GetPath(),
+			File:   &bespb.File_Uri{Uri: uri},
+			Digest: d.GetHash(),
+			Length: d.GetSizeBytes(),
+		})
+	}
+	return besFiles
+}
+
 func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result) {
 	startOffset := result.Start.Sub(p.buildStart)
 	endOffset := result.End.Sub(p.buildStart)
@@ -520,7 +542,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 			targetLabel = outputs[0].Path()
 
 			if len(result.Outputs) > 0 {
-				if err := p.bes.Publish(bes_event.NamedSetOfFilesEvent(targetLabel, result.Outputs)); err != nil {
+				if err := p.bes.Publish(bes_event.NamedSetOfFilesEvent(targetLabel, computeBESFiles(result.Outputs))); err != nil {
 					util.Warningf("Failed to publish build metadata: %s", err)
 				}
 			}
