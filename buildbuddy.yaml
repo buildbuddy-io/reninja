@@ -1,5 +1,5 @@
 actions:
-  - name: "Run Unit Tests"
+  - name: "[Reninja] Unit Tests"
     container_image: "ubuntu-24.04"
     triggers:
       push:
@@ -17,3 +17,23 @@ actions:
             source ~/.bashrc
           fi
       - run: "/usr/local/go/bin/go test ./..."
+  - name: "[Reninja] Output Tests"
+    container_image: "ubuntu-24.04"
+    triggers:
+      push:
+        branches:
+          - "main"
+      pull_request:
+        branches:
+          - "*"
+    steps:
+      - run: |
+          if ! [ -x "$(command -v go)" ]; then
+            curl -LO https://go.dev/dl/go1.25.6.linux-amd64.tar.gz
+            sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.6.linux-amd64.tar.gz
+            echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+            source ~/.bashrc
+          fi
+      - run: "/usr/local/go/bin/go build cmd/ninja/ninja.go"
+      - run: "misc/output_test.py"
+
