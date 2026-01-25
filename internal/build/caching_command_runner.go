@@ -411,7 +411,9 @@ func (r *RemoteCachingCommandRunner) CacheResult(result *spawn.Result, depsNodes
 	edge := result.Edge
 	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
 	ctx = span.BeginTracing(ctx)
-	return r.uploadActionResult(ctx, result, depsNodes)
+	err := r.uploadActionResult(ctx, result, depsNodes)
+	result.Events = append(result.Events, span.Events(ctx)...)
+	return err
 }
 
 func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*spawn.Result, error) {
@@ -519,6 +521,7 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 		action, _, err := r.assembleAction(ctx, cmd, extractPaths(inputs))
 		stopMerkleTracing()
 
+		defer span.Record(ctx, "upload action result")()
 		actionDigest, err := digest.ComputeForMessage(action, digestFunction)
 		if err != nil {
 			return err
@@ -529,8 +532,10 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 	}
 
 	uploadActionResultReference := func(inputs, outputs []*graph.Node) error {
+		stopUploadOutputs := span.Record(ctx, "upload outputs")
 		encoded := encodeDyndepPaths(outputs)
 		blobdigest, err := r.uploader.UploadInMemoryBlob(ctx, strings.NewReader(encoded))
+		stopUploadOutputs()
 		if err != nil {
 			return err
 		}
