@@ -416,17 +416,7 @@ func (r *RemoteCachingCommandRunner) CacheResult(result *spawn.Result, depsNodes
 
 func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*spawn.Result, error) {
 	defer span.Record(ctx, "remote output download")()
-
-	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
-
-	d, err := digest.ComputeForMessage(action, digestFunction)
-	if err != nil {
-		return nil, err
-	}
-
-	acrn := digest.NewACResourceName(d, instanceName, digestFunction)
-	actionResult, err := r.downloader.DownloadActionResult(ctx, acrn)
+	actionResult, err := r.downloader.DownloadActionResult(ctx, action)
 	if err != nil {
 		return nil, err
 	}
@@ -460,14 +450,7 @@ func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, 
 		if err != nil {
 			return nil, err
 		}
-
-		fullDigest, err := digest.ComputeForMessage(fullAction, digestFunction)
-		if err != nil {
-			return nil, err
-		}
-
-		fullAcrn := digest.NewACResourceName(fullDigest, instanceName, digestFunction)
-		actionResult, err = r.downloader.DownloadActionResult(ctx, fullAcrn)
+		actionResult, err = r.downloader.DownloadActionResult(ctx, fullAction)
 		if err != nil {
 			return nil, err
 		}
