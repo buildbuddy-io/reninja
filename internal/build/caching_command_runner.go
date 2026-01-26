@@ -40,6 +40,7 @@ const (
 type CachingCommandRunner interface {
 	CommandRunner
 	CacheResult(*spawn.Result, []*graph.Node) error
+	WaitForUploads() error
 }
 
 type RemoteCachingCommandRunner struct {
@@ -52,6 +53,8 @@ type RemoteCachingCommandRunner struct {
 	cancel     context.CancelFunc
 	uploader   *filetransfer.Uploader
 	downloader *filetransfer.Downloader
+
+	group *errgroup.Group
 }
 
 type activeEdgeState struct {
@@ -72,6 +75,7 @@ func NewRemoteCachingCommandRunner(config *build_config.Config, jobserver jobser
 		ctx = metadata.AppendToOutgoingContext(ctx, extraHeaders...)
 	}
 
+	group, _ := errgroup.WithContext(ctx)
 	return &RemoteCachingCommandRunner{
 		config:      config,
 		jobserver:   jobserver,
@@ -82,6 +86,8 @@ func NewRemoteCachingCommandRunner(config *build_config.Config, jobserver jobser
 		context:    ctx,
 		uploader:   filetransfer.DefaultUploader(),
 		downloader: filetransfer.DefaultDownloader(),
+
+		group: group,
 	}
 }
 
@@ -277,6 +283,7 @@ func (r *RemoteCachingCommandRunner) fetchOutputsAndResult(ctx context.Context, 
 		Edge:         edge,
 		Runner:       remoteCacheRunner,
 		CacheHit:     true,
+		Context:      ctx,
 		Outputs:      actionResult.GetOutputFiles(),
 		StdoutDigest: actionResult.GetStdoutDigest(),
 	}, nil
@@ -342,10 +349,10 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 
 	makeFailureResult := func(err error) *spawn.Result {
 		return &spawn.Result{
-			Edge:   edge,
-			Status: exit_status.ExitFailure,
-			Output: err.Error(),
-			Events: span.Events(ctx),
+			Edge:    edge,
+			Status:  exit_status.ExitFailure,
+			Output:  err.Error(),
+			Context: ctx,
 		}
 	}
 
@@ -353,7 +360,6 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		res, lookupErr := r.downloadCompletedEdge(ctx, action, edge)
 
 		if lookupErr == nil && res != nil {
-			res.Events = span.Events(ctx)
 			edgeState.finishedResult <- res
 			return
 		}
@@ -392,7 +398,7 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			Output:       output,
 			Runner:       localRunner,
 			CacheHit:     false,
-			Events:       span.Events(ctx),
+			Context:      ctx,
 			Outputs:      uploadedOutputs,
 			StdoutDigest: stdoutDigest,
 		}
@@ -408,12 +414,16 @@ func (r *RemoteCachingCommandRunner) CacheResult(result *spawn.Result, depsNodes
 	if result.Runner == remoteCacheRunner {
 		return nil
 	}
-	edge := result.Edge
-	ctx := request_metadata.AttachCacheRequestMetadata(r.context, edge.ActionID(), edge.ActionMnemonic(), edge.TargetLabel())
-	ctx = span.BeginTracing(ctx)
-	err := r.uploadActionResult(ctx, result, depsNodes)
-	result.Events = append(result.Events, span.Events(ctx)...)
-	return err
+	ctx := result.Context
+
+	r.group.Go(func() error {
+		return r.uploadActionResult(ctx, result, depsNodes)
+	})
+	return nil
+}
+
+func (r *RemoteCachingCommandRunner) WaitForUploads() error {
+	return r.group.Wait()
 }
 
 func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*spawn.Result, error) {

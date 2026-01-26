@@ -1,11 +1,11 @@
 package spawn
 
 import (
+	"context"
 	"time"
 
 	"github.com/buildbuddy-io/reninja/internal/exit_status"
 	"github.com/buildbuddy-io/reninja/internal/graph"
-	"github.com/buildbuddy-io/reninja/internal/span"
 
 	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
@@ -19,11 +19,16 @@ type Result struct {
 	Start time.Time
 	End   time.Time
 
-	Runner   string
+	// The runner ("local", "remote-cache", "remote"), and
+	Runner string
+	// whether or not this Result was read from cache.
 	CacheHit bool
 
-	Events []span.Event
+	// Context to be used for IO and tracing.
+	Context context.Context
 
+	// Files generated from this Edge and Stdout, only present
+	// for cached or remotely run edges.
 	Outputs      []*repb.OutputFile
 	StdoutDigest *repb.Digest
 }

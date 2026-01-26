@@ -4,6 +4,7 @@ package span
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -70,5 +71,6 @@ func RecordIf(ctx context.Context, eventName string, condition func() bool) Done
 			Start: funcStart,
 			End:   time.Now(),
 		})
+		fmt.Printf("recorded %q, events: %+v", eventName, pkg.Events)
 	}
 }

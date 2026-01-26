@@ -21,6 +21,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
 	"github.com/buildbuddy-io/reninja/internal/metrics"
 	"github.com/buildbuddy-io/reninja/internal/priority_queue"
+	"github.com/buildbuddy-io/reninja/internal/span"
 	"github.com/buildbuddy-io/reninja/internal/spawn"
 	"github.com/buildbuddy-io/reninja/internal/state"
 	"github.com/buildbuddy-io/reninja/internal/status"
@@ -889,6 +890,13 @@ func (b *Builder) Build() (exit_status.ExitStatusType, error) {
 
 		return b.GetExitCode(), err
 	}
+
+	if cacher, ok := b.commandRunner.(CachingCommandRunner); ok {
+		if err := cacher.WaitForUploads(); err != nil {
+			return exit_status.ExitFailure, err
+		}
+	}
+
 	b.status.BuildFinished()
 	return exit_status.ExitSuccess, nil
 }
@@ -1075,6 +1083,7 @@ func (b *Builder) FinishCommand(result *spawn.Result) (bool, error) {
 }
 
 func (b *Builder) ExtractDeps(result *spawn.Result, depsType, depsPrefix string) ([]*graph.Node, error) {
+	defer span.Record(result.Context, "Load DynDeps")()
 	depsNodes := make([]*graph.Node, 0)
 
 	if depsType == "msvc" {

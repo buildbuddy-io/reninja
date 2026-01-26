@@ -27,6 +27,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/remote_headers"
 	"github.com/buildbuddy-io/reninja/internal/request_metadata"
+	"github.com/buildbuddy-io/reninja/internal/span"
 	"github.com/buildbuddy-io/reninja/internal/spawn"
 	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/google/uuid"
@@ -552,7 +553,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		}
 
 		if p.flamegraph != nil {
-			p.flamegraph.RecordEdge(edge, result.Start, result.End, result.Events...)
+			p.flamegraph.RecordEdge(edge, result.Start, result.End, span.Events(result.Context)...)
 			p.recordSystemMetrics(result.End)
 		}
 
