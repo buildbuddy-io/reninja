@@ -33,6 +33,9 @@ func BeginTracing(ctx context.Context) context.Context {
 
 // Events returns all events recorded on context.
 func Events(ctx context.Context) []Event {
+	if ctx == nil {
+		return nil
+	}
 	if v := ctx.Value(defaultTraceKey); v != nil {
 		if pkg, ok := v.(*eventPackage); ok {
 			return pkg.Events
@@ -51,6 +54,9 @@ func Record(ctx context.Context, eventName string) DoneFunction {
 
 // A variant of Record that doesn't record anything if condition returns false.
 func RecordIf(ctx context.Context, eventName string, condition func() bool) DoneFunction {
+	if ctx == nil {
+		return func() {}
+	}
 	v := ctx.Value(defaultTraceKey)
 	if v == nil {
 		return func() {}
