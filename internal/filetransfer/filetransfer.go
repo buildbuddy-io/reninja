@@ -127,10 +127,15 @@ func (u *Uploader) UploadFile(ctx context.Context, path string) (*digest.CASReso
 }
 
 func cleanPaths(dirty []string) ([]string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
 	cleanedFiles := make([]string, len(dirty))
 	for i, dirtyPath := range dirty {
-		if !filepath.IsAbs(dirtyPath) {
-			cleaned, err := filepath.Abs(dirtyPath)
+		if filepath.IsAbs(dirtyPath) {
+			cleaned, err := filepath.Rel(cwd, dirtyPath)
 			if err != nil {
 				return nil, err
 			}
@@ -170,6 +175,7 @@ func hierarchicalPathCompare(p1, p2 string) int {
 
 func expandTree(cleanedFiles []string) []string {
 	paths := make(map[string]struct{}, len(cleanedFiles))
+	paths["."] = struct{}{} // Always include the root directory
 	for _, path := range cleanedFiles {
 		start := 0
 		for i := strings.IndexRune(path, filepath.Separator); i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
