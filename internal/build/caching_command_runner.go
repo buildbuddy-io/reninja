@@ -174,14 +174,14 @@ func encodeDyndepPaths(nodes []*graph.Node) string {
 	for i, n := range nodes {
 		paths[i] = n.Path()
 	}
-	return strings.Join(paths, "\n")
+	return strings.Join(paths, "\x00")
 }
 
 func decodeDyndepPaths(encoded string) []string {
 	if encoded == "" {
 		return nil
 	}
-	return strings.Split(encoded, "\n")
+	return strings.Split(encoded, "\x00")
 }
 
 func extractPaths(nodes []*graph.Node) []string {
@@ -442,18 +442,10 @@ func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, 
 			return nil, err
 		}
 
-		allInputPaths := extractPaths(edge.StaticInputs())
-		for _, path := range dynamicDepPaths {
-			if _, err := os.Stat(path); err != nil {
-				if os.IsNotExist(err) {
-					return nil, statuserr.NotFoundError("dynamic dep missing: " + path)
-				}
-				return nil, err
-			}
-			allInputPaths = append(allInputPaths, path)
-		}
+		allInputPaths := append(extractPaths(edge.StaticInputs()), dynamicDepPaths...)
 
-		// Compute full action with all inputs and follow the pointer
+		// Compute full action with all inputs and follow the pointer if
+		// one is found.
 		cmd, err := assembleCommand(edge)
 		if err != nil {
 			return nil, err
@@ -467,7 +459,7 @@ func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, 
 			return nil, err
 		}
 		if actionResult == nil || actionResult.GetExitCode() != 0 {
-			return nil, statuserr.NotFoundError("ActionResult not found after following pointer")
+			return nil, statuserr.NotFoundError("ActionResult not found (after following pointer)")
 		}
 		return r.fetchOutputsAndResult(ctx, actionResult, edge)
 	}
@@ -541,9 +533,9 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 		return r.uploader.UploadActionResult(ctx, acrn, actionResult)
 	}
 
-	uploadActionResultReference := func(inputs, outputs []*graph.Node) error {
+	uploadActionResultReference := func(staticInputs, dynamicInputs []*graph.Node) error {
 		stopUploadOutputs := span.Record(ctx, "upload outputs")
-		encoded := encodeDyndepPaths(outputs)
+		encoded := encodeDyndepPaths(dynamicInputs)
 		blobdigest, err := r.uploader.UploadInMemoryBlob(ctx, strings.NewReader(encoded))
 		stopUploadOutputs()
 		if err != nil {
@@ -554,7 +546,7 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 			ExitCode:     0,
 			StdoutDigest: blobdigest.GetDigest(),
 		}
-		return setActionResult(inputs, ar)
+		return setActionResult(staticInputs, ar)
 	}
 
 	uploadFullActionResult := func(inputs []*graph.Node) error {
