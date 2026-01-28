@@ -671,6 +671,10 @@ func (p *StatusPrinter) uploadCompactExecutionLog() (*digest.CASResourceName, er
 	if uploader == nil {
 		return nil, nil
 	}
+	if p.execLogWriter == nil {
+		return nil, nil
+	}
+
 	if err := p.execLogWriter.Close(); err != nil {
 		return nil, err
 	}
@@ -686,7 +690,7 @@ func (p *StatusPrinter) uploadFlamegraph() (*digest.CASResourceName, error) {
 	if uploader == nil {
 		return nil, nil
 	}
-	if p.flamegraph.NumEvents() == 0 {
+	if p.flamegraph == nil || p.flamegraph.NumEvents() == 0 {
 		return nil, nil
 	}
 	tmpFile, err := os.CreateTemp("", "command-*.profile.gz")
