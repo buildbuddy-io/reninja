@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"maps"
 	"math"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
+	"github.com/buildbuddy-io/reninja/internal/span"
 	"github.com/buildbuddy-io/reninja/internal/spawn"
 	"github.com/buildbuddy-io/reninja/internal/subprocess"
 	"github.com/buildbuddy-io/reninja/internal/util"
@@ -58,6 +60,7 @@ func (d *DryCommandRunner) WaitForCommand() *spawn.Result {
 		Edge:     front,
 		Runner:   "local",
 		CacheHit: false,
+		Context:  span.BeginTracing(context.TODO()),
 	}
 	return r
 }
@@ -80,7 +83,7 @@ func NewRealCommandRunner(config *build_config.Config, jobserver jobserver.Clien
 		return NewRemoteCommandRunner(config, jobserver)
 	}
 	if remote_flags.EnableCache() {
-		return NewCachingCommandRunner(config, jobserver)
+		return NewRemoteCachingCommandRunner(config, jobserver)
 	}
 	return &RealCommandRunner{
 		config:        config,
@@ -163,6 +166,7 @@ func (r *RealCommandRunner) WaitForCommand() *spawn.Result {
 		Edge:     r.subprocToEdge[subproc],
 		Runner:   "local",
 		CacheHit: false,
+		Context:  span.BeginTracing(context.TODO()),
 	}
 
 	delete(r.subprocToEdge, subproc)

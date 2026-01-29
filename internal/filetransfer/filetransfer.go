@@ -338,9 +338,16 @@ type Downloader struct {
 	repb.ActionCacheClient
 }
 
-func (d *Downloader) DownloadActionResult(ctx context.Context, ar *digest.ACResourceName) (*repb.ActionResult, error) {
+func (d *Downloader) DownloadActionResult(ctx context.Context, action *repb.Action) (*repb.ActionResult, error) {
 	ctx = appendHeadersToCtx(ctx)
-	return cachetools.GetActionResult(ctx, d, ar)
+
+	di, err := digest.ComputeForMessage(action, DigestFunction)
+	if err != nil {
+		return nil, err
+	}
+
+	acrn := digest.NewACResourceName(di, remote_flags.RemoteInstanceName(), DigestFunction)
+	return cachetools.GetActionResult(ctx, d, acrn)
 }
 
 func (d *Downloader) GetBlob(ctx context.Context, r *digest.CASResourceName, out io.Writer) error {
