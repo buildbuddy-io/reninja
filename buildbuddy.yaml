@@ -1,9 +1,8 @@
 install_go: &install_go |
-    if ! [ -x "$(command -v go)" ]; then
+    if ! [ -x "$(command -v go)" ] || true; then
       curl -LO https://go.dev/dl/go1.25.6.linux-amd64.tar.gz
       sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.6.linux-amd64.tar.gz
       echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-      source ~/.bashrc
     fi
 
 actions:
@@ -18,7 +17,7 @@ actions:
           - "*"
     steps:
       - run: *install_go
-      - run: "/usr/local/go/bin/go test ./..."
+      - run: "source ~/.bashrc && go test ./..."
   - name: "[Reninja] Output Tests"
     container_image: "ubuntu-24.04"
     triggers:
@@ -30,6 +29,6 @@ actions:
           - "*"
     steps:
       - run: *install_go
-      - run: "/usr/local/go/bin/go build cmd/ninja/ninja.go"
+      - run: "source ~/.bashrc && go build cmd/ninja/ninja.go"
       - run: "misc/output_test.py"
 
