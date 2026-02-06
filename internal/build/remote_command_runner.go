@@ -3,7 +3,6 @@ package build
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"os"
 	"slices"
@@ -152,7 +151,6 @@ func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, 
 		cmdProto.OutputPaths = append(cmdProto.OutputPaths, output.Path())
 	}
 	// TODO(tylerw): maybe hash and include other stuff here???
-	fmt.Fprintf(os.Stderr, "DEBUG assembleCommand: WorkingDirectory=%q Arguments=%v OutputPaths=%v\n", cmdProto.WorkingDirectory, cmdProto.Arguments, cmdProto.OutputPaths)
 	return cmdProto, nil
 }
 
@@ -190,6 +188,7 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 }
 
 func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*spawn.Result, error) {
+	defer span.Record(ctx, "remote output download")()
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := filetransfer.DigestFunction
 	eg, gctx := errgroup.WithContext(ctx)
@@ -348,6 +347,11 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 			return
 		}
 
+		edgeState.executing.Store(true)
+		defer func() {
+			edgeState.executing.Store(false)
+		}()
+
 		if err := uploadActionInputs(); err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
@@ -364,7 +368,6 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
 		}
-		fmt.Printf("\nFINISHED RESULT: %+v\n", result)
 		edgeState.finishedResult <- result
 	}()
 
@@ -372,9 +375,10 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 }
 
 func (r *RemoteCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*spawn.Result, error) {
-	defer span.Record(ctx, "remote output download")()
-
+	finishActionResultSpan := span.Record(ctx, "cache check")
 	actionResult, err := r.downloader.DownloadActionResult(ctx, action)
+	finishActionResultSpan()
+
 	if err == nil && actionResult != nil && actionResult.GetExitCode() == 0 {
 		return r.fetchOutputsAndResult(ctx, actionResult, edge)
 	}

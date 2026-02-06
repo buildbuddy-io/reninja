@@ -2,7 +2,6 @@ package filetransfer
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -134,7 +133,6 @@ func cleanPaths(dirty []string) ([]string, error) {
 		return nil, err
 	}
 	root := project_root.Root()
-	fmt.Fprintf(os.Stderr, "DEBUG cleanPaths: cwd=%s root=%s workdir=%s\n", cwd, root, project_root.WorkingDirectory())
 
 	cleanedFiles := make([]string, len(dirty))
 	for i, dirtyPath := range dirty {
@@ -146,7 +144,6 @@ func cleanPaths(dirty []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(os.Stderr, "DEBUG cleanPaths: %q -> %q\n", dirtyPath, cleaned)
 		cleanedFiles[i] = cleaned
 	}
 	return cleanedFiles, nil
@@ -207,7 +204,6 @@ func expandTree(cleanedFiles []string) []string {
 	sorted := slices.SortedFunc(maps.Keys(paths), func(i, j string) int {
 		return hierarchicalPathCompare(i, j)
 	})
-	fmt.Fprintf(os.Stderr, "DEBUG expandTree: %v\n", sorted)
 	return sorted
 }
 
