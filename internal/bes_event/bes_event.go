@@ -1,6 +1,7 @@
 package bes_event
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -17,7 +18,7 @@ import (
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func StartedEvent(toolName string, cmdArgs []string, invocationID string, startTime time.Time) *bespb.BuildEvent {
+func StartedEvent(toolName string, cmdArgs []string, invocationID string, startTime time.Time, flagPatterns []string) *bespb.BuildEvent {
 	return &bespb.BuildEvent{
 		Id: &bespb.BuildEventId{
 			Id: &bespb.BuildEventId_Started{},
@@ -30,6 +31,11 @@ func StartedEvent(toolName string, cmdArgs []string, invocationID string, startT
 			{Id: &bespb.BuildEventId_StructuredCommandLine{
 				StructuredCommandLine: &bespb.BuildEventId_StructuredCommandLineId{
 					CommandLineLabel: "original",
+				},
+			}},
+			{Id: &bespb.BuildEventId_Pattern{
+				Pattern: &bespb.BuildEventId_PatternExpandedId{
+					Pattern: flagPatterns,
 				},
 			}},
 		},
@@ -176,6 +182,40 @@ func ConfigurationEvent() *bespb.BuildEvent {
 		},
 	}
 
+}
+
+func CollectFlagPatterns() []string {
+	var patterns []string
+	flag.CommandLine.VisitAll(func(f *flag.Flag) {
+		if f.Value.String() != "" || f.Value.String() != f.DefValue {
+			patterns = append(patterns, fmt.Sprintf("--%s=%s", f.Name, f.Value.String()))
+		}
+	})
+	return patterns
+}
+
+func ExpandedEvent(flagPatterns []string, targetLabels []string) *bespb.BuildEvent {
+	children := make([]*bespb.BuildEventId, 0, len(targetLabels))
+	for _, label := range targetLabels {
+		children = append(children, &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_TargetConfigured{
+				TargetConfigured: &bespb.BuildEventId_TargetConfiguredId{
+					Label: label,
+				},
+			},
+		})
+	}
+	return &bespb.BuildEvent{
+		Id: &bespb.BuildEventId{
+			Id: &bespb.BuildEventId_Pattern{
+				Pattern: &bespb.BuildEventId_PatternExpandedId{
+					Pattern: flagPatterns,
+				},
+			},
+		},
+		Children: children,
+		Payload:  &bespb.BuildEvent_Expanded{Expanded: &bespb.PatternExpanded{}},
+	}
 }
 
 func TargetConfiguredEvent(targetLabel, targetKind, configID string) *bespb.BuildEvent {

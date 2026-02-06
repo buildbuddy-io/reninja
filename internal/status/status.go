@@ -166,6 +166,8 @@ type StatusPrinter struct {
 	execLogFile         *os.File
 	execLogWriter       *compression.ZstdCompressingWriter
 	compactExecutionLog *compact_execution.Log
+
+	plannedTargetLabels []string
 }
 
 func NewPrinter(config *build_config.Config) *StatusPrinter {
@@ -323,6 +325,10 @@ func (p *StatusPrinter) printStreamURL() {
 
 func (p *StatusPrinter) EdgeAddedToPlan(edge *graph.Edge) {
 	p.totalEdges += 1
+
+	if p.bes != nil {
+		p.plannedTargetLabels = append(p.plannedTargetLabels, edge.TargetLabel())
+	}
 
 	// Do we know how long did this edge take last time?
 	if edge.PrevElapsedTimeMillis() != -1 {
@@ -623,6 +629,12 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 	p.runningEdges = 0
 	p.buildStart = buildStart
 
+	if p.bes != nil {
+		if err := p.bes.Publish(bes_event.ExpandedEvent(bes_event.CollectFlagPatterns(), p.plannedTargetLabels)); err != nil {
+			util.Warningf("Failed to publish expanded event: %s", err)
+		}
+	}
+
 	p.recordSystemMetrics(buildStart)
 	p.initializeLogs()
 
@@ -663,7 +675,7 @@ func (p *StatusPrinter) InitializeTool(toolName string, args []string) {
 	if p.bes == nil {
 		return
 	}
-	if err := p.bes.Publish(bes_event.StartedEvent(toolName, os.Args, p.invocationID, time.Now())); err != nil {
+	if err := p.bes.Publish(bes_event.StartedEvent(toolName, os.Args, p.invocationID, time.Now(), bes_event.CollectFlagPatterns())); err != nil {
 		util.Warningf("Failed to publish started event: %s", err)
 	}
 
