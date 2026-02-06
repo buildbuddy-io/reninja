@@ -17,6 +17,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/filetransfer"
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
+	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_exec"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/remote_headers"
@@ -30,7 +31,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/metadata"
 
-	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
 	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
@@ -145,12 +145,14 @@ func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, 
 		return nil, err
 	}
 	cmdProto := &repb.Command{
-		Arguments: splitCommand,
+		Arguments:        splitCommand,
+		WorkingDirectory: project_root.WorkingDirectory(),
 	}
 	for _, output := range edge.Outputs() {
 		cmdProto.OutputPaths = append(cmdProto.OutputPaths, output.Path())
 	}
 	// TODO(tylerw): maybe hash and include other stuff here???
+	fmt.Fprintf(os.Stderr, "DEBUG assembleCommand: WorkingDirectory=%q Arguments=%v OutputPaths=%v\n", cmdProto.WorkingDirectory, cmdProto.Arguments, cmdProto.OutputPaths)
 	return cmdProto, nil
 }
 
@@ -192,9 +194,6 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 	digestFunction := filetransfer.DigestFunction
 	eg, gctx := errgroup.WithContext(ctx)
 
-	actionOutputs := make([]*bespb.File, 0, len(edge.Outputs()))
-	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
-
 	for _, outputFile := range actionResult.GetOutputFiles() {
 		eg.Go(func() error {
 			matchedEdgeOutput := false
@@ -225,14 +224,6 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 					return err
 				}
 			}
-
-			uri := fmt.Sprintf("%s/%s", bytestreamURIPrefix, casDigest.DownloadString())
-			actionOutputs = append(actionOutputs, &bespb.File{
-				Name:   outputFile.GetPath(),
-				File:   &bespb.File_Uri{Uri: uri},
-				Digest: outputFile.GetDigest().GetHash(),
-				Length: outputFile.GetDigest().GetSizeBytes(),
-			})
 			return nil
 		})
 	}
@@ -275,12 +266,14 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 	}
 
 	return &spawn.Result{
-		Status:   exit_status.ExitStatusType(actionResult.GetExitCode()),
-		Output:   stdout + stderr,
-		Edge:     edge,
-		Runner:   "remote-cache",
-		CacheHit: true,
-		Outputs:  actionOutputs,
+		Status:       exit_status.ExitStatusType(actionResult.GetExitCode()),
+		Output:       stdout + stderr,
+		Edge:         edge,
+		Runner:       remoteCacheRunner,
+		CacheHit:     true,
+		Context:      ctx,
+		Outputs:      actionResult.GetOutputFiles(),
+		StdoutDigest: actionResult.GetStdoutDigest(),
 	}, nil
 }
 
@@ -312,10 +305,10 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 
 	makeFailureResult := func(err error) *spawn.Result {
 		return &spawn.Result{
-			Edge:   edge,
-			Status: exit_status.ExitFailure,
-			Output: err.Error(),
-			Events: span.Events(ctx),
+			Edge:    edge,
+			Status:  exit_status.ExitFailure,
+			Output:  err.Error(),
+			Context: ctx,
 		}
 	}
 
@@ -351,7 +344,6 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 
 	go func() {
 		if res, err := r.downloadCompletedEdge(ctx, action, edge); err == nil {
-			res.Events = span.Events(ctx)
 			edgeState.finishedResult <- res
 			return
 		}
@@ -382,16 +374,7 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 func (r *RemoteCommandRunner) downloadCompletedEdge(ctx context.Context, action *repb.Action, edge *graph.Edge) (*spawn.Result, error) {
 	defer span.Record(ctx, "remote output download")()
 
-	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
-
-	d, err := digest.ComputeForMessage(action, digestFunction)
-	if err != nil {
-		return nil, err
-	}
-
-	acrn := digest.NewACResourceName(d, instanceName, digestFunction)
-	actionResult, err := r.downloader.DownloadActionResult(ctx, acrn)
+	actionResult, err := r.downloader.DownloadActionResult(ctx, action)
 	if err == nil && actionResult != nil && actionResult.GetExitCode() == 0 {
 		return r.fetchOutputsAndResult(ctx, actionResult, edge)
 	}

@@ -2,6 +2,7 @@ package filetransfer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/cachetools"
 	"github.com/buildbuddy-io/reninja/internal/digest"
 	"github.com/buildbuddy-io/reninja/internal/grpc_client"
+	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/remote_headers"
 	"github.com/buildbuddy-io/reninja/internal/statuserr"
@@ -131,18 +133,21 @@ func cleanPaths(dirty []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	root := project_root.Root()
+	fmt.Fprintf(os.Stderr, "DEBUG cleanPaths: cwd=%s root=%s workdir=%s\n", cwd, root, project_root.WorkingDirectory())
 
 	cleanedFiles := make([]string, len(dirty))
 	for i, dirtyPath := range dirty {
-		if filepath.IsAbs(dirtyPath) {
-			cleaned, err := filepath.Rel(cwd, dirtyPath)
-			if err != nil {
-				return nil, err
-			}
-			cleanedFiles[i] = cleaned
-		} else {
-			cleanedFiles[i] = filepath.Clean(dirtyPath)
+		absPath := dirtyPath
+		if !filepath.IsAbs(absPath) {
+			absPath = filepath.Join(cwd, absPath)
 		}
+		cleaned, err := filepath.Rel(root, absPath)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(os.Stderr, "DEBUG cleanPaths: %q -> %q\n", dirtyPath, cleaned)
+		cleanedFiles[i] = cleaned
 	}
 	return cleanedFiles, nil
 }
@@ -188,10 +193,22 @@ func expandTree(cleanedFiles []string) []string {
 		paths[path] = struct{}{}
 	}
 
+	// Ensure the working directory and all its parents exist in the tree.
+	// REAPI requires working_directory to be present in the input root.
+	wd := project_root.WorkingDirectory()
+	if wd != "." {
+		for wd != "." && wd != "" {
+			paths[wd] = struct{}{}
+			wd = filepath.Dir(wd)
+		}
+	}
+
 	// Sort so that each path is directly followed by its children.
-	return slices.SortedFunc(maps.Keys(paths), func(i, j string) int {
+	sorted := slices.SortedFunc(maps.Keys(paths), func(i, j string) int {
 		return hierarchicalPathCompare(i, j)
 	})
+	fmt.Fprintf(os.Stderr, "DEBUG expandTree: %v\n", sorted)
+	return sorted
 }
 
 type FlattenedTree []*UploadableNode
@@ -260,12 +277,14 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 		rest = pathsToUpload[1:]
 	}
 
+	projRoot := project_root.Root()
 	for i, path := range rest {
 		if filepath.Dir(path) != root {
 			continue
 		}
 		name := filepath.Base(path)
-		entry, err := os.Lstat(path) // NB: Lstat.
+		diskPath := filepath.Join(projRoot, path)
+		entry, err := os.Lstat(diskPath) // NB: Lstat.
 		if err != nil {
 			return nil, nil, err
 		}
@@ -281,7 +300,7 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 			})
 		} else if entry.Mode().IsRegular() {
 			info := entry
-			d, err := digest.ComputeForFile(path, DigestFunction)
+			d, err := digest.ComputeForFile(diskPath, DigestFunction)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -290,15 +309,15 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 				Digest:       d,
 				IsExecutable: isExecutable(info),
 			})
-			path := path
+			diskPath := diskPath
 			visited = append(visited, &UploadableNode{
 				Digest: d,
 				ReadFn: func() (io.ReadSeekCloser, error) {
-					return os.Open(path)
+					return os.Open(diskPath)
 				},
 			})
 		} else if entry.Mode()&os.ModeSymlink == os.ModeSymlink {
-			target, err := os.Readlink(path)
+			target, err := os.Readlink(diskPath)
 			if err != nil {
 				return nil, nil, err
 			}

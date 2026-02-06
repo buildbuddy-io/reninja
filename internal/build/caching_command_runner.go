@@ -17,6 +17,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/filetransfer"
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
+	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/remote_headers"
 	"github.com/buildbuddy-io/reninja/internal/request_metadata"
@@ -160,7 +161,8 @@ func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 		return nil, err
 	}
 	cmdProto := &repb.Command{
-		Arguments: splitCommand,
+		Arguments:        splitCommand,
+		WorkingDirectory: project_root.WorkingDirectory(),
 	}
 	for _, output := range edge.Outputs() {
 		cmdProto.OutputPaths = append(cmdProto.OutputPaths, output.Path())

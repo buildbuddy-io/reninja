@@ -17,6 +17,7 @@ var (
 	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
 	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
+	projectRoot        = flag.String("project_root", "", "Project root directory for remote execution. Auto-detected from .gclient/.git if not set.")
 )
 
 func EnableBES() bool {
@@ -53,6 +54,10 @@ func InvocationID() string {
 
 func RemoteInstanceName() string {
 	return *remoteInstanceName
+}
+
+func ProjectRoot() string {
+	return *projectRoot
 }
 
 func BytestreamURIPrefix() string {
