@@ -1,6 +1,7 @@
 package bes_event
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -57,21 +58,18 @@ func OptionsParsedEvent(cmdArgs []string) *bespb.BuildEvent {
 }
 
 func getStructuredCommandLine() *clpb.CommandLine {
-	options := make([]*clpb.Option, 0, len(os.Args[1:]))
-	for _, arg := range os.Args[1:] {
-		// TODO: Handle other arg formats ("-name=value", "--name value",
-		// "--bool_switch", etc). Ignore these for now since we don't set
-		// them in practice.
-		if !strings.HasPrefix(arg, "--") || !strings.Contains(arg, "=") {
-			continue
+	var options []*clpb.Option
+	flag.CommandLine.VisitAll(func(f *flag.Flag) {
+		val := f.Value.String()
+		if val == "" {
+			return
 		}
-		nameValue := strings.SplitN(strings.TrimPrefix(arg, "--"), "=", 2)
 		options = append(options, &clpb.Option{
-			CombinedForm: arg,
-			OptionName:   nameValue[0],
-			OptionValue:  nameValue[1],
+			CombinedForm: fmt.Sprintf("--%s=%s", f.Name, val),
+			OptionName:   f.Name,
+			OptionValue:  val,
 		})
-	}
+	})
 	return &clpb.CommandLine{
 		CommandLineLabel: "original",
 		Sections: []*clpb.CommandLineSection{
