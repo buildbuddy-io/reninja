@@ -24,10 +24,6 @@ import (
 	bspb "google.golang.org/genproto/googleapis/bytestream"
 )
 
-const (
-	DigestFunction = repb.DigestFunction_BLAKE3
-)
-
 // UploadableNode represents a node in the directory tree that can be uploaded to CAS.
 type UploadableNode struct {
 	// Digest is the content-addressed digest of this node.
@@ -99,31 +95,34 @@ func (u *Uploader) UploadActionResult(ctx context.Context, r *digest.ACResourceN
 func (u *Uploader) UploadInMemoryBlob(ctx context.Context, in io.ReadSeeker) (*digest.CASResourceName, error) {
 	ctx = appendHeadersToCtx(ctx)
 	instanceName := remote_flags.RemoteInstanceName()
-	d, err := cachetools.UploadBlob(ctx, u, instanceName, DigestFunction, in)
+	digestFunction := remote_flags.DigestFunction()
+	d, err := cachetools.UploadBlob(ctx, u, instanceName, digestFunction, in)
 	if err != nil {
 		return nil, err
 	}
-	return digest.NewCASResourceName(d, instanceName, DigestFunction), nil
+	return digest.NewCASResourceName(d, instanceName, digestFunction), nil
 }
 
 func (u *Uploader) UploadProto(ctx context.Context, in proto.Message) (*digest.CASResourceName, error) {
 	ctx = appendHeadersToCtx(ctx)
 	instanceName := remote_flags.RemoteInstanceName()
-	d, err := cachetools.UploadProto(ctx, u, instanceName, DigestFunction, in)
+	digestFunction := remote_flags.DigestFunction()
+	d, err := cachetools.UploadProto(ctx, u, instanceName, digestFunction, in)
 	if err != nil {
 		return nil, err
 	}
-	return digest.NewCASResourceName(d, instanceName, DigestFunction), nil
+	return digest.NewCASResourceName(d, instanceName, digestFunction), nil
 }
 
 func (u *Uploader) UploadFile(ctx context.Context, path string) (*digest.CASResourceName, error) {
 	ctx = appendHeadersToCtx(ctx)
 	instanceName := remote_flags.RemoteInstanceName()
-	d, err := cachetools.UploadFile(ctx, u, instanceName, DigestFunction, path)
+	digestFunction := remote_flags.DigestFunction()
+	d, err := cachetools.UploadFile(ctx, u, instanceName, digestFunction, path)
 	if err != nil {
 		return nil, err
 	}
-	return digest.NewCASResourceName(d, instanceName, DigestFunction), nil
+	return digest.NewCASResourceName(d, instanceName, digestFunction), nil
 }
 
 func cleanPaths(dirty []string) ([]string, error) {
@@ -246,6 +245,8 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 	uploadableNode := &UploadableNode{}
 	visited = append(visited, uploadableNode)
 
+	digestFunction := remote_flags.DigestFunction()
+
 	var root string
 	var rest []string
 
@@ -275,7 +276,7 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 			})
 		} else if entry.Mode().IsRegular() {
 			info := entry
-			d, err := digest.ComputeForFile(path, DigestFunction)
+			d, err := digest.ComputeForFile(path, digestFunction)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -304,7 +305,7 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 		}
 	}
 
-	d, err := digest.ComputeForMessage(dir, DigestFunction)
+	d, err := digest.ComputeForMessage(dir, digestFunction)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -335,12 +336,14 @@ type Downloader struct {
 func (d *Downloader) DownloadActionResult(ctx context.Context, action *repb.Action) (*repb.ActionResult, error) {
 	ctx = appendHeadersToCtx(ctx)
 
-	di, err := digest.ComputeForMessage(action, DigestFunction)
+	instanceName := remote_flags.RemoteInstanceName()
+	digestFunction := remote_flags.DigestFunction()
+	di, err := digest.ComputeForMessage(action, digestFunction)
 	if err != nil {
 		return nil, err
 	}
 
-	acrn := digest.NewACResourceName(di, remote_flags.RemoteInstanceName(), DigestFunction)
+	acrn := digest.NewACResourceName(di, instanceName, digestFunction)
 	return cachetools.GetActionResult(ctx, d, acrn)
 }
 

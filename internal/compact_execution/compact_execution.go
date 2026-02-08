@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	"github.com/buildbuddy-io/reninja/internal/digest"
-	"github.com/buildbuddy-io/reninja/internal/filetransfer"
 	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/spawn"
 	"github.com/google/shlex"
 	"google.golang.org/protobuf/encoding/protodelim"
@@ -84,7 +84,7 @@ func (l *Log) getOrCreateFileEntry(path string) (uint32, error) {
 	}
 
 	l.mu.Unlock() // Unlock while computing file digest.
-	d, err := digest.ComputeForFile(path, filetransfer.DigestFunction)
+	d, err := digest.ComputeForFile(path, remote_flags.DigestFunction())
 	if err != nil {
 		return 0, err
 	}

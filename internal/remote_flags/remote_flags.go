@@ -3,6 +3,10 @@ package remote_flags
 import (
 	"flag"
 	"net/url"
+	"strings"
+	"sync"
+
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
 var (
@@ -14,6 +18,7 @@ var (
 	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
 	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
+	digestFunction     = flag.String("digest_function", "BLAKE3", "If set, use this digest function for uploads.")
 )
 
 func EnableBES() bool {
@@ -50,4 +55,16 @@ func BytestreamURIPrefix() string {
 		return ""
 	}
 	return "bytestream://" + backendURL.Host
+}
+
+func parseDigestFuncString() repb.DigestFunction_Value {
+	if df, ok := repb.DigestFunction_Value_value[strings.ToUpper(*digestFunction)]; ok {
+		return repb.DigestFunction_Value(df)
+	}
+	return repb.DigestFunction_UNKNOWN
+}
+
+func DigestFunction() repb.DigestFunction_Value {
+	once := sync.OnceValue(parseDigestFuncString)
+	return once()
 }
