@@ -23,6 +23,9 @@ var (
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
 	projectRoot        = flag.String("project_root", "", "Project root directory for remote execution. Auto-detected from .gclient/.git if not set.")
 	digestFunction     = flag.String("digest_function", "BLAKE3", "If set, use this digest function for uploads.")
+
+	// Path munging and stuff. Configure this if your project needs it.
+	includeScanning = flag.Bool("enable_include_scanning", false, "If true, scan header files for implicit deps and include in the input root of remotely executed actions")
 )
 
 func EnableBES() bool {
@@ -83,4 +86,8 @@ func parseDigestFuncString() repb.DigestFunction_Value {
 func DigestFunction() repb.DigestFunction_Value {
 	once := sync.OnceValue(parseDigestFuncString)
 	return once()
+}
+
+func IncludeScanning() bool {
+	return *includeScanning
 }

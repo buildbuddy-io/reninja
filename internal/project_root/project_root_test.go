@@ -1,16 +1,18 @@
-package project_root
+package project_root_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/buildbuddy-io/reninja/internal/project_root"
 )
 
 func TestDetectFrom_NoMarkers(t *testing.T) {
 	dir := t.TempDir()
-	got := detectFrom(dir)
+	got := project_root.WalkUpDirsToFindRoot(dir)
 	if got != dir {
-		t.Errorf("detectFrom(%q) = %q, want %q (fallback to startDir)", dir, got, dir)
+		t.Errorf("project_root.WalkUpDirsToFindRoot(%q) = %q, want %q (fallback to startDir)", dir, got, dir)
 	}
 }
 
@@ -19,9 +21,9 @@ func TestDetectFrom_GitAtCWD(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := detectFrom(dir)
+	got := project_root.WalkUpDirsToFindRoot(dir)
 	if got != dir {
-		t.Errorf("detectFrom(%q) = %q, want %q", dir, got, dir)
+		t.Errorf("project_root.WalkUpDirsToFindRoot(%q) = %q, want %q", dir, got, dir)
 	}
 }
 
@@ -34,9 +36,9 @@ func TestDetectFrom_GitAboveCWD(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := detectFrom(sub)
+	got := project_root.WalkUpDirsToFindRoot(sub)
 	if got != root {
-		t.Errorf("detectFrom(%q) = %q, want %q", sub, got, root)
+		t.Errorf("project_root.WalkUpDirsToFindRoot(%q) = %q, want %q", sub, got, root)
 	}
 }
 
@@ -61,9 +63,9 @@ func TestDetectFrom_OutermostWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := detectFrom(deep)
+	got := project_root.WalkUpDirsToFindRoot(deep)
 	if got != root {
-		t.Errorf("detectFrom(%q) = %q, want %q (outermost marker)", deep, got, root)
+		t.Errorf("project_root.WalkUpDirsToFindRoot(%q) = %q, want %q (outermost marker)", deep, got, root)
 	}
 }
 
@@ -77,8 +79,8 @@ func TestDetectFrom_GclientMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := detectFrom(sub)
+	got := project_root.WalkUpDirsToFindRoot(sub)
 	if got != root {
-		t.Errorf("detectFrom(%q) = %q, want %q", sub, got, root)
+		t.Errorf("project_root.WalkUpDirsToFindRoot(%q) = %q, want %q", sub, got, root)
 	}
 }

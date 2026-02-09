@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/exit_status"
 	"github.com/buildbuddy-io/reninja/internal/filetransfer"
 	"github.com/buildbuddy-io/reninja/internal/graph"
+	"github.com/buildbuddy-io/reninja/internal/include_scanner"
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
 	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_exec"
@@ -34,10 +36,11 @@ import (
 )
 
 type RemoteCommandRunner struct {
-	config      *build_config.Config
-	jobserver   jobserver.Client
-	mu          *sync.Mutex
-	activeEdges []*activeEdgeState
+	config         *build_config.Config
+	jobserver      jobserver.Client
+	mu             *sync.Mutex
+	activeEdges    []*activeEdgeState
+	includeScanner *include_scanner.Scanner
 
 	context    context.Context
 	cancel     context.CancelFunc
@@ -61,10 +64,11 @@ func NewRemoteCommandRunner(config *build_config.Config, jobserver jobserver.Cli
 	}
 
 	return &RemoteCommandRunner{
-		config:      config,
-		jobserver:   jobserver,
-		mu:          &sync.Mutex{},
-		activeEdges: make([]*activeEdgeState, 0),
+		config:         config,
+		jobserver:      jobserver,
+		mu:             &sync.Mutex{},
+		activeEdges:    make([]*activeEdgeState, 0),
+		includeScanner: include_scanner.New(),
 
 		cancel:     cancelFunc,
 		context:    ctx,
@@ -137,14 +141,26 @@ func (r *RemoteCommandRunner) CanRunMore() int {
 	return capacity
 }
 
+// needsShell returns true if the command string contains shell metacharacters
+// (redirections, pipes, etc.) that require execution via sh -c.
+func needsShell(command string) bool {
+	return strings.ContainsAny(command, "<>|;&")
+}
+
 func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 	command := edge.EvaluateCommand(false)
-	splitCommand, err := shlex.Split(command)
-	if err != nil {
-		return nil, err
+	var args []string
+	if needsShell(command) {
+		args = []string{"sh", "-c", command}
+	} else {
+		var err error
+		args, err = shlex.Split(command)
+		if err != nil {
+			return nil, err
+		}
 	}
 	cmdProto := &repb.Command{
-		Arguments:        splitCommand,
+		Arguments:        args,
 		WorkingDirectory: project_root.WorkingDirectory(),
 	}
 	for _, output := range edge.Outputs() {
@@ -172,11 +188,22 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		}
 		files = append(files, input.Path())
 	}
+
+	// If include_scanning is enabled, scan files to detect implicit dependencies
+	// and include them in the input root of the remote build action.
+	if remote_flags.IncludeScanning() {
+		extraFiles, err := r.includeScanner.ScanEdge(files, edge.EvaluateCommand(false))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		files = append(files, extraFiles...)
+	}
+
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	commandDigest, err := digest.ComputeForMessage(cmd, filetransfer.DigestFunction)
+	commandDigest, err := digest.ComputeForMessage(cmd, remote_flags.DigestFunction())
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -190,7 +217,7 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*spawn.Result, error) {
 	defer span.Record(ctx, "remote output download")()
 	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
+	digestFunction := remote_flags.DigestFunction()
 	eg, gctx := errgroup.WithContext(ctx)
 
 	for _, outputFile := range actionResult.GetOutputFiles() {
@@ -232,33 +259,29 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 
 	if len(actionResult.StdoutRaw) > 0 {
 		stdout = string(actionResult.StdoutRaw)
-	} else {
-		if !digest.IsEmptyHash(actionResult.GetStdoutDigest(), digestFunction) {
-			eg.Go(func() error {
-				buf := &bytes.Buffer{}
-				casDigest := digest.NewCASResourceName(actionResult.GetStdoutDigest(), instanceName, digestFunction)
-				if err := r.downloader.GetBlob(gctx, casDigest, buf); err != nil {
-					return err
-				}
-				stdout = buf.String()
-				return nil
-			})
-		}
+	} else if actionResult.GetStdoutDigest() != nil && !digest.IsEmptyHash(actionResult.GetStdoutDigest(), digestFunction) {
+		eg.Go(func() error {
+			buf := &bytes.Buffer{}
+			casDigest := digest.NewCASResourceName(actionResult.GetStdoutDigest(), instanceName, digestFunction)
+			if err := r.downloader.GetBlob(gctx, casDigest, buf); err != nil {
+				return err
+			}
+			stdout = buf.String()
+			return nil
+		})
 	}
 	if len(actionResult.StderrRaw) > 0 {
-		stderr = string(actionResult.StdoutRaw)
-	} else {
-		if !digest.IsEmptyHash(actionResult.GetStderrDigest(), digestFunction) {
-			eg.Go(func() error {
-				buf := &bytes.Buffer{}
-				casDigest := digest.NewCASResourceName(actionResult.GetStderrDigest(), instanceName, digestFunction)
-				if err := r.downloader.GetBlob(gctx, casDigest, buf); err != nil {
-					return err
-				}
-				stderr += buf.String()
-				return nil
-			})
-		}
+		stderr = string(actionResult.StderrRaw)
+	} else if actionResult.GetStderrDigest() != nil && !digest.IsEmptyHash(actionResult.GetStderrDigest(), digestFunction) {
+		eg.Go(func() error {
+			buf := &bytes.Buffer{}
+			casDigest := digest.NewCASResourceName(actionResult.GetStderrDigest(), instanceName, digestFunction)
+			if err := r.downloader.GetBlob(gctx, casDigest, buf); err != nil {
+				return err
+			}
+			stderr += buf.String()
+			return nil
+		})
 	}
 	if err := eg.Wait(); err != nil {
 		return nil, err
@@ -295,7 +318,7 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 	}
 
 	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
+	digestFunction := remote_flags.DigestFunction()
 	d, err := digest.ComputeForMessage(action, digestFunction)
 	if err != nil {
 		return err
@@ -362,7 +385,6 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 			edgeState.finishedResult <- makeFailureResult(err)
 			return
 		}
-
 		result, err := r.fetchOutputsAndResult(ctx, rsp.ExecuteResponse.GetResult(), edge)
 		if err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
