@@ -486,7 +486,7 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 func computeBESFiles(uploadedFiles []*repb.OutputFile) []*bespb.File {
 	bytestreamURIPrefix := remote_flags.BytestreamURIPrefix()
 	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
+	digestFunction := remote_flags.DigestFunction()
 
 	besFiles := make([]*bespb.File, len(uploadedFiles))
 	for _, file := range uploadedFiles {

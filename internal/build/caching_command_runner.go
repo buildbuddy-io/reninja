@@ -210,7 +210,7 @@ func (r *RemoteCachingCommandRunner) assembleAction(ctx context.Context, cmd *re
 	if err != nil {
 		return nil, nil, err
 	}
-	commandDigest, err := digest.ComputeForMessage(cmd, filetransfer.DigestFunction)
+	commandDigest, err := digest.ComputeForMessage(cmd, remote_flags.DigestFunction())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -223,7 +223,7 @@ func (r *RemoteCachingCommandRunner) assembleAction(ctx context.Context, cmd *re
 
 func (r *RemoteCachingCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*spawn.Result, error) {
 	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
+	digestFunction := remote_flags.DigestFunction()
 	eg, gctx := errgroup.WithContext(ctx)
 
 	for _, outputFile := range actionResult.GetOutputFiles() {
@@ -294,13 +294,13 @@ func (r *RemoteCachingCommandRunner) fetchOutputsAndResult(ctx context.Context, 
 // isDepsFileResult returns true if the ActionResult is a pointer to another action
 // (contains dep paths but no actual outputs).
 func isDepsFileResult(ar *repb.ActionResult) bool {
-	return len(ar.GetOutputFiles()) == 0 && !digest.IsEmptyHash(ar.GetStdoutDigest(), filetransfer.DigestFunction)
+	return len(ar.GetOutputFiles()) == 0 && !digest.IsEmptyHash(ar.GetStdoutDigest(), remote_flags.DigestFunction())
 }
 
 // extractDepPathsFromPointer extracts dynamic dep paths from a pointer ActionResult.
 func (r *RemoteCachingCommandRunner) extractDepPathsFromPointer(ctx context.Context, ar *repb.ActionResult) ([]string, error) {
 	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
+	digestFunction := remote_flags.DigestFunction()
 
 	var encoded string
 	if len(ar.StdoutRaw) > 0 {
@@ -475,7 +475,7 @@ func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, 
 func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge *graph.Edge, output string) ([]*repb.OutputFile, *repb.Digest, error) {
 	defer span.Record(ctx, "upload outputs")()
 	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
+	digestFunction := remote_flags.DigestFunction()
 
 	ul := cachetools.NewBatchCASUploader(ctx, r.uploader, r.uploader, instanceName, digestFunction)
 	outputFiles := make([]*repb.OutputFile, 0, len(edge.Outputs()))
@@ -512,7 +512,7 @@ func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge
 
 func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, result *spawn.Result, depsNodes []*graph.Node) error {
 	instanceName := remote_flags.RemoteInstanceName()
-	digestFunction := filetransfer.DigestFunction
+	digestFunction := remote_flags.DigestFunction()
 
 	edge := result.Edge
 	cmd, err := assembleCommand(edge)

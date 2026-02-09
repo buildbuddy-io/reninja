@@ -3,6 +3,10 @@ package remote_flags
 import (
 	"flag"
 	"net/url"
+	"strings"
+	"sync"
+
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
 var (
@@ -18,6 +22,7 @@ var (
 	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
 	projectRoot        = flag.String("project_root", "", "Project root directory for remote execution. Auto-detected from .gclient/.git if not set.")
+	digestFunction     = flag.String("digest_function", "BLAKE3", "If set, use this digest function for uploads.")
 )
 
 func EnableBES() bool {
@@ -66,4 +71,16 @@ func BytestreamURIPrefix() string {
 		return ""
 	}
 	return "bytestream://" + backendURL.Host
+}
+
+func parseDigestFuncString() repb.DigestFunction_Value {
+	if df, ok := repb.DigestFunction_Value_value[strings.ToUpper(*digestFunction)]; ok {
+		return repb.DigestFunction_Value(df)
+	}
+	return repb.DigestFunction_UNKNOWN
+}
+
+func DigestFunction() repb.DigestFunction_Value {
+	once := sync.OnceValue(parseDigestFuncString)
+	return once()
 }
