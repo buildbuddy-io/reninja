@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -28,7 +27,6 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/statuserr"
 	"github.com/buildbuddy-io/reninja/internal/subprocess"
 	"github.com/buildbuddy-io/reninja/internal/util"
-	"github.com/google/shlex"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/metadata"
 
@@ -141,24 +139,8 @@ func (r *RemoteCommandRunner) CanRunMore() int {
 	return capacity
 }
 
-// needsShell returns true if the command string contains shell metacharacters
-// (redirections, pipes, etc.) that require execution via sh -c.
-func needsShell(command string) bool {
-	return strings.ContainsAny(command, "<>|;&")
-}
-
 func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, error) {
-	command := edge.EvaluateCommand(false)
-	var args []string
-	if needsShell(command) {
-		args = []string{"sh", "-c", command}
-	} else {
-		var err error
-		args, err = shlex.Split(command)
-		if err != nil {
-			return nil, err
-		}
-	}
+	args := []string{"sh", "-c", edge.EvaluateCommand(false)}
 	cmdProto := &repb.Command{
 		Arguments:        args,
 		WorkingDirectory: project_root.WorkingDirectory(),
