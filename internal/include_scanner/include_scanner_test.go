@@ -266,6 +266,62 @@ func TestScanEdgeDeduplicate(t *testing.T) {
 	}
 }
 
+func TestResolveIncludeAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	hdr := filepath.Join(dir, "abs.h")
+	if err := os.WriteFile(hdr, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Angle-bracket include with an absolute path (e.g. from a CMake unity build).
+	inc := Inclusion{Path: hdr, Quoted: false}
+	resolved := resolveInclude(inc, "/some/other/dir", []string{"/another/dir"})
+	if resolved != hdr {
+		t.Errorf("resolveInclude with absolute path = %q, want %q", resolved, hdr)
+	}
+}
+
+func TestScanEdgeUnityBuildAbsoluteIncludes(t *testing.T) {
+	// Simulate a CMake unity build file that #includes .cpp files via absolute paths.
+	dir := t.TempDir()
+
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+
+	ub := filepath.Join(dir, "ub_unity.cpp")
+	cppA := filepath.Join(srcDir, "a.cpp")
+	cppB := filepath.Join(srcDir, "b.cpp")
+
+	os.WriteFile(cppA, []byte("// a.cpp\n"), 0644)
+	os.WriteFile(cppB, []byte("// b.cpp\n"), 0644)
+	// Unity build file includes .cpp files via absolute paths with angle brackets.
+	os.WriteFile(ub, []byte(
+		"#include <"+cppA+">\n"+
+			"#include <"+cppB+">\n",
+	), 0644)
+
+	s := New()
+	extra, err := s.ScanEdge([]string{ub}, "g++ -o out "+ub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sort.Strings(extra)
+	absA, _ := filepath.Abs(cppA)
+	absB, _ := filepath.Abs(cppB)
+	found := make(map[string]bool)
+	for _, f := range extra {
+		abs, _ := filepath.Abs(f)
+		found[abs] = true
+	}
+	if !found[absA] {
+		t.Errorf("expected to discover %s, got extra=%v", cppA, extra)
+	}
+	if !found[absB] {
+		t.Errorf("expected to discover %s, got extra=%v", cppB, extra)
+	}
+}
+
 func TestIsScannable(t *testing.T) {
 	scannable := []string{"foo.c", "bar.cc", "baz.cpp", "x.cxx", "a.h", "b.hh", "c.hpp", "d.hxx", "e.inc"}
 	for _, f := range scannable {

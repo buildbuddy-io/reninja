@@ -10,7 +10,8 @@ import (
 	"github.com/google/shlex"
 )
 
-// scannableExtensions lists C/C++ file extensions worth scanning for #include directives.
+// scannableExtensions lists file extensions worth scanning for #include directives.
+// This includes C/C++ sources/headers and assembly files that are preprocessed.
 var scannableExtensions = map[string]bool{
 	".c":   true,
 	".cc":  true,
@@ -21,6 +22,7 @@ var scannableExtensions = map[string]bool{
 	".hpp": true,
 	".hxx": true,
 	".inc": true,
+	".s":   true, // assembly (preprocessed via cpp)
 }
 
 var includeRegex = regexp.MustCompile(`^\s*#\s*include\s*["<]([^">]+)[">]`)
@@ -150,6 +152,13 @@ func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
 // resolveInclude resolves an Inclusion to an absolute file path, or returns ""
 // if the file is not found (e.g. system header).
 func resolveInclude(inc Inclusion, includingFileDir string, searchPaths []string) string {
+	// Handle absolute paths directly (e.g. CMake unity builds: #include </abs/path/file.cpp>).
+	if filepath.IsAbs(inc.Path) {
+		if _, err := os.Stat(inc.Path); err == nil {
+			return inc.Path
+		}
+		return ""
+	}
 	if inc.Quoted {
 		// For quoted includes, check relative to the including file's directory first.
 		candidate := filepath.Join(includingFileDir, inc.Path)
