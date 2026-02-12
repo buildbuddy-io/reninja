@@ -26,6 +26,7 @@ var (
 
 	// Path munging and stuff. Configure this if your project needs it.
 	includeScanning = flag.Bool("enable_include_scanning", false, "If true, scan header files for implicit deps and include in the input root of remotely executed actions")
+	containerImage  = flag.String("container_image", "", "Container image for remote execution, e.g. docker://gcr.io/YOUR:IMAGE")
 )
 
 func EnableBES() bool {
@@ -90,4 +91,8 @@ func DigestFunction() repb.DigestFunction_Value {
 
 func IncludeScanning() bool {
 	return *includeScanning
+}
+
+func ContainerImage() string {
+	return *containerImage
 }
