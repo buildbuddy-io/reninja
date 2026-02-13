@@ -1,8 +1,10 @@
 package project_root
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
@@ -61,6 +63,44 @@ func Root() string {
 		return flagOrRoot(cwd)
 	})
 	return root()
+}
+
+// skipEntry returns true for directories and files that should never be
+// included in remote uploads (e.g. .git/ directories, .ninja_* metadata).
+func skipEntry(name string, isDir bool) bool {
+	if isDir {
+		return name == ".git"
+	}
+	return strings.HasPrefix(name, ".ninja_")
+}
+
+// WalkFiles walks the project root directory and returns absolute paths of all
+// files, excluding .git/ directories and .ninja_* metadata files. This is used
+// to upload the entire project root for remote execution of commands whose
+// inputs can't be statically determined.
+func WalkFiles() ([]string, error) {
+	root := Root()
+	var files []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if skipEntry(d.Name(), d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 // WorkingDirectory returns the relative path from the project root to the

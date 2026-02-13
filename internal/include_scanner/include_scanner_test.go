@@ -336,3 +336,150 @@ func TestIsScannable(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractIntermediateDirsFromCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		command  string
+		expected []string
+	}{
+		{
+			name:     "no dotdot paths",
+			command:  "gcc -I/usr/include -o test test.c",
+			expected: nil,
+		},
+		{
+			name:     "relative path with dotdot ignored",
+			command:  "gcc -I../include test.c",
+			expected: nil,
+		},
+		{
+			name:    "absolute path with dotdot",
+			command: "gcc -I/home/user/project/build/../include test.c",
+			expected: []string{
+				"/home/user/project/build",
+			},
+		},
+		{
+			name:    "flag prefix stripped",
+			command: "gcc -I/a/b/../c -L/d/e/../f test.c",
+			expected: []string{
+				"/a/b",
+				"/d/e",
+			},
+		},
+		{
+			name:    "multiple dotdots in one path",
+			command: "gcc /a/b/c/../../d test.c",
+			expected: []string{
+				"/a/b/c",
+				"/a/b",
+			},
+		},
+		{
+			name:    "deduplicates directories",
+			command: "gcc -I/a/b/../c -I/a/b/../d",
+			expected: []string{
+				"/a/b",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ExtractIntermediateDirsFromCommand(tt.command)
+			if !slices.Equal(result, tt.expected) {
+				t.Errorf("ExtractIntermediateDirsFromCommand(%q) = %v, want %v", tt.command, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractCommandReferencedPaths(t *testing.T) {
+	root := t.TempDir()
+
+	// Create directory structure:
+	//   root/scripts/build.cmake
+	//   root/scripts/helper.cmake
+	//   root/data/config.txt
+	//   root/subdir/  (empty directory)
+	scriptsDir := filepath.Join(root, "scripts")
+	dataDir := filepath.Join(root, "data")
+	subDir := filepath.Join(root, "subdir")
+	os.MkdirAll(scriptsDir, 0755)
+	os.MkdirAll(dataDir, 0755)
+	os.MkdirAll(subDir, 0755)
+
+	buildCmake := filepath.Join(scriptsDir, "build.cmake")
+	helperCmake := filepath.Join(scriptsDir, "helper.cmake")
+	configTxt := filepath.Join(dataDir, "config.txt")
+
+	os.WriteFile(buildCmake, []byte("cmake script"), 0644)
+	os.WriteFile(helperCmake, []byte("helper script"), 0644)
+	os.WriteFile(configTxt, []byte("config"), 0644)
+
+	t.Run("no matching paths", func(t *testing.T) {
+		result := ExtractCommandReferencedPaths("gcc -o test test.c", root)
+		if len(result) != 0 {
+			t.Errorf("expected no paths, got %v", result)
+		}
+	})
+
+	t.Run("file path includes siblings", func(t *testing.T) {
+		command := "cmake -P " + buildCmake
+		result := ExtractCommandReferencedPaths(command, root)
+		// Should include build.cmake and helper.cmake (sibling)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[buildCmake] {
+			t.Errorf("expected %s in result, got %v", buildCmake, result)
+		}
+		if !resultSet[helperCmake] {
+			t.Errorf("expected sibling %s in result, got %v", helperCmake, result)
+		}
+	})
+
+	t.Run("directory path no siblings", func(t *testing.T) {
+		command := "ls " + subDir
+		result := ExtractCommandReferencedPaths(command, root)
+		if len(result) != 1 || result[0] != subDir {
+			t.Errorf("expected [%s], got %v", subDir, result)
+		}
+	})
+
+	t.Run("path embedded in flag", func(t *testing.T) {
+		command := "gcc -DCONFIG_PATH=" + configTxt + " test.c"
+		result := ExtractCommandReferencedPaths(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[configTxt] {
+			t.Errorf("expected %s in result, got %v", configTxt, result)
+		}
+	})
+
+	t.Run("nonexistent path ignored", func(t *testing.T) {
+		command := "gcc " + filepath.Join(root, "nonexistent", "file.c")
+		result := ExtractCommandReferencedPaths(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected no paths for nonexistent file, got %v", result)
+		}
+	})
+
+	t.Run("deduplicates paths", func(t *testing.T) {
+		command := "cmake -P " + buildCmake + " -P " + buildCmake
+		result := ExtractCommandReferencedPaths(command, root)
+		seen := make(map[string]int)
+		for _, p := range result {
+			seen[p]++
+		}
+		for p, count := range seen {
+			if count > 1 {
+				t.Errorf("path %s appeared %d times", p, count)
+			}
+		}
+	})
+}

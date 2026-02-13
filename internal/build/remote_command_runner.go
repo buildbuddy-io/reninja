@@ -3,9 +3,12 @@ package build
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -140,51 +143,126 @@ func (r *RemoteCommandRunner) CanRunMore() int {
 }
 
 func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, error) {
-	args := []string{"sh", "-c", edge.EvaluateCommand(false)}
+	command := edge.EvaluateCommand(false)
+	absoluteMode := strings.Contains(command, project_root.Root())
+	args := []string{"sh", "-c", command}
+
+	workingDir := project_root.WorkingDirectory()
 	cmdProto := &repb.Command{
 		Arguments:        args,
-		WorkingDirectory: project_root.WorkingDirectory(),
+		WorkingDirectory: workingDir,
+		Platform:         &repb.Platform{},
 	}
+	//fmt.Printf("workingDir set to %q\n", cmdProto.WorkingDirectory)
+
+	// If the command references absolute paths, set execroot-path so they
+	// resolve correctly on the remote executor.
+	if absoluteMode {
+		cmdProto.Platform.Properties = append(cmdProto.Platform.Properties, &repb.Platform_Property{
+			Name: "execroot-path", Value: project_root.Root(),
+		})
+	}
+
+	if img := remote_flags.ContainerImage(); img != "" {
+		cmdProto.Platform.Properties = append(cmdProto.Platform.Properties, &repb.Platform_Property{
+			Name: "container-image", Value: "docker://" + img,
+		})
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
 	for _, output := range edge.Outputs() {
-		cmdProto.OutputPaths = append(cmdProto.OutputPaths, output.Path())
+		outputPath := output.Path()
+		if filepath.IsAbs(outputPath) {
+			if rel, err := filepath.Rel(cwd, outputPath); err == nil {
+				outputPath = rel
+			}
+		}
+		cmdProto.OutputPaths = append(cmdProto.OutputPaths, outputPath)
 	}
-	// TODO(tylerw): maybe hash and include other stuff here???
 	return cmdProto, nil
+}
+
+// canComputeInputs returns whether we can statically determine the minimal set
+// of input files for this edge. Build artifacts (inputs produced by other
+// edges) are fully described by the graph and need no discovery. Source files
+// (graph leaves) are only safe when the include scanner can handle them.
+// For unknown source types (scripts, etc.), we upload the entire project root.
+func canComputeInputs(edge *graph.Edge) bool {
+	if !remote_flags.IncludeScanning() {
+		return false
+	}
+	for _, input := range edge.ExplicitInputs() {
+		// Build artifacts are fully described by the graph.
+		if input.InEdge() != nil {
+			continue
+		}
+		// Source file — check if the include scanner can handle it.
+		ext := strings.ToLower(filepath.Ext(input.Path()))
+		switch ext {
+		case ".c", ".cc", ".cpp", ".cxx", ".s":
+			continue
+		default:
+			fmt.Printf("canComputeInputs: unknown source input %s\n", input.Path())
+			return false
+		}
+	}
+	return true
 }
 
 func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*repb.Action, *repb.Command, filetransfer.FlattenedTree, error) {
 	defer span.Record(ctx, "MerkleTreeComputer.buildForSpawn")()
 
-	cmd, err := r.assembleCommand(edge)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+	var files []string
 
-	files := make([]string, 0, len(edge.Inputs()))
-	for _, input := range edge.Inputs() {
-		if _, err := os.Stat(input.Path()); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, nil, nil, err
+	if canComputeInputs(edge) {
+		// Optimized path: compute minimal inputs from declared graph
+		// inputs, include scanning, and command-referenced paths.
+		inputs := edge.NonOrderOnlyInputs()
+		files = make([]string, 0, len(inputs))
+		for _, input := range inputs {
+			files = append(files, input.Path())
 		}
-		files = append(files, input.Path())
-	}
 
-	// If include_scanning is enabled, scan files to detect implicit dependencies
-	// and include them in the input root of the remote build action.
-	if remote_flags.IncludeScanning() {
-		extraFiles, err := r.includeScanner.ScanEdge(files, edge.EvaluateCommand(false))
+		command := edge.EvaluateCommand(false)
+
+		extraFiles, err := r.includeScanner.ScanEdge(files, command)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		files = append(files, extraFiles...)
+
+		// Ensure intermediate directories exist for absolute paths containing
+		// ".." so the kernel can resolve them on the remote executor.
+		files = append(files, include_scanner.ExtractIntermediateDirsFromCommand(command)...)
+
+		// Include files referenced by absolute path in the command that aren't
+		// declared as edge inputs (e.g. cmake scripts, config files).
+		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
+	} else {
+		util.Warningf("uploading all inputs for edge: %s\n", edge.EvaluateCommand(false))
+		// Default path: upload the entire project root since we can't
+		// statically determine which files the command needs.
+		var err error
+		files, err = project_root.WalkFiles()
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	}
 
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
+	cmd, err := r.assembleCommand(edge)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	commandDigest, err := digest.ComputeForMessage(cmd, remote_flags.DigestFunction())
 	if err != nil {
 		return nil, nil, nil, err
@@ -202,14 +280,23 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 	digestFunction := remote_flags.DigestFunction()
 	eg, gctx := errgroup.WithContext(ctx)
 
+	cwd, _ := os.Getwd()
 	for _, outputFile := range actionResult.GetOutputFiles() {
 		eg.Go(func() error {
 			matchedEdgeOutput := false
 			for _, output := range edge.Outputs() {
+				edgePath := output.Path()
 				// Generally edges have few outputs, so this is fine.
-				if output.Path() == outputFile.GetPath() {
+				if edgePath == outputFile.GetPath() {
 					matchedEdgeOutput = true
 					break
+				}
+				// Handle absolute edge paths that were made relative to CWD for REAPI.
+				if filepath.IsAbs(edgePath) {
+					if rel, err := filepath.Rel(cwd, edgePath); err == nil && rel == outputFile.GetPath() {
+						matchedEdgeOutput = true
+						break
+					}
 				}
 			}
 			if !matchedEdgeOutput {
@@ -365,6 +452,10 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 		rsp, err := runActionRemotely()
 		if err != nil {
 			edgeState.finishedResult <- makeFailureResult(err)
+			return
+		}
+		if rsp.Err != nil {
+			edgeState.finishedResult <- makeFailureResult(rsp.Err)
 			return
 		}
 		result, err := r.fetchOutputsAndResult(ctx, rsp.ExecuteResponse.GetResult(), edge)

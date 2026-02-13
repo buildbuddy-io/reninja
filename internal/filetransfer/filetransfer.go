@@ -1,6 +1,7 @@
 package filetransfer
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"maps"
@@ -131,8 +132,8 @@ func cleanPaths(dirty []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	root := project_root.Root()
 
+	root := project_root.Root()
 	cleanedFiles := make([]string, len(dirty))
 	for i, dirtyPath := range dirty {
 		absPath := dirtyPath
@@ -192,7 +193,7 @@ func expandTree(cleanedFiles []string) []string {
 	// Ensure the working directory and all its parents exist in the tree.
 	// REAPI requires working_directory to be present in the input root.
 	wd := project_root.WorkingDirectory()
-	if wd != "." {
+	if wd != "." && wd != "" {
 		for wd != "." && wd != "" {
 			paths[wd] = struct{}{}
 			wd = filepath.Dir(wd)
@@ -219,6 +220,7 @@ func (u Uploader) HashDirectoryTree(files []string) (*repb.Digest, FlattenedTree
 	if err != nil {
 		return nil, nil, err
 	}
+
 	return rootDirectoryDigest, visited, nil
 }
 
@@ -274,13 +276,13 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 		rest = pathsToUpload[1:]
 	}
 
-	projRoot := project_root.Root()
+	diskRoot := project_root.Root()
 	for i, path := range rest {
 		if filepath.Dir(path) != root {
 			continue
 		}
 		name := filepath.Base(path)
-		diskPath := filepath.Join(projRoot, path)
+		diskPath := filepath.Join(diskRoot, path)
 		entry, err := os.Lstat(diskPath) // NB: Lstat.
 		if err != nil {
 			return nil, nil, err
@@ -323,6 +325,32 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 				Target: target,
 			})
 			// Symlinks don't need to be uploaded separately; they're part of the Directory proto
+		}
+	}
+
+	// Workaround: some REAPI servers (e.g. BuildBuddy) skip empty
+	// directories during GetTree, which causes working_directory validation
+	// to fail. If this directory is empty and lies on the working directory
+	// path, inject a small synthetic ".reninja" file so the directory proto
+	// is non-empty and the server processes it.
+	if len(dir.Files) == 0 && len(dir.Directories) == 0 && len(dir.Symlinks) == 0 {
+		wd := project_root.WorkingDirectory()
+		if wd != "" && wd != "." && (root == wd || strings.HasPrefix(wd, root+"/")) {
+			content := []byte("reninja")
+			fd, err := digest.Compute(bytes.NewReader(content), digestFunction)
+			if err != nil {
+				return nil, nil, err
+			}
+			dir.Files = append(dir.Files, &repb.FileNode{
+				Name:   ".reninja",
+				Digest: fd,
+			})
+			visited = append(visited, &UploadableNode{
+				Digest: fd,
+				ReadFn: func() (io.ReadSeekCloser, error) {
+					return cachetools.NewBytesReadSeekCloser(content), nil
+				},
+			})
 		}
 	}
 

@@ -211,3 +211,119 @@ func isScannable(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	return scannableExtensions[ext]
 }
+
+// ExtractCommandReferencedPaths finds absolute paths in the command string
+// that reference existing files or directories under the given root. These
+// paths may not be declared as edge inputs but need to exist on the remote
+// executor for the command to succeed (e.g. cmake scripts, data files).
+//
+// For regular files, sibling files in the same directory are also included
+// since commands often reference files that depend on neighbors (e.g. cmake
+// scripts that include() other modules from the same directory).
+func ExtractCommandReferencedPaths(command, root string) []string {
+	var paths []string
+	seen := make(map[string]struct{})
+
+	addPath := func(path string) {
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	siblingDirsSeen := make(map[string]struct{})
+
+	for _, token := range strings.Fields(command) {
+		// Find the project root anywhere in the token to handle flags
+		// like -DFOO=/project/root/path or -P /project/root/path.
+		idx := strings.Index(token, root)
+		if idx < 0 {
+			continue
+		}
+		path := token[idx:]
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		// Only include paths that exist on disk to avoid adding output
+		// paths that haven't been created yet.
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+
+		addPath(path)
+
+		// For regular files, also include sibling files in the same
+		// directory. Commands often depend on neighboring files that
+		// aren't listed in the command (e.g. cmake include() modules).
+		if info.Mode().IsRegular() {
+			dir := filepath.Dir(path)
+			if _, ok := siblingDirsSeen[dir]; ok {
+				continue
+			}
+			siblingDirsSeen[dir] = struct{}{}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					addPath(filepath.Join(dir, entry.Name()))
+				}
+			}
+		}
+	}
+
+	return paths
+}
+
+// ExtractIntermediateDirsFromCommand finds absolute paths containing ".."
+// in a command string and returns the directory prefixes that the kernel
+// would need to traverse to resolve the ".." components. These directories
+// must exist in the remote input tree for path resolution to succeed.
+func ExtractIntermediateDirsFromCommand(command string) []string {
+	var dirs []string
+	seen := make(map[string]struct{})
+
+	for _, token := range strings.Fields(command) {
+		path := token
+		// Strip common compiler flag prefixes to extract the path.
+		for _, prefix := range []string{"-I", "-L"} {
+			if strings.HasPrefix(token, prefix) && len(token) > len(prefix) {
+				path = token[len(prefix):]
+				break
+			}
+		}
+
+		if !filepath.IsAbs(path) || !strings.Contains(path, "..") {
+			continue
+		}
+
+		// Walk path components, collecting directories before each ".."
+		// that the kernel must enter during path resolution.
+		parts := strings.Split(path, "/")
+		var stack []string
+		for _, part := range parts {
+			if part == "" || part == "." {
+				continue
+			}
+			if part == ".." {
+				if len(stack) > 0 {
+					dir := "/" + strings.Join(stack, "/")
+					if _, ok := seen[dir]; !ok {
+						seen[dir] = struct{}{}
+						dirs = append(dirs, dir)
+					}
+					stack = stack[:len(stack)-1]
+				}
+				continue
+			}
+			stack = append(stack, part)
+		}
+	}
+
+	return dirs
+}

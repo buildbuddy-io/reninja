@@ -716,7 +716,7 @@ func (ul *BatchCASUploader) flushCurrentBatch() error {
 			return err
 		}
 		for i, fileResponse := range rsp.GetResponses() {
-			if fileResponse.GetStatus().GetCode() == int32(gcodes.DataLoss) && i < len(req.GetRequests()) {
+			if fileResponse.GetStatus().GetCode() == int32(gcodes.InvalidArgument) && i < len(req.GetRequests()) {
 				// If there is a hash mismatch, re-hash the uncompressed payload
 				// to check whether a concurrent mutation occurred after we
 				// computed the original digest.
@@ -731,7 +731,8 @@ func (ul *BatchCASUploader) flushCurrentBatch() error {
 				}
 			}
 			if fileResponse.GetStatus().GetCode() != int32(gcodes.OK) {
-				return gstatus.Error(gcodes.Code(fileResponse.GetStatus().GetCode()), fmt.Sprintf("Error uploading file: %v", fileResponse.GetDigest()))
+				err := gstatus.ErrorProto(fileResponse.GetStatus())
+				return statuserr.WrapError(err, fmt.Sprintf("Error uploading file: %v", fileResponse.GetDigest()))
 			}
 		}
 		return nil
