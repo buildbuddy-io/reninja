@@ -103,6 +103,37 @@ func WalkFiles() ([]string, error) {
 	return files, nil
 }
 
+// WalkFilesExcluding is like WalkFiles but also skips any file whose absolute
+// path appears in the exclude set. This is used to avoid uploading output files
+// that may be rewritten by concurrently-active edges.
+func WalkFilesExcluding(exclude map[string]struct{}) ([]string, error) {
+	root := Root()
+	var files []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if skipEntry(d.Name(), d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if _, ok := exclude[path]; ok {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
 // WorkingDirectory returns the relative path from the project root to the
 // current working directory. This is used as Command.WorkingDirectory in REAPI.
 func WorkingDirectory() string {

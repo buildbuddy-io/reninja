@@ -142,6 +142,30 @@ func (r *RemoteCommandRunner) CanRunMore() int {
 	return capacity
 }
 
+// activeOutputPaths returns the set of absolute output paths from all
+// currently-active edges. On incremental builds, stale outputs from a previous
+// build exist on disk and would be included in a full-tree walk. If an active
+// edge's fetchOutputsAndResult rewrites one of these files between the hash and
+// upload phases, the server detects a digest mismatch. Excluding these paths
+// from the walk prevents that race.
+func (r *RemoteCommandRunner) activeOutputPaths() map[string]struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	outputs := make(map[string]struct{})
+	for _, edgeState := range r.activeEdges {
+		for _, output := range edgeState.edge.Outputs() {
+			p := output.Path()
+			if !filepath.IsAbs(p) {
+				if abs, err := filepath.Abs(p); err == nil {
+					p = abs
+				}
+			}
+			outputs[p] = struct{}{}
+		}
+	}
+	return outputs
+}
+
 func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 	command := edge.EvaluateCommand(false)
 	absoluteMode := strings.Contains(command, project_root.Root())
@@ -186,13 +210,34 @@ func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, 
 	return cmdProto, nil
 }
 
+// knownInputsMnemonics lists action mnemonics for which we can statically
+// determine all required inputs (declared deps + include scanning for
+// compilers, declared deps only for linkers/archivers). Commands not in
+// this set may reference undeclared files and require the full project tree.
+var knownInputsMnemonics = map[string]bool{
+	// Compilers — inputs discovered via include scanning.
+	"CXX_COMPILER": true,
+	"C_COMPILER":   true,
+	"ASM_COMPILER": true,
+	// Linkers/archivers — declared inputs are sufficient.
+	"CXX_STATIC_LIBRARY_LINKER":  true,
+	"CXX_EXECUTABLE_LINKER":      true,
+	"CXX_SHARED_LIBRARY_LINKER":  true,
+	"C_STATIC_LIBRARY_LINKER":    true,
+	"C_EXECUTABLE_LINKER":        true,
+	"C_SHARED_LIBRARY_LINKER":    true,
+	"CXX_SHARED_MODULE_LINKER":   true,
+	"C_SHARED_MODULE_LINKER":     true,
+}
+
 // canComputeInputs returns whether we can statically determine the minimal set
-// of input files for this edge. Build artifacts (inputs produced by other
-// edges) are fully described by the graph and need no discovery. Source files
-// (graph leaves) are only safe when the include scanner can handle them.
-// For unknown source types (scripts, etc.), we upload the entire project root.
+// of input files for this edge. Only edges with a known mnemonic are trusted;
+// unknown commands (custom scripts, etc.) fall back to uploading the full tree.
 func canComputeInputs(edge *graph.Edge) bool {
 	if !remote_flags.IncludeScanning() {
+		return false
+	}
+	if !knownInputsMnemonics[edge.ActionMnemonic()] {
 		return false
 	}
 	for _, input := range edge.ExplicitInputs() {
@@ -243,11 +288,11 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		// declared as edge inputs (e.g. cmake scripts, config files).
 		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
 	} else {
-		util.Warningf("uploading all inputs for edge: %s\n", edge.EvaluateCommand(false))
+		//util.Warningf("uploading all inputs for edge: %s\n", edge.EvaluateCommand(false))
 		// Default path: upload the entire project root since we can't
 		// statically determine which files the command needs.
 		var err error
-		files, err = project_root.WalkFiles()
+		files, err = project_root.WalkFilesExcluding(r.activeOutputPaths())
 		if err != nil {
 			return nil, nil, nil, err
 		}

@@ -270,7 +270,7 @@ func ExtractCommandReferencedPaths(command, root string) []string {
 				continue
 			}
 			for _, entry := range entries {
-				if !entry.IsDir() {
+				if !entry.IsDir() && !strings.HasPrefix(entry.Name(), ".ninja_") {
 					addPath(filepath.Join(dir, entry.Name()))
 				}
 			}
