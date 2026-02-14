@@ -38,7 +38,6 @@ type UploadableNode struct {
 	// Directory is non-nil only for directory nodes.
 	// Used to build the Tree proto after traversal.
 	Directory *repb.Directory
-
 }
 
 var (

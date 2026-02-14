@@ -482,4 +482,123 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("quoted path strips trailing quote", func(t *testing.T) {
+		// Simulates -Wl,--version-script,"/root/path/LTO.exports"
+		// where strings.Fields keeps the quotes as part of the token.
+		command := `-Wl,--version-script,"` + configTxt + `"`
+		result := ExtractCommandReferencedPaths(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[configTxt] {
+			t.Errorf("expected %s in result (trailing quote should be stripped), got %v", configTxt, result)
+		}
+	})
+}
+
+func TestExtractSearchDirectoryContents(t *testing.T) {
+	root := t.TempDir()
+
+	// Create directory structure:
+	//   root/inc/a.h
+	//   root/inc/b.h
+	//   root/inc/sub/c.h
+	//   root/lib/libfoo.a
+	//   root/outside_file.txt  (not in any -I/-L dir)
+	incDir := filepath.Join(root, "inc")
+	incSubDir := filepath.Join(root, "inc", "sub")
+	libDir := filepath.Join(root, "lib")
+	os.MkdirAll(incSubDir, 0755)
+	os.MkdirAll(libDir, 0755)
+
+	aH := filepath.Join(incDir, "a.h")
+	bH := filepath.Join(incDir, "b.h")
+	cH := filepath.Join(incSubDir, "c.h")
+	libFoo := filepath.Join(libDir, "libfoo.a")
+	outside := filepath.Join(root, "outside_file.txt")
+
+	os.WriteFile(aH, []byte(""), 0644)
+	os.WriteFile(bH, []byte(""), 0644)
+	os.WriteFile(cH, []byte(""), 0644)
+	os.WriteFile(libFoo, []byte(""), 0644)
+	os.WriteFile(outside, []byte(""), 0644)
+
+	t.Run("collects files from -I directory", func(t *testing.T) {
+		command := "gcc -I" + incDir + " -o test test.c"
+		result := ExtractSearchDirectoryContents(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[aH] || !resultSet[bH] {
+			t.Errorf("expected a.h and b.h, got %v", result)
+		}
+		if !resultSet[cH] {
+			t.Errorf("expected recursive sub/c.h, got %v", result)
+		}
+		if resultSet[outside] {
+			t.Errorf("should not include files outside search dirs, got %v", result)
+		}
+	})
+
+	t.Run("collects files from -L directory", func(t *testing.T) {
+		command := "ld -L" + libDir + " -lfoo"
+		result := ExtractSearchDirectoryContents(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[libFoo] {
+			t.Errorf("expected libfoo.a from -L dir, got %v", result)
+		}
+	})
+
+	t.Run("space-separated -I flag", func(t *testing.T) {
+		command := "gcc -I " + incDir + " test.c"
+		result := ExtractSearchDirectoryContents(command, root)
+		found := false
+		for _, p := range result {
+			if p == aH {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected a.h from space-separated -I, got %v", result)
+		}
+	})
+
+	t.Run("ignores directories outside root", func(t *testing.T) {
+		command := "gcc -I/usr/include -I" + incDir + " test.c"
+		result := ExtractSearchDirectoryContents(command, root)
+		for _, p := range result {
+			if !filepath.HasPrefix(p, root) {
+				t.Errorf("got path outside root: %s", p)
+			}
+		}
+	})
+
+	t.Run("deduplicates directories", func(t *testing.T) {
+		command := "gcc -I" + incDir + " -I" + incDir + " test.c"
+		result := ExtractSearchDirectoryContents(command, root)
+		seen := make(map[string]int)
+		for _, p := range result {
+			seen[p]++
+		}
+		for p, count := range seen {
+			if count > 1 {
+				t.Errorf("path %s appeared %d times", p, count)
+			}
+		}
+	})
+
+	t.Run("no search directories", func(t *testing.T) {
+		command := "gcc -o test test.c"
+		result := ExtractSearchDirectoryContents(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected no files, got %v", result)
+		}
+	})
 }

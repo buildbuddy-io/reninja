@@ -220,14 +220,14 @@ var knownInputsMnemonics = map[string]bool{
 	"C_COMPILER":   true,
 	"ASM_COMPILER": true,
 	// Linkers/archivers — declared inputs are sufficient.
-	"CXX_STATIC_LIBRARY_LINKER":  true,
-	"CXX_EXECUTABLE_LINKER":      true,
-	"CXX_SHARED_LIBRARY_LINKER":  true,
-	"C_STATIC_LIBRARY_LINKER":    true,
-	"C_EXECUTABLE_LINKER":        true,
-	"C_SHARED_LIBRARY_LINKER":    true,
-	"CXX_SHARED_MODULE_LINKER":   true,
-	"C_SHARED_MODULE_LINKER":     true,
+	"CXX_STATIC_LIBRARY_LINKER": true,
+	"CXX_EXECUTABLE_LINKER":     true,
+	"CXX_SHARED_LIBRARY_LINKER": true,
+	"C_STATIC_LIBRARY_LINKER":   true,
+	"C_EXECUTABLE_LINKER":       true,
+	"C_SHARED_LIBRARY_LINKER":   true,
+	"CXX_SHARED_MODULE_LINKER":  true,
+	"C_SHARED_MODULE_LINKER":    true,
 }
 
 // canComputeInputs returns whether we can statically determine the minimal set
@@ -288,14 +288,19 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		// declared as edge inputs (e.g. cmake scripts, config files).
 		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
 	} else {
-		//util.Warningf("uploading all inputs for edge: %s\n", edge.EvaluateCommand(false))
-		// Default path: upload the entire project root since we can't
-		// statically determine which files the command needs.
-		var err error
-		files, err = project_root.WalkFilesExcluding(r.activeOutputPaths())
-		if err != nil {
-			return nil, nil, nil, err
+		// Estimated path: use declared graph inputs plus paths and
+		// search directories referenced in the command. This covers
+		// the vast majority of commands without uploading the full tree.
+		inputs := edge.NonOrderOnlyInputs()
+		files = make([]string, 0, len(inputs))
+		for _, input := range inputs {
+			files = append(files, input.Path())
 		}
+
+		command := edge.EvaluateCommand(false)
+		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
+		files = append(files, include_scanner.ExtractIntermediateDirsFromCommand(command)...)
+		files = append(files, include_scanner.ExtractSearchDirectoryContents(command, project_root.Root())...)
 	}
 
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)

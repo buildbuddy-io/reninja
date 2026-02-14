@@ -2,6 +2,7 @@ package include_scanner
 
 import (
 	"bufio"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -241,7 +242,7 @@ func ExtractCommandReferencedPaths(command, root string) []string {
 		if idx < 0 {
 			continue
 		}
-		path := token[idx:]
+		path := strings.TrimRight(token[idx:], `"'`)
 
 		if _, ok := seen[path]; ok {
 			continue
@@ -326,4 +327,72 @@ func ExtractIntermediateDirsFromCommand(command string) []string {
 	}
 
 	return dirs
+}
+
+// ExtractSearchDirectoryContents finds -I, -isystem, -iquote, and -L
+// directory flags in the command string and returns all files found
+// recursively within those directories that are under the given root.
+// This allows remote execution of commands that search these directories
+// at runtime (e.g. tablegen processing -I paths for .td includes).
+func ExtractSearchDirectoryContents(command, root string) []string {
+	args, err := shlex.Split(command)
+	if err != nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var dirs []string
+
+	addDir := func(dir string) {
+		if !filepath.IsAbs(dir) {
+			abs, err := filepath.Abs(dir)
+			if err != nil {
+				return
+			}
+			dir = abs
+		}
+		if !strings.HasPrefix(dir, root+"/") && dir != root {
+			return
+		}
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			return
+		}
+		dirs = append(dirs, dir)
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-I" || arg == "-iquote" || arg == "-isystem" || arg == "-L":
+			if i+1 < len(args) {
+				i++
+				addDir(args[i])
+			}
+		case strings.HasPrefix(arg, "-I"):
+			addDir(strings.TrimPrefix(arg, "-I"))
+		case strings.HasPrefix(arg, "-L"):
+			addDir(strings.TrimPrefix(arg, "-L"))
+		}
+	}
+
+	var files []string
+	for _, dir := range dirs {
+		filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			files = append(files, path)
+			return nil
+		})
+	}
+
+	return files
 }
