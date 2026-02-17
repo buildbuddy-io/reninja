@@ -536,11 +536,6 @@ func ExtractCdRelativePaths(command, root string) []string {
 		if token == "&&" || token == "||" || token == "|" || token == ";" || token == "cd" {
 			continue
 		}
-		// Must look like a file path (contains a path separator or extension).
-		if !strings.Contains(token, "/") && !strings.Contains(token, ".") {
-			continue
-		}
-
 		path := strings.TrimRight(token, ";&|\"'")
 		resolved := filepath.Clean(filepath.Join(cdTarget, path))
 
