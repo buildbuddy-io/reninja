@@ -15,6 +15,7 @@ var (
 
 	besBackend         = flag.String("bes_backend", "remote.buildbuddy.io", "BES backend target, like remote.buildbuddy.io")
 	remoteCache        = flag.String("remote_cache", "remote.buildbuddy.io", "Remote cache target, like remote.buildbuddy.io")
+	remoteExecutor     = flag.String("remote_executor", "remote.buildbuddy.io", "Remote execution target, like remote.buildbuddy.io")
 	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
 	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
@@ -35,6 +36,10 @@ func BESBackend() string {
 
 func RemoteCache() string {
 	return *remoteCache
+}
+
+func RemoteExecutor() string {
+	return *remoteExecutor
 }
 
 func ResultsURL() string {
