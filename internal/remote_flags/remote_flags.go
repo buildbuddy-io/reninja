@@ -15,9 +15,11 @@ var (
 
 	besBackend         = flag.String("bes_backend", "remote.buildbuddy.io", "BES backend target, like remote.buildbuddy.io")
 	remoteCache        = flag.String("remote_cache", "remote.buildbuddy.io", "Remote cache target, like remote.buildbuddy.io")
+	remoteExecutor     = flag.String("remote_executor", "remote.buildbuddy.io", "Remote execution target, like remote.buildbuddy.io")
 	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
 	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
+	projectRoot        = flag.String("project_root", "", "Project root directory for remote execution. Auto-detected from .gclient/.git if not set.")
 	digestFunction     = flag.String("digest_function", "BLAKE3", "If set, use this digest function for uploads.")
 )
 
@@ -37,6 +39,10 @@ func RemoteCache() string {
 	return *remoteCache
 }
 
+func RemoteExecutor() string {
+	return *remoteExecutor
+}
+
 func ResultsURL() string {
 	return *resultsURL
 }
@@ -47,6 +53,10 @@ func InvocationID() string {
 
 func RemoteInstanceName() string {
 	return *remoteInstanceName
+}
+
+func ProjectRoot() string {
+	return *projectRoot
 }
 
 func BytestreamURIPrefix() string {
