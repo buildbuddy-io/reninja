@@ -2,10 +2,12 @@ package include_scanner
 
 import (
 	"bufio"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/shlex"
@@ -395,4 +397,271 @@ func ExtractSearchDirectoryContents(command, root string) []string {
 	}
 
 	return files
+}
+
+// ExtractRelativeDotDotContents finds relative paths containing ".." components
+// in a command string, resolves them to absolute paths, and returns all files
+// within resolved directories (or the resolved file and its siblings for
+// regular files). This handles commands like "cd ../../tools/icu" that
+// reference directories outside the build output tree but still within the
+// project root. Sibling files are included for regular files because scripts
+// commonly import neighboring modules (e.g. Python's import of pdl.py from
+// check_protocol_compatibility.py).
+func ExtractRelativeDotDotContents(command, root string) []string {
+	var files []string
+	seen := make(map[string]struct{})
+	siblingDirsSeen := make(map[string]struct{})
+
+	addFile := func(path string) {
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		files = append(files, path)
+	}
+
+	for _, token := range strings.Fields(command) {
+		if filepath.IsAbs(token) || !strings.Contains(token, "..") {
+			continue
+		}
+
+		// Strip common flag prefixes to extract the path.
+		path := token
+		for _, prefix := range []string{"-I", "-L"} {
+			if strings.HasPrefix(token, prefix) && len(token) > len(prefix) {
+				path = token[len(prefix):]
+				break
+			}
+		}
+		// Strip trailing shell operators and quotes.
+		path = strings.TrimRight(path, ";&|\"'")
+
+		if !strings.Contains(path, "..") {
+			continue
+		}
+
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			continue
+		}
+
+		// Must be under project root.
+		if !strings.HasPrefix(abs, root+"/") && abs != root {
+			continue
+		}
+
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+
+		info, err := os.Stat(abs)
+		if err != nil {
+			continue
+		}
+
+		if info.IsDir() {
+			filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return nil
+				}
+				addFile(p)
+				return nil
+			})
+		} else {
+			addFile(abs)
+			// Include sibling files in the same directory — scripts often
+			// depend on neighboring modules (e.g. Python imports).
+			dir := filepath.Dir(abs)
+			if _, ok := siblingDirsSeen[dir]; !ok {
+				siblingDirsSeen[dir] = struct{}{}
+				entries, err := os.ReadDir(dir)
+				if err == nil {
+					for _, entry := range entries {
+						if !entry.IsDir() {
+							addFile(filepath.Join(dir, entry.Name()))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return files
+}
+
+// ExtractCdRelativePaths handles commands that start with "cd <dir> &&" by
+// resolving relative path-like tokens against the cd target directory. This
+// covers commands like "cd /project/root && python3 scripts/foo.py args..."
+// where the script path is relative to the cd target, not to the build
+// directory. Sibling files are included for regular files because scripts
+// commonly import neighboring modules (e.g. Python imports).
+func ExtractCdRelativePaths(command, root string) []string {
+	// Find the cd target directory.
+	fields := strings.Fields(command)
+	var cdTarget string
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == "cd" {
+			cdTarget = strings.TrimRight(fields[i+1], ";&|\"'")
+			break
+		}
+	}
+	if cdTarget == "" || !filepath.IsAbs(cdTarget) {
+		return nil
+	}
+	if !strings.HasPrefix(cdTarget, root+"/") && cdTarget != root {
+		return nil
+	}
+
+	var files []string
+	seen := make(map[string]struct{})
+	siblingDirsSeen := make(map[string]struct{})
+
+	addFile := func(path string) {
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		files = append(files, path)
+	}
+
+	for _, token := range fields {
+		// Skip absolute paths (handled by ExtractCommandReferencedPaths).
+		if filepath.IsAbs(token) {
+			continue
+		}
+		// Skip flags and shell operators.
+		if strings.HasPrefix(token, "-") {
+			continue
+		}
+		if token == "&&" || token == "||" || token == "|" || token == ";" || token == "cd" {
+			continue
+		}
+		// Must look like a file path (contains a path separator or extension).
+		if !strings.Contains(token, "/") && !strings.Contains(token, ".") {
+			continue
+		}
+
+		path := strings.TrimRight(token, ";&|\"'")
+		resolved := filepath.Clean(filepath.Join(cdTarget, path))
+
+		if !strings.HasPrefix(resolved, root+"/") && resolved != root {
+			continue
+		}
+
+		info, err := os.Stat(resolved)
+		if err != nil {
+			continue
+		}
+
+		if info.IsDir() {
+			filepath.WalkDir(resolved, func(p string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return nil
+				}
+				addFile(p)
+				return nil
+			})
+		} else {
+			addFile(resolved)
+			// Include sibling files — scripts often import neighboring modules.
+			dir := filepath.Dir(resolved)
+			if _, ok := siblingDirsSeen[dir]; !ok {
+				siblingDirsSeen[dir] = struct{}{}
+				entries, err := os.ReadDir(dir)
+				if err == nil {
+					for _, entry := range entries {
+						if !entry.IsDir() {
+							addFile(filepath.Join(dir, entry.Name()))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return files
+}
+
+// ExtractThinArchiveMembers checks if the given file is a GNU thin archive
+// and returns the resolved paths of its members. Thin archives store
+// references to .o files by path rather than embedding them, so those files
+// must be included as additional inputs for remote execution. Returns nil
+// if the file is not a thin archive or cannot be parsed.
+func ExtractThinArchiveMembers(archivePath string) []string {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	// Thin archives start with "!<thin>\n".
+	magic := make([]byte, 8)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return nil
+	}
+	if string(magic) != "!<thin>\n" {
+		// Not a thin archive (regular archive or other file); no members to extract.
+		return nil
+	}
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil
+	}
+
+	archiveDir := filepath.Dir(archivePath)
+	var extNames string
+	var members []string
+
+	pos := 0
+	for pos+60 <= len(data) {
+		hdr := data[pos : pos+60]
+		name := strings.TrimRight(string(hdr[0:16]), " ")
+		sizeStr := strings.TrimSpace(string(hdr[48:58]))
+		size, err := strconv.ParseInt(sizeStr, 10, 64)
+		if err != nil {
+			break
+		}
+		pos += 60
+
+		// "/" is the symbol table, "//" is the extended filename table.
+		// Both have actual data stored in the archive even for thin archives.
+		if name == "/" || name == "//" {
+			if name == "//" && pos+int(size) <= len(data) {
+				extNames = string(data[pos : pos+int(size)])
+			}
+			pos += int(size)
+			if pos%2 != 0 {
+				pos++
+			}
+			continue
+		}
+
+		// Regular member: no data follows in a thin archive.
+		var memberName string
+		if strings.HasPrefix(name, "/") {
+			// Extended name reference: /offset
+			offset, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(name[1:], "/")))
+			if err == nil && offset < len(extNames) {
+				rest := extNames[offset:]
+				if end := strings.Index(rest, "/\n"); end >= 0 {
+					memberName = rest[:end]
+				}
+			}
+		} else {
+			memberName = strings.TrimSuffix(name, "/")
+		}
+
+		if memberName != "" {
+			var resolved string
+			if filepath.IsAbs(memberName) {
+				resolved = memberName
+			} else {
+				resolved = filepath.Clean(filepath.Join(archiveDir, memberName))
+			}
+			members = append(members, resolved)
+		}
+	}
+
+	return members
 }

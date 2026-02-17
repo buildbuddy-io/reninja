@@ -32,7 +32,7 @@ func initializeClients() {
 		if remote_flags.RemoteExecutor() == "" {
 			return
 		}
-		conn, err := grpc_client.DialSimple(context.TODO(), remote_flags.RemoteExecutor())
+		conn, err := grpc_client.DialSimpleWithPoolSize(context.TODO(), remote_flags.RemoteExecutor(), 10)
 		if err != nil {
 			util.Errorf("error dialing remote execution service: %s", err)
 			return

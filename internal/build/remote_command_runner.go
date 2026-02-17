@@ -230,6 +230,24 @@ var knownInputsMnemonics = map[string]bool{
 	"C_SHARED_MODULE_LINKER":    true,
 }
 
+// hasCompleteDeclaredInputs returns true when the build graph has fully
+// declared all dependencies for this edge, so we can skip include scanning
+// and heuristic input discovery. This requires a known mnemonic (compiler/
+// linker) AND all-relative explicit inputs. Custom actions (Python scripts,
+// etc.) often have undeclared implicit dependencies and must use the
+// heuristic path.
+func hasCompleteDeclaredInputs(edge *graph.Edge) bool {
+	if !knownInputsMnemonics[edge.ActionMnemonic()] {
+		return false
+	}
+	for _, input := range edge.ExplicitInputs() {
+		if filepath.IsAbs(input.Path()) {
+			return false
+		}
+	}
+	return true
+}
+
 // canComputeInputs returns whether we can statically determine the minimal set
 // of input files for this edge. Only edges with a known mnemonic are trusted;
 // unknown commands (custom scripts, etc.) fall back to uploading the full tree.
@@ -263,7 +281,24 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 
 	var files []string
 
-	if canComputeInputs(edge) {
+	if hasCompleteDeclaredInputs(edge) {
+		// Declared-inputs path: the build graph has complete deps.
+		// Use only declared inputs — no include scanning, no heuristics.
+		inputs := edge.NonOrderOnlyInputs()
+		files = make([]string, 0, len(inputs))
+		for _, input := range inputs {
+			if e := input.InEdge(); e != nil && e.IsPhony() {
+				continue
+			}
+			files = append(files, input.Path())
+		}
+
+		// Also include files referenced by absolute path in the command
+		// that aren't declared as edge inputs (e.g. linker version scripts
+		// specified via --version-script that CMake doesn't declare as deps).
+		command := edge.EvaluateCommand(false)
+		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
+	} else if canComputeInputs(edge) {
 		// Optimized path: compute minimal inputs from declared graph
 		// inputs, include scanning, and command-referenced paths.
 		inputs := edge.NonOrderOnlyInputs()
@@ -298,10 +333,47 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		}
 
 		command := edge.EvaluateCommand(false)
+
+		// Run include scanning on source files to discover headers.
+		// This is best-effort — we still fall back to the broader
+		// heuristics below for non-source inputs.
+		extraFiles, err := r.includeScanner.ScanEdge(files, command)
+		if err == nil {
+			files = append(files, extraFiles...)
+		}
+
 		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
 		files = append(files, include_scanner.ExtractIntermediateDirsFromCommand(command)...)
 		files = append(files, include_scanner.ExtractSearchDirectoryContents(command, project_root.Root())...)
+		files = append(files, include_scanner.ExtractRelativeDotDotContents(command, project_root.Root())...)
+		files = append(files, include_scanner.ExtractCdRelativePaths(command, project_root.Root())...)
 	}
+
+	// Resolve thin archive members: thin archives reference .o files by
+	// path rather than embedding them. Those files must be uploaded too.
+	for _, f := range files {
+		if strings.HasSuffix(f, ".a") {
+			files = append(files, include_scanner.ExtractThinArchiveMembers(f)...)
+		}
+	}
+
+	// Exclude outputs of concurrently-active edges. On incremental builds,
+	// stale outputs from a previous build exist on disk and may be picked up
+	// by heuristic input discovery (e.g. sibling files in a directory walk).
+	// If a concurrent edge rewrites one of these files between the hash and
+	// upload phases, the server detects a digest mismatch. Filtering them
+	// out prevents that race.
+	activeOutputs := r.activeOutputPaths()
+	files = slices.DeleteFunc(files, func(f string) bool {
+		p := f
+		if !filepath.IsAbs(p) {
+			if abs, err := filepath.Abs(p); err == nil {
+				p = abs
+			}
+		}
+		_, excluded := activeOutputs[p]
+		return excluded
+	})
 
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {

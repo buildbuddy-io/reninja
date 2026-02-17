@@ -51,7 +51,7 @@ func initializeClients() {
 		if remote_flags.RemoteCache() == "" {
 			return
 		}
-		conn, err := grpc_client.DialSimple(context.TODO(), remote_flags.RemoteCache())
+		conn, err := grpc_client.DialSimpleWithPoolSize(context.TODO(), remote_flags.RemoteCache(), 10)
 		if err != nil {
 			util.Errorf("error dialing remote cache: %s", err)
 			return

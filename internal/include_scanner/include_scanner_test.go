@@ -1,10 +1,12 @@
 package include_scanner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -215,6 +217,87 @@ func TestScanEdgeTransitive(t *testing.T) {
 	}
 	if len(extra) != 3 {
 		t.Errorf("expected 3 extra files, got %d: %v", len(extra), extra)
+	}
+}
+
+func TestScanEdgeGeneratedIncFile(t *testing.T) {
+	// Reproduce the LLVM scenario: source file includes a chain of headers
+	// from the source include dir, and the last header includes a generated
+	// .inc file from the build include dir.
+	//
+	// Directory structure (mimics LLVM out-of-tree build):
+	//   project/llvm/examples/IRTransforms/SimplifyCFG.cpp
+	//   project/llvm/include/llvm/Passes/PassBuilder.h
+	//   project/llvm/include/llvm/Analysis/CGSCCPassManager.h
+	//   project/llvm/include/llvm/Analysis/LazyCallGraph.h
+	//   project/llvm/include/llvm/Analysis/TargetLibraryInfo.h
+	//   project/build-rbe/include/llvm/Analysis/TargetLibraryInfo.inc  (generated)
+	//
+	// CWD is set to project/build-rbe (the build directory).
+	// Source file is passed as absolute path.
+	// -I flags use absolute paths.
+	dir := t.TempDir()
+
+	// Source tree
+	srcExampleDir := filepath.Join(dir, "llvm", "examples", "IRTransforms")
+	srcIncDir := filepath.Join(dir, "llvm", "include")
+	os.MkdirAll(srcExampleDir, 0755)
+	os.MkdirAll(filepath.Join(srcIncDir, "llvm", "Passes"), 0755)
+	os.MkdirAll(filepath.Join(srcIncDir, "llvm", "Analysis"), 0755)
+
+	// Build tree
+	buildDir := filepath.Join(dir, "build-rbe")
+	buildIncDir := filepath.Join(buildDir, "include")
+	os.MkdirAll(filepath.Join(buildIncDir, "llvm", "Analysis"), 0755)
+
+	simplify := filepath.Join(srcExampleDir, "SimplifyCFG.cpp")
+	passBuilder := filepath.Join(srcIncDir, "llvm", "Passes", "PassBuilder.h")
+	cgscc := filepath.Join(srcIncDir, "llvm", "Analysis", "CGSCCPassManager.h")
+	lazyCallGraph := filepath.Join(srcIncDir, "llvm", "Analysis", "LazyCallGraph.h")
+	targetLibInfo := filepath.Join(srcIncDir, "llvm", "Analysis", "TargetLibraryInfo.h")
+	targetLibInc := filepath.Join(buildIncDir, "llvm", "Analysis", "TargetLibraryInfo.inc")
+
+	os.WriteFile(simplify, []byte(`#include "llvm/Passes/PassBuilder.h"`), 0644)
+	os.WriteFile(passBuilder, []byte(`#include "llvm/Analysis/CGSCCPassManager.h"`), 0644)
+	os.WriteFile(cgscc, []byte(`#include "llvm/Analysis/LazyCallGraph.h"`), 0644)
+	os.WriteFile(lazyCallGraph, []byte(`#include "llvm/Analysis/TargetLibraryInfo.h"`), 0644)
+	os.WriteFile(targetLibInfo, []byte(`#include "llvm/Analysis/TargetLibraryInfo.inc"`), 0644)
+	os.WriteFile(targetLibInc, []byte("// generated tablegen output\n"), 0644)
+
+	// Change to build directory (like a real LLVM build)
+	origDir, _ := os.Getwd()
+	os.Chdir(buildDir)
+	defer os.Chdir(origDir)
+
+	s := New()
+	// Command uses absolute paths (like CMake out-of-tree builds)
+	command := fmt.Sprintf("/usr/bin/c++ -I%s -I%s -c %s",
+		filepath.Join(buildDir, "include"), srcIncDir, simplify)
+	extra, err := s.ScanEdge([]string{simplify}, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := make(map[string]bool)
+	for _, f := range extra {
+		abs, _ := filepath.Abs(f)
+		found[abs] = true
+	}
+
+	for _, want := range []struct {
+		path string
+		desc string
+	}{
+		{passBuilder, "PassBuilder.h"},
+		{cgscc, "CGSCCPassManager.h"},
+		{lazyCallGraph, "LazyCallGraph.h"},
+		{targetLibInfo, "TargetLibraryInfo.h"},
+		{targetLibInc, "TargetLibraryInfo.inc (generated)"},
+	} {
+		abs, _ := filepath.Abs(want.path)
+		if !found[abs] {
+			t.Errorf("missing %s (%s), got extra=%v", want.desc, want.path, extra)
+		}
 	}
 }
 
@@ -599,6 +682,367 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 		result := ExtractSearchDirectoryContents(command, root)
 		if len(result) != 0 {
 			t.Errorf("expected no files, got %v", result)
+		}
+	})
+}
+
+// buildThinArchive constructs a minimal GNU thin archive in memory.
+// memberNames are stored in an extended name table (// entry) and
+// referenced from each member header via /offset format.
+func buildThinArchive(memberNames []string) []byte {
+	var buf []byte
+	buf = append(buf, "!<thin>\n"...)
+
+	// Build the extended name table: each name terminated by "/\n".
+	var extBuf []byte
+	offsets := make([]int, len(memberNames))
+	for i, name := range memberNames {
+		offsets[i] = len(extBuf)
+		extBuf = append(extBuf, name...)
+		extBuf = append(extBuf, "/\n"...)
+	}
+
+	// Write the "//" header for the extended name table.
+	buf = append(buf, arHeader("//", len(extBuf))...)
+	buf = append(buf, extBuf...)
+	if len(buf)%2 != 0 {
+		buf = append(buf, '\n')
+	}
+
+	// Write a member header for each file (no data follows in thin archives).
+	for i := range memberNames {
+		name := fmt.Sprintf("/%d", offsets[i])
+		buf = append(buf, arHeader(name, 0)...)
+	}
+
+	return buf
+}
+
+// arHeader builds a 60-byte AR header. The name field is 16 bytes
+// (right-padded with spaces), matching real GNU ar behavior.
+func arHeader(name string, size int) []byte {
+	// AR header: name/16 | mtime/12 | uid/6 | gid/6 | mode/8 | size/10 | magic/2
+	hdr := make([]byte, 60)
+	for i := range hdr {
+		hdr[i] = ' '
+	}
+	copy(hdr[0:], name)
+	// Pad remaining name field with spaces (already done by fill).
+	sizeStr := fmt.Sprintf("%d", size)
+	copy(hdr[48:], sizeStr)
+	hdr[58] = '`'
+	hdr[59] = '\n'
+	return hdr
+}
+
+func TestExtractThinArchiveMembers(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("not a thin archive", func(t *testing.T) {
+		path := filepath.Join(dir, "regular.a")
+		os.WriteFile(path, []byte("!<arch>\nnot thin"), 0644)
+		members := ExtractThinArchiveMembers(path)
+		if members != nil {
+			t.Errorf("expected nil for regular archive, got %v", members)
+		}
+	})
+
+	t.Run("nonexistent file", func(t *testing.T) {
+		members := ExtractThinArchiveMembers(filepath.Join(dir, "nope.a"))
+		if members != nil {
+			t.Errorf("expected nil for nonexistent file, got %v", members)
+		}
+	})
+
+	t.Run("parses members with extended names", func(t *testing.T) {
+		names := []string{
+			"../../deps/icu/source/common/foo.o",
+			"../../deps/icu/source/common/bar.o",
+			"short.o",
+		}
+		archivePath := filepath.Join(dir, "libtest.a")
+		os.WriteFile(archivePath, buildThinArchive(names), 0644)
+
+		members := ExtractThinArchiveMembers(archivePath)
+		if len(members) != len(names) {
+			t.Fatalf("expected %d members, got %d: %v", len(names), len(members), members)
+		}
+		for i, m := range members {
+			expected := filepath.Clean(filepath.Join(dir, names[i]))
+			if m != expected {
+				t.Errorf("member[%d] = %q, want %q", i, m, expected)
+			}
+		}
+	})
+
+	t.Run("handles space-padded offset fields", func(t *testing.T) {
+		// Regression test: AR header name field is 16 bytes wide.
+		// For extended name references like "/1406", the field becomes
+		// "/1406          /" (offset + spaces + trailing slash).
+		// The parser must TrimSpace the offset to avoid Atoi failures.
+		names := []string{
+			strings.Repeat("a", 200) + ".o", // long name forces large offset
+			"b.o",
+		}
+		archivePath := filepath.Join(dir, "libpadded.a")
+		os.WriteFile(archivePath, buildThinArchive(names), 0644)
+
+		members := ExtractThinArchiveMembers(archivePath)
+		if len(members) != 2 {
+			t.Fatalf("expected 2 members, got %d: %v", len(members), members)
+		}
+	})
+
+	t.Run("absolute member paths", func(t *testing.T) {
+		absPath := "/absolute/path/to/foo.o"
+		archivePath := filepath.Join(dir, "libabs.a")
+		os.WriteFile(archivePath, buildThinArchive([]string{absPath}), 0644)
+
+		members := ExtractThinArchiveMembers(archivePath)
+		if len(members) != 1 || members[0] != absPath {
+			t.Errorf("expected [%s], got %v", absPath, members)
+		}
+	})
+}
+
+func TestExtractRelativeDotDotContents(t *testing.T) {
+	// Create a project root with some nested directories to simulate
+	// a command like "cd ../../tools/icu" from a build output directory.
+	root := t.TempDir()
+
+	toolsDir := filepath.Join(root, "tools", "icu")
+	os.MkdirAll(toolsDir, 0755)
+	icupkg := filepath.Join(toolsDir, "icupkg.py")
+	icudata := filepath.Join(toolsDir, "icudata.txt")
+	os.WriteFile(icupkg, []byte("#!/usr/bin/env python"), 0644)
+	os.WriteFile(icudata, []byte("data"), 0644)
+
+	// Also create a subdirectory inside icu.
+	subDir := filepath.Join(toolsDir, "sub")
+	os.MkdirAll(subDir, 0755)
+	subFile := filepath.Join(subDir, "nested.txt")
+	os.WriteFile(subFile, []byte("nested"), 0644)
+
+	// Simulate running from root/src/out/Debug (3 levels deep).
+	buildDir := filepath.Join(root, "src", "out", "Debug")
+	os.MkdirAll(buildDir, 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(buildDir)
+	defer os.Chdir(origDir)
+
+	t.Run("cd with relative dotdot resolves directory contents", func(t *testing.T) {
+		command := "cd ../../../tools/icu && python icupkg.py"
+		result := ExtractRelativeDotDotContents(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[icupkg] {
+			t.Errorf("expected %s in result, got %v", icupkg, result)
+		}
+		if !resultSet[icudata] {
+			t.Errorf("expected %s in result, got %v", icudata, result)
+		}
+		if !resultSet[subFile] {
+			t.Errorf("expected nested %s in result, got %v", subFile, result)
+		}
+	})
+
+	t.Run("relative dotdot file path includes siblings", func(t *testing.T) {
+		command := "python ../../../tools/icu/icupkg.py"
+		result := ExtractRelativeDotDotContents(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[icupkg] {
+			t.Errorf("expected %s in result, got %v", icupkg, result)
+		}
+		// Sibling file in the same directory should also be included.
+		if !resultSet[icudata] {
+			t.Errorf("expected sibling %s in result, got %v", icudata, result)
+		}
+	})
+
+	t.Run("file path sibling inclusion for scripts", func(t *testing.T) {
+		// Simulate a Python script that needs sibling modules, like
+		// check_protocol_compatibility.py needing pdl.py.
+		scriptsDir := filepath.Join(root, "deps", "v8", "third_party", "inspector_protocol")
+		os.MkdirAll(scriptsDir, 0755)
+		mainScript := filepath.Join(scriptsDir, "check_protocol_compatibility.py")
+		siblingModule := filepath.Join(scriptsDir, "pdl.py")
+		os.WriteFile(mainScript, []byte("import pdl"), 0644)
+		os.WriteFile(siblingModule, []byte("# pdl module"), 0644)
+
+		command := "cd ../../../tools/v8_gypfiles; python ../../../deps/v8/third_party/inspector_protocol/check_protocol_compatibility.py"
+		result := ExtractRelativeDotDotContents(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[mainScript] {
+			t.Errorf("expected %s in result, got %v", mainScript, result)
+		}
+		if !resultSet[siblingModule] {
+			t.Errorf("expected sibling %s in result, got %v", siblingModule, result)
+		}
+	})
+
+	t.Run("no dotdot paths returns empty", func(t *testing.T) {
+		command := "gcc -o test test.c"
+		result := ExtractRelativeDotDotContents(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected empty, got %v", result)
+		}
+	})
+
+	t.Run("absolute dotdot paths ignored", func(t *testing.T) {
+		command := "gcc -I/some/../path test.c"
+		result := ExtractRelativeDotDotContents(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected empty for absolute paths, got %v", result)
+		}
+	})
+
+	t.Run("dotdot resolving outside root ignored", func(t *testing.T) {
+		command := "cd ../../../../../../../../tmp && ls"
+		result := ExtractRelativeDotDotContents(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected empty for path outside root, got %v", result)
+		}
+	})
+
+	t.Run("strips trailing shell operators", func(t *testing.T) {
+		command := "cd ../../../tools/icu;&& python icupkg.py"
+		result := ExtractRelativeDotDotContents(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[icupkg] {
+			t.Errorf("expected %s after stripping ';', got %v", icupkg, result)
+		}
+	})
+
+	t.Run("flag prefix with dotdot", func(t *testing.T) {
+		command := "gcc -I../../../tools/icu test.c"
+		result := ExtractRelativeDotDotContents(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[icupkg] {
+			t.Errorf("expected files from -I dir, got %v", result)
+		}
+	})
+
+	t.Run("deduplicates paths", func(t *testing.T) {
+		command := "cd ../../../tools/icu && ls ../../../tools/icu"
+		result := ExtractRelativeDotDotContents(command, root)
+		seen := make(map[string]int)
+		for _, p := range result {
+			seen[p]++
+		}
+		for p, count := range seen {
+			if count > 1 {
+				t.Errorf("path %s appeared %d times", p, count)
+			}
+		}
+	})
+}
+
+func TestExtractCdRelativePaths(t *testing.T) {
+	root := t.TempDir()
+
+	// Create directory structure:
+	//   root/scripts/create_repo.py
+	//   root/scripts/helper.py
+	//   root/data/  (directory with files)
+	scriptsDir := filepath.Join(root, "scripts")
+	dataDir := filepath.Join(root, "data")
+	os.MkdirAll(scriptsDir, 0755)
+	os.MkdirAll(dataDir, 0755)
+
+	createRepo := filepath.Join(scriptsDir, "create_repo.py")
+	helperPy := filepath.Join(scriptsDir, "helper.py")
+	dataFile := filepath.Join(dataDir, "config.json")
+	os.WriteFile(createRepo, []byte("#!/usr/bin/env python3"), 0644)
+	os.WriteFile(helperPy, []byte("# helper"), 0644)
+	os.WriteFile(dataFile, []byte("{}"), 0644)
+
+	t.Run("resolves relative script path against cd target", func(t *testing.T) {
+		command := "cd " + root + " && /usr/bin/python3 scripts/create_repo.py arg1 arg2"
+		result := ExtractCdRelativePaths(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[createRepo] {
+			t.Errorf("expected %s in result, got %v", createRepo, result)
+		}
+		// Sibling should be included.
+		if !resultSet[helperPy] {
+			t.Errorf("expected sibling %s in result, got %v", helperPy, result)
+		}
+	})
+
+	t.Run("resolves directory path against cd target", func(t *testing.T) {
+		command := "cd " + root + " && ls data"
+		result := ExtractCdRelativePaths(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[dataFile] {
+			t.Errorf("expected %s in result, got %v", dataFile, result)
+		}
+	})
+
+	t.Run("no cd returns empty", func(t *testing.T) {
+		command := "/usr/bin/python3 scripts/create_repo.py"
+		result := ExtractCdRelativePaths(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected empty without cd, got %v", result)
+		}
+	})
+
+	t.Run("cd to non-root directory returns empty", func(t *testing.T) {
+		command := "cd /tmp && python3 scripts/foo.py"
+		result := ExtractCdRelativePaths(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected empty for cd outside root, got %v", result)
+		}
+	})
+
+	t.Run("skips flags and shell operators", func(t *testing.T) {
+		command := "cd " + root + " && /usr/bin/python3 -u scripts/create_repo.py --flag arg1"
+		result := ExtractCdRelativePaths(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[createRepo] {
+			t.Errorf("expected %s in result, got %v", createRepo, result)
+		}
+	})
+
+	t.Run("nonexistent relative path ignored", func(t *testing.T) {
+		command := "cd " + root + " && python3 nonexistent/script.py"
+		result := ExtractCdRelativePaths(command, root)
+		if len(result) != 0 {
+			t.Errorf("expected empty for nonexistent path, got %v", result)
+		}
+	})
+
+	t.Run("strips trailing semicolon from cd target", func(t *testing.T) {
+		command := "cd " + root + "; /usr/bin/python3 scripts/create_repo.py"
+		result := ExtractCdRelativePaths(command, root)
+		resultSet := make(map[string]bool)
+		for _, p := range result {
+			resultSet[p] = true
+		}
+		if !resultSet[createRepo] {
+			t.Errorf("expected %s in result, got %v", createRepo, result)
 		}
 	})
 }
