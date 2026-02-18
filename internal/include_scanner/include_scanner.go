@@ -42,12 +42,14 @@ type Inclusion struct {
 // Scanner parses C/C++ files for #include directives and resolves them
 // to discover transitively included project files.
 type Scanner struct {
+	mu         *sync.Mutex // PROTECTS(parseCache)
 	parseCache map[string][]Inclusion
 }
 
 // New creates a new Scanner with an empty parse cache.
 func New() *Scanner {
 	return &Scanner{
+		mu:         &sync.Mutex{},
 		parseCache: make(map[string][]Inclusion),
 	}
 }
@@ -57,8 +59,8 @@ func New() *Scanner {
 func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error) {
 	splitCommand, err := shlex.Split(command)
 	if err != nil {
-                return nil, err
-        }
+		return nil, err
+	}
 	searchPaths := extractSearchPaths(splitCommand)
 	forceIncludes := extractForceIncludes(splitCommand)
 
@@ -149,7 +151,11 @@ func (s *Scanner) scanFile(filePath string, searchPaths []string, visited map[st
 }
 
 func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
-	if cached, ok := s.parseCache[filePath]; ok {
+	s.mu.Lock()
+	cached, ok := s.parseCache[filePath]
+	s.mu.Unlock()
+
+	if ok {
 		return cached, nil
 	}
 
@@ -186,7 +192,10 @@ func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
 		return nil, err
 	}
 
+	s.mu.Lock()
 	s.parseCache[filePath] = inclusions
+	s.mu.Unlock()
+
 	return inclusions, nil
 }
 
@@ -318,7 +327,7 @@ func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) 
 		}
 		return alreadyExpanded
 	}
-	
+
 	var g errgroup.Group
 	for _, candidate := range candidates {
 		g.Go(func() error {
@@ -330,14 +339,16 @@ func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) 
 			if info.IsDir() {
 				if walkDirs {
 					var walked []string
-					filepath.WalkDir(candidate, func(p string, d fs.DirEntry, err error) error {
+					err = filepath.WalkDir(candidate, func(p string, d fs.DirEntry, err error) error {
 						if err != nil || d.IsDir() {
 							return nil
 						}
 						walked = append(walked, p)
 						return nil
 					})
-
+					if err != nil {
+						return err
+					}
 					for _, p := range walked {
 						addPath(p)
 					}
@@ -365,7 +376,7 @@ func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) 
 				for _, s := range siblings {
 					addPath(s)
 				}
-		}
+			}
 			return nil
 		})
 	}
@@ -390,13 +401,16 @@ func walkDirectoryFiles(candidates []string) []string {
 				return nil
 			}
 			var walked []string
-			filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 				if err != nil || d.IsDir() {
 					return nil
 				}
 				walked = append(walked, path)
 				return nil
 			})
+			if err != nil {
+				return err
+			}
 			mu.Lock()
 			for _, p := range walked {
 				if _, ok := seen[p]; !ok {

@@ -936,7 +936,7 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 		command := "gcc -I/usr/include -I" + incDir + " test.c"
 		result := include_scanner.ExtractSearchDirectoryContents(command, root)
 		for _, p := range result {
-			if !filepath.HasPrefix(p, root) {
+			if !strings.HasPrefix(p, root) {
 				t.Errorf("got path outside root: %s", p)
 			}
 		}
