@@ -29,8 +29,9 @@ type Result struct {
 
 	// Files generated from this Edge and Stdout, only present
 	// for cached or remotely run edges.
-	Outputs      []*repb.OutputFile
-	StdoutDigest *repb.Digest
+	Outputs        []*repb.OutputFile
+	OutputSymlinks []*repb.OutputSymlink
+	StdoutDigest   *repb.Digest
 }
 
 func (r Result) Success() bool {

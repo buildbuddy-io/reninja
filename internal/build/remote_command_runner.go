@@ -445,6 +445,38 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 		})
 	}
 
+	// Handle symlink outputs: prefer v2.1 output_symlinks, fall back to
+	// deprecated output_file_symlinks + output_directory_symlinks.
+	outputSymlinks := actionResult.GetOutputSymlinks()
+	if len(outputSymlinks) == 0 {
+		outputSymlinks = append(actionResult.GetOutputFileSymlinks(), actionResult.GetOutputDirectorySymlinks()...)
+	}
+	for _, symlink := range outputSymlinks {
+		matchedEdgeOutput := false
+		for _, output := range edge.Outputs() {
+			edgePath := output.Path()
+			if edgePath == symlink.GetPath() {
+				matchedEdgeOutput = true
+				break
+			}
+			if filepath.IsAbs(edgePath) {
+				if rel, err := filepath.Rel(cwd, edgePath); err == nil && rel == symlink.GetPath() {
+					matchedEdgeOutput = true
+					break
+				}
+			}
+		}
+		if !matchedEdgeOutput {
+			util.Errorf("ActionResult contained symlink output (%s) not found in edge!", symlink.GetPath())
+			continue
+		}
+		// Remove any existing file/symlink at the path to handle rebuilds.
+		os.Remove(symlink.GetPath())
+		if err := os.Symlink(symlink.GetTarget(), symlink.GetPath()); err != nil {
+			return nil, err
+		}
+	}
+
 	stdout := ""
 	stderr := ""
 
@@ -479,14 +511,15 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 	}
 
 	return &spawn.Result{
-		Status:       exit_status.ExitStatusType(actionResult.GetExitCode()),
-		Output:       stdout + stderr,
-		Edge:         edge,
-		Runner:       remoteCacheRunner,
-		CacheHit:     true,
-		Context:      ctx,
-		Outputs:      actionResult.GetOutputFiles(),
-		StdoutDigest: actionResult.GetStdoutDigest(),
+		Status:         exit_status.ExitStatusType(actionResult.GetExitCode()),
+		Output:         stdout + stderr,
+		Edge:           edge,
+		Runner:         remoteCacheRunner,
+		CacheHit:       true,
+		Context:        ctx,
+		Outputs:        actionResult.GetOutputFiles(),
+		OutputSymlinks: outputSymlinks,
+		StdoutDigest:   actionResult.GetStdoutDigest(),
 	}, nil
 }
 

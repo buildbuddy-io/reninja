@@ -260,6 +260,30 @@ func (r *RemoteCachingCommandRunner) fetchOutputsAndResult(ctx context.Context, 
 		})
 	}
 
+	// Handle symlink outputs: prefer v2.1 output_symlinks, fall back to
+	// deprecated output_file_symlinks + output_directory_symlinks.
+	outputSymlinks := actionResult.GetOutputSymlinks()
+	if len(outputSymlinks) == 0 {
+		outputSymlinks = append(actionResult.GetOutputFileSymlinks(), actionResult.GetOutputDirectorySymlinks()...)
+	}
+	for _, symlink := range outputSymlinks {
+		matchedEdgeOutput := false
+		for _, output := range edge.Outputs() {
+			if output.Path() == symlink.GetPath() {
+				matchedEdgeOutput = true
+				break
+			}
+		}
+		if !matchedEdgeOutput {
+			util.Errorf("ActionResult contained symlink output (%s) not found in edge!", symlink.GetPath())
+			continue
+		}
+		os.Remove(symlink.GetPath())
+		if err := os.Symlink(symlink.GetTarget(), symlink.GetPath()); err != nil {
+			return nil, err
+		}
+	}
+
 	var output string
 	if len(actionResult.StdoutRaw) > 0 {
 		output = string(actionResult.StdoutRaw)
@@ -280,14 +304,15 @@ func (r *RemoteCachingCommandRunner) fetchOutputsAndResult(ctx context.Context, 
 		return nil, err
 	}
 	return &spawn.Result{
-		Status:       exit_status.ExitStatusType(actionResult.GetExitCode()),
-		Output:       output,
-		Edge:         edge,
-		Runner:       remoteCacheRunner,
-		CacheHit:     true,
-		Context:      ctx,
-		Outputs:      actionResult.GetOutputFiles(),
-		StdoutDigest: actionResult.GetStdoutDigest(),
+		Status:         exit_status.ExitStatusType(actionResult.GetExitCode()),
+		Output:         output,
+		Edge:           edge,
+		Runner:         remoteCacheRunner,
+		CacheHit:       true,
+		Context:        ctx,
+		Outputs:        actionResult.GetOutputFiles(),
+		OutputSymlinks: outputSymlinks,
+		StdoutDigest:   actionResult.GetStdoutDigest(),
 	}, nil
 }
 
@@ -382,27 +407,30 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		doneExecutingFn()
 
 		var uploadedOutputs []*repb.OutputFile
+		var uploadedSymlinks []*repb.OutputSymlink
 		var stdoutDigest *repb.Digest
 		if exitCode == exit_status.ExitSuccess {
 			// Upload the outputs (no action result) of this action.
-			outputFiles, stdoutDigest, err := r.uploadEdgeOutputs(ctx, edge, output)
+			outputFiles, outputSymlinks, stdoutDigest, err := r.uploadEdgeOutputs(ctx, edge, output)
 			if err != nil {
 				edgeState.finishedResult <- makeFailureResult(err)
 				return
 			}
 			uploadedOutputs = outputFiles
+			uploadedSymlinks = outputSymlinks
 			stdoutDigest = stdoutDigest
 		}
 
 		edgeState.finishedResult <- &spawn.Result{
-			Edge:         edge,
-			Status:       exitCode,
-			Output:       output,
-			Runner:       localRunner,
-			CacheHit:     false,
-			Context:      ctx,
-			Outputs:      uploadedOutputs,
-			StdoutDigest: stdoutDigest,
+			Edge:           edge,
+			Status:         exitCode,
+			Output:         output,
+			Runner:         localRunner,
+			CacheHit:       false,
+			Context:        ctx,
+			Outputs:        uploadedOutputs,
+			OutputSymlinks: uploadedSymlinks,
+			StdoutDigest:   stdoutDigest,
 		}
 	}()
 
@@ -472,25 +500,37 @@ func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, 
 // uploadEdgeOutputs uploads the outputs of a completed edge to the CAS.
 // It does not upload any action result pointing to these outputs, that
 // should happen seperately.
-func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge *graph.Edge, output string) ([]*repb.OutputFile, *repb.Digest, error) {
+func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge *graph.Edge, output string) ([]*repb.OutputFile, []*repb.OutputSymlink, *repb.Digest, error) {
 	defer span.Record(ctx, "upload outputs")()
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := remote_flags.DigestFunction()
 
 	ul := cachetools.NewBatchCASUploader(ctx, r.uploader, r.uploader, instanceName, digestFunction)
 	outputFiles := make([]*repb.OutputFile, 0, len(edge.Outputs()))
+	var outputSymlinks []*repb.OutputSymlink
 
 	for _, output := range edge.Outputs() {
-		fi, err := os.Stat(output.Path())
+		fi, err := os.Lstat(output.Path())
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, nil, err
+			return nil, nil, nil, err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(output.Path())
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			outputSymlinks = append(outputSymlinks, &repb.OutputSymlink{
+				Path:   output.Path(),
+				Target: target,
+			})
+			continue
 		}
 		d, err := ul.UploadFile(output.Path())
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		outputFiles = append(outputFiles, &repb.OutputFile{
 			Path:         output.Path(),
@@ -502,12 +542,12 @@ func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge
 	// Upload stdout.
 	stdoutDigest, err := ul.UploadBlob([]byte(output))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := ul.Wait(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return outputFiles, stdoutDigest, nil
+	return outputFiles, outputSymlinks, stdoutDigest, nil
 }
 
 func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, result *spawn.Result, depsNodes []*graph.Node) error {
@@ -553,8 +593,9 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 
 	uploadFullActionResult := func(inputs []*graph.Node) error {
 		ar := &repb.ActionResult{
-			ExitCode:    int32(result.Status),
-			OutputFiles: result.Outputs,
+			ExitCode:       int32(result.Status),
+			OutputFiles:    result.Outputs,
+			OutputSymlinks: result.OutputSymlinks,
 		}
 		return setActionResult(inputs, ar)
 	}
