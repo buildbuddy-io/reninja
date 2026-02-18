@@ -46,12 +46,12 @@ var (
 	defaultDownloader *Downloader
 )
 
-func initializeClients() {
+func InitializeClients(maxJobs int) {
 	once.Do(func() {
 		if remote_flags.RemoteCache() == "" {
 			return
 		}
-		conn, err := grpc_client.DialSimpleWithPoolSize(context.TODO(), remote_flags.RemoteCache(), 10)
+		conn, err := grpc_client.DialSimpleWithPoolSize(context.TODO(), remote_flags.RemoteCache(), max(1, maxJobs/100))
 		if err != nil {
 			util.Errorf("error dialing remote cache: %s", err)
 			return
@@ -65,12 +65,12 @@ func initializeClients() {
 }
 
 func DefaultUploader() *Uploader {
-	initializeClients()
+	InitializeClients(100)
 	return defaultUploader
 }
 
 func DefaultDownloader() *Downloader {
-	initializeClients()
+	InitializeClients(100)
 	return defaultDownloader
 }
 
