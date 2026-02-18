@@ -28,8 +28,8 @@ var scannableExtensions = map[string]bool{
 	".s":   true, // assembly (preprocessed via cpp)
 }
 
-var includeRegex = regexp.MustCompile(`^\s*#\s*include\s*["<]([^">]+)[">]`)
-var includeKindRegex = regexp.MustCompile(`^\s*#\s*include\s*(["<])`)
+var includeRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import)\s*["<]([^">]+)[">]`)
+var includeKindRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import)\s*(["<])`)
 
 // Inclusion represents a single #include directive.
 type Inclusion struct {
@@ -54,12 +54,17 @@ func New() *Scanner {
 // and returns the list of additional files not already in inputFiles.
 func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error) {
 	searchPaths := extractSearchPaths(command)
+	forceIncludes := extractForceIncludes(command)
 
 	inputSet := make(map[string]bool, len(inputFiles))
 	for _, f := range inputFiles {
 		abs, err := filepath.Abs(f)
 		if err != nil {
 			abs = f
+		}
+		// Use realpath so that inputSet and visited use the same key space.
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
 		}
 		inputSet[abs] = true
 	}
@@ -79,6 +84,18 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 		}
 	}
 
+	// Scan force-included files (-include flag) as additional starting
+	// points. These are implicitly included before each source file.
+	for _, f := range forceIncludes {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			abs = f
+		}
+		if err := s.scanFile(abs, searchPaths, visited); err != nil {
+			continue
+		}
+	}
+
 	var extra []string
 	for path := range visited {
 		if !inputSet[path] {
@@ -94,10 +111,18 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 }
 
 func (s *Scanner) scanFile(filePath string, searchPaths []string, visited map[string]bool) error {
-	if visited[filePath] {
+	// Use the real path (resolving symlinks) as the visited key to prevent
+	// infinite traversal through symlink cycles. For example, if a/link -> ../b
+	// and b/link -> ../a, following a/link/foo.h and b/link/foo.h would
+	// resolve to the same real files.
+	realPath, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		realPath = filePath
+	}
+	if visited[realPath] {
 		return nil
 	}
-	visited[filePath] = true
+	visited[realPath] = true
 
 	inclusions, err := s.parseIncludes(filePath)
 	if err != nil {
@@ -132,6 +157,13 @@ func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Handle backslash-newline continuations: join lines ending
+		// with '\' before applying the include regex.
+		for strings.HasSuffix(line, "\\") && scanner.Scan() {
+			line = line[:len(line)-1] + scanner.Text()
+		}
+
 		m := includeRegex.FindStringSubmatch(line)
 		if m == nil {
 			continue
@@ -157,34 +189,57 @@ func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
 func resolveInclude(inc Inclusion, includingFileDir string, searchPaths []string) string {
 	// Handle absolute paths directly (e.g. CMake unity builds: #include </abs/path/file.cpp>).
 	if filepath.IsAbs(inc.Path) {
-		if _, err := os.Stat(inc.Path); err == nil {
+		if info, err := os.Stat(inc.Path); err == nil && !info.IsDir() {
 			return inc.Path
 		}
 		return ""
 	}
 	if inc.Quoted {
 		// For quoted includes, check relative to the including file's directory first.
-		candidate := filepath.Join(includingFileDir, inc.Path)
-		if _, err := os.Stat(candidate); err == nil {
-			abs, err := filepath.Abs(candidate)
-			if err == nil {
-				return abs
-			}
-			return candidate
+		if resolved := statIncludeCandidate(includingFileDir, inc.Path); resolved != "" {
+			return resolved
 		}
 	}
 	// Check search paths (both quoted and angle bracket includes).
 	for _, dir := range searchPaths {
-		candidate := filepath.Join(dir, inc.Path)
-		if _, err := os.Stat(candidate); err == nil {
-			abs, err := filepath.Abs(candidate)
-			if err == nil {
-				return abs
-			}
-			return candidate
+		if resolved := statIncludeCandidate(dir, inc.Path); resolved != "" {
+			return resolved
 		}
 	}
 	return ""
+}
+
+// statIncludeCandidate constructs a candidate path from dir and relPath,
+// stats it, and returns the resolved absolute path if it's a regular file.
+// It avoids filepath.Join to preserve ".." components so that the OS can
+// correctly resolve them through symlinks.
+func statIncludeCandidate(dir, relPath string) string {
+	// Use path concatenation instead of filepath.Join when ".." is present,
+	// because filepath.Join calls filepath.Clean which resolves ".."
+	// textually. The OS needs to see the ".." to resolve symlinks correctly:
+	// e.g. "symlink/../foo.h" must follow the symlink first, then go up.
+	var candidate string
+	if strings.Contains(relPath, "..") {
+		candidate = dir + string(filepath.Separator) + relPath
+	} else {
+		candidate = filepath.Join(dir, relPath)
+	}
+
+	info, err := os.Stat(candidate)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+
+	// Resolve to a clean absolute path via EvalSymlinks.
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		return resolved
+	}
+	return abs
 }
 
 // extractSearchPaths parses -I, -iquote, and -isystem flags from a compiler command.
@@ -205,6 +260,24 @@ func extractSearchPaths(command string) []string {
 			}
 		case strings.HasPrefix(arg, "-I"):
 			paths = append(paths, strings.TrimPrefix(arg, "-I"))
+		}
+	}
+	return paths
+}
+
+// extractForceIncludes parses -include flags from a compiler command.
+// These specify files to be force-included before each source file.
+func extractForceIncludes(command string) []string {
+	args, err := shlex.Split(command)
+	if err != nil {
+		return nil
+	}
+
+	var paths []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-include" && i+1 < len(args) {
+			i++
+			paths = append(paths, args[i])
 		}
 	}
 	return paths

@@ -951,6 +951,399 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 	})
 }
 
+// ==========================================
+// Tests inspired by distcc's include_server
+// ==========================================
+
+func TestParseIncludesBackslashContinuation(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "test.c")
+	// Backslash-newline is a line continuation in C preprocessing.
+	// The include directive can be split across lines.
+	content := "#include \\\n\"foo.h\"\n#include \\\n  <bar.h>\nint x;\n"
+	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New()
+	inclusions, err := s.parseIncludes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []Inclusion{
+		{Path: "foo.h", Quoted: true},
+		{Path: "bar.h", Quoted: false},
+	}
+	if len(inclusions) != len(expected) {
+		t.Fatalf("expected %d inclusions, got %d: %+v", len(expected), len(inclusions), inclusions)
+	}
+	for i, inc := range inclusions {
+		if inc.Path != expected[i].Path || inc.Quoted != expected[i].Quoted {
+			t.Errorf("inclusion[%d] = %+v, want %+v", i, inc, expected[i])
+		}
+	}
+}
+
+func TestParseIncludesComputedInclude(t *testing.T) {
+	// Computed includes like #include MACRO should be silently skipped,
+	// not cause a crash or false match.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "test.c")
+	content := `
+#include SOME_MACRO
+#include MACRO(arg)
+#include "real.h"
+#include CONCAT(A, B)
+`
+	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hdr := filepath.Join(dir, "real.h")
+	os.WriteFile(hdr, []byte(""), 0644)
+
+	s := New()
+	inclusions, err := s.parseIncludes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only "real.h" should be matched; computed includes should be skipped.
+	if len(inclusions) != 1 {
+		t.Fatalf("expected 1 inclusion (real.h only), got %d: %+v", len(inclusions), inclusions)
+	}
+	if inclusions[0].Path != "real.h" {
+		t.Errorf("expected real.h, got %s", inclusions[0].Path)
+	}
+}
+
+func TestParseIncludesImport(t *testing.T) {
+	// Objective-C #import should be treated like #include.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "test.m")
+	content := `
+#import "ObjCHeader.h"
+#import <Foundation/Foundation.h>
+#include "regular.h"
+`
+	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New()
+	inclusions, err := s.parseIncludes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []Inclusion{
+		{Path: "ObjCHeader.h", Quoted: true},
+		{Path: "Foundation/Foundation.h", Quoted: false},
+		{Path: "regular.h", Quoted: true},
+	}
+	if len(inclusions) != len(expected) {
+		t.Fatalf("expected %d inclusions, got %d: %+v", len(expected), len(inclusions), inclusions)
+	}
+	for i, inc := range inclusions {
+		if inc.Path != expected[i].Path || inc.Quoted != expected[i].Quoted {
+			t.Errorf("inclusion[%d] = %+v, want %+v", i, inc, expected[i])
+		}
+	}
+}
+
+func TestParseIncludesIncludeNext(t *testing.T) {
+	// GNU extension #include_next is used by glibc and libstdc++.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "test.h")
+	content := `
+#include_next "stdlib.h"
+#include_next <limits.h>
+#include "regular.h"
+`
+	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New()
+	inclusions, err := s.parseIncludes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []Inclusion{
+		{Path: "stdlib.h", Quoted: true},
+		{Path: "limits.h", Quoted: false},
+		{Path: "regular.h", Quoted: true},
+	}
+	if len(inclusions) != len(expected) {
+		t.Fatalf("expected %d inclusions, got %d: %+v", len(expected), len(inclusions), inclusions)
+	}
+	for i, inc := range inclusions {
+		if inc.Path != expected[i].Path || inc.Quoted != expected[i].Quoted {
+			t.Errorf("inclusion[%d] = %+v, want %+v", i, inc, expected[i])
+		}
+	}
+}
+
+func TestParseIncludesMalformed(t *testing.T) {
+	// Malformed directives should not crash or produce garbage.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "test.c")
+	content := `
+#include
+#include <>
+#include ""
+#include <
+#include "
+# include
+#include "valid.h"
+`
+	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New()
+	inclusions, err := s.parseIncludes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only "valid.h" should be matched. Empty/malformed should be skipped.
+	// Note: #include "" technically matches the regex with empty path, but
+	// that's fine since resolution will fail gracefully.
+	validCount := 0
+	for _, inc := range inclusions {
+		if inc.Path == "valid.h" {
+			validCount++
+		}
+	}
+	if validCount != 1 {
+		t.Errorf("expected exactly 1 valid.h inclusion, got %d in %+v", validCount, inclusions)
+	}
+}
+
+func TestParseIncludesTrailingComment(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "test.c")
+	content := `
+#include "foo.h" // this is a comment
+#include <bar.h> /* another comment */
+#include "baz.h"   // trailing
+`
+	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New()
+	inclusions, err := s.parseIncludes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []Inclusion{
+		{Path: "foo.h", Quoted: true},
+		{Path: "bar.h", Quoted: false},
+		{Path: "baz.h", Quoted: true},
+	}
+	if len(inclusions) != len(expected) {
+		t.Fatalf("expected %d inclusions, got %d: %+v", len(expected), len(inclusions), inclusions)
+	}
+	for i, inc := range inclusions {
+		if inc.Path != expected[i].Path || inc.Quoted != expected[i].Quoted {
+			t.Errorf("inclusion[%d] = %+v, want %+v", i, inc, expected[i])
+		}
+	}
+}
+
+func TestResolveIncludeDirectoryNotFile(t *testing.T) {
+	// If an include path resolves to a directory rather than a file,
+	// it should not be treated as a valid include.
+	// Inspired by distcc's test_data/i_am_perhaps_a_directory.h test.
+	dir := t.TempDir()
+
+	// Create a directory named "foo.h" — this is NOT a file.
+	dirAsHeader := filepath.Join(dir, "foo.h")
+	os.MkdirAll(dirAsHeader, 0755)
+
+	inc := Inclusion{Path: "foo.h", Quoted: true}
+	resolved := resolveInclude(inc, dir, nil)
+	if resolved != "" {
+		t.Errorf("expected empty for directory-named-as-header, got %q", resolved)
+	}
+
+	// Also test via search paths.
+	resolved = resolveInclude(inc, "/nonexistent", []string{dir})
+	if resolved != "" {
+		t.Errorf("expected empty for directory-named-as-header via search path, got %q", resolved)
+	}
+}
+
+func TestScanEdgeSymlinkCycle(t *testing.T) {
+	// Create a symlink cycle and verify the scanner terminates.
+	// Inspired by distcc's symlink farm tests.
+	//
+	// Structure:
+	//   dir/a/link -> ../b
+	//   dir/b/link -> ../a
+	//   dir/a/foo.h (includes "link/foo.h")
+	//   dir/b/foo.h (includes "link/foo.h")
+	//   dir/main.c  (includes "a/foo.h")
+	dir := t.TempDir()
+
+	aDir := filepath.Join(dir, "a")
+	bDir := filepath.Join(dir, "b")
+	os.MkdirAll(aDir, 0755)
+	os.MkdirAll(bDir, 0755)
+
+	// Create symlinks: a/link -> ../b, b/link -> ../a
+	os.Symlink("../b", filepath.Join(aDir, "link"))
+	os.Symlink("../a", filepath.Join(bDir, "link"))
+
+	// Create headers that reference each other through symlinks.
+	os.WriteFile(filepath.Join(aDir, "foo.h"), []byte(`#include "link/foo.h"`+"\n"), 0644)
+	os.WriteFile(filepath.Join(bDir, "foo.h"), []byte(`#include "link/foo.h"`+"\n"), 0644)
+
+	// Main file that starts the chain.
+	mainC := filepath.Join(dir, "main.c")
+	os.WriteFile(mainC, []byte(`#include "a/foo.h"`+"\n"), 0644)
+
+	s := New()
+	// This should terminate (not hang) even with symlink cycles.
+	extra, err := s.ScanEdge([]string{mainC}, "gcc -I"+dir+" "+mainC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// We should find at least a/foo.h and b/foo.h.
+	found := make(map[string]bool)
+	for _, f := range extra {
+		abs, _ := filepath.Abs(f)
+		found[abs] = true
+	}
+	aFoo, _ := filepath.Abs(filepath.Join(aDir, "foo.h"))
+	bFoo, _ := filepath.Abs(filepath.Join(bDir, "foo.h"))
+	if !found[aFoo] {
+		t.Errorf("expected to find a/foo.h, got extra=%v", extra)
+	}
+	if !found[bFoo] {
+		t.Errorf("expected to find b/foo.h, got extra=%v", extra)
+	}
+}
+
+func TestScanEdgeDotDotThroughSymlink(t *testing.T) {
+	// Test that #include "symlink/../real.h" works correctly when
+	// the symlink points to a different directory.
+	// Inspired by distcc's test_DotdotInInclude.
+	dir := t.TempDir()
+
+	// Create:
+	//   dir/real/target/  (symlink target directory)
+	//   dir/src/link -> ../real/target
+	//   dir/real/real.h
+	//   dir/src/main.c -> #include "link/../real.h"
+	realDir := filepath.Join(dir, "real", "target")
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(realDir, 0755)
+	os.MkdirAll(srcDir, 0755)
+
+	realH := filepath.Join(dir, "real", "real.h")
+	os.WriteFile(realH, []byte("// real header\n"), 0644)
+
+	// Symlink: src/link -> ../real/target
+	os.Symlink("../real/target", filepath.Join(srcDir, "link"))
+
+	mainC := filepath.Join(srcDir, "main.c")
+	// This include goes through the symlink, then ".." goes up to where
+	// the symlink target resides (real/), not where the symlink is (src/).
+	os.WriteFile(mainC, []byte(`#include "link/../real.h"`+"\n"), 0644)
+
+	s := New()
+	extra, err := s.ScanEdge([]string{mainC}, "gcc "+mainC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The scanner should find real.h through the symlink/../ path.
+	found := false
+	for _, f := range extra {
+		abs, _ := filepath.Abs(f)
+		absReal, _ := filepath.Abs(realH)
+		if abs == absReal {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected to find real.h via symlink/../ path, got extra=%v", extra)
+	}
+}
+
+func TestExtractSearchPathsIncludeFlag(t *testing.T) {
+	// The -include flag force-includes a file before processing.
+	// extractForceIncludes should capture these.
+	tests := []struct {
+		command  string
+		expected []string
+	}{
+		{
+			command:  "gcc -include precompiled.h -c foo.c",
+			expected: []string{"precompiled.h"},
+		},
+		{
+			command:  "g++ -include a.h -include b.h -c foo.c",
+			expected: []string{"a.h", "b.h"},
+		},
+		{
+			command:  "gcc -c foo.c",
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		result := extractForceIncludes(tt.command)
+		if !slices.Equal(result, tt.expected) {
+			t.Errorf("extractForceIncludes(%q) = %v, want %v", tt.command, result, tt.expected)
+		}
+	}
+}
+
+func TestScanEdgeForceInclude(t *testing.T) {
+	// Integration test: -include flag should cause the file to be scanned
+	// and its transitive dependencies discovered.
+	dir := t.TempDir()
+
+	mainC := filepath.Join(dir, "main.c")
+	precomp := filepath.Join(dir, "precompiled.h")
+	dep := filepath.Join(dir, "dep.h")
+
+	os.WriteFile(mainC, []byte("int main() { return 0; }\n"), 0644)
+	os.WriteFile(precomp, []byte(`#include "dep.h"`+"\n"), 0644)
+	os.WriteFile(dep, []byte("// dependency\n"), 0644)
+
+	s := New()
+	command := "gcc -include " + precomp + " -c " + mainC
+	extra, err := s.ScanEdge([]string{mainC}, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := make(map[string]bool)
+	for _, f := range extra {
+		abs, _ := filepath.Abs(f)
+		found[abs] = true
+	}
+
+	absPrecomp, _ := filepath.Abs(precomp)
+	absDep, _ := filepath.Abs(dep)
+	if !found[absPrecomp] {
+		t.Errorf("expected to find precompiled.h from -include flag, got extra=%v", extra)
+	}
+	if !found[absDep] {
+		t.Errorf("expected to find dep.h (transitive from -include), got extra=%v", extra)
+	}
+}
+
 func TestExtractCdRelativePaths(t *testing.T) {
 	root := t.TempDir()
 
