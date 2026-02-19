@@ -78,7 +78,52 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 		inputSet[abs] = true
 	}
 
+	var g errgroup.Group
+	var mu sync.Mutex
 	visited := make(map[string]bool)
+
+	const maxScanDepth = 100
+
+	var scanFile func(filePath string, depth int) error
+	scanFile = func(filePath string, depth int) error {
+		if depth >= maxScanDepth {
+			return statuserr.ResourceExhaustedErrorf("include scan depth exceeded %d at %s", maxScanDepth, filePath)
+		}
+
+		// Use the real path (resolving symlinks) as the visited key to prevent
+		// infinite traversal through symlink cycles. For example, if a/link -> ../b
+		// and b/link -> ../a, following a/link/foo.h and b/link/foo.h would
+		// resolve to the same real files.
+		realPath, err := filepath.EvalSymlinks(filePath)
+		if err != nil {
+			realPath = filePath
+		}
+		mu.Lock()
+		if visited[realPath] {
+			mu.Unlock()
+			return nil
+		}
+		visited[realPath] = true
+		mu.Unlock()
+
+		inclusions, err := s.parseIncludes(filePath)
+		if err != nil {
+			return err
+		}
+
+		dir := filepath.Dir(filePath)
+		for _, inc := range inclusions {
+			resolved := resolveInclude(inc, dir, searchPaths)
+			if resolved == "" {
+				continue
+			}
+			g.Go(func() error {
+				return scanFile(resolved, depth+1)
+			})
+		}
+		return nil
+	}
+
 	for _, f := range inputFiles {
 		if !isScannable(f) {
 			continue
@@ -87,10 +132,9 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 		if err != nil {
 			abs = f
 		}
-		if err := s.scanFile(abs, searchPaths, visited, 0); err != nil {
-			// Don't fail the build if we can't scan a file; just skip it.
-			continue
-		}
+		g.Go(func() error {
+			return scanFile(abs, 0)
+		})
 	}
 
 	// Scan force-included files (-include flag) as additional starting
@@ -100,9 +144,13 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 		if err != nil {
 			abs = f
 		}
-		if err := s.scanFile(abs, searchPaths, visited, 0); err != nil {
-			continue
-		}
+		g.Go(func() error {
+			return scanFile(abs, 0)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	var extra []string
@@ -117,44 +165,6 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 		}
 	}
 	return extra, nil
-}
-
-const maxScanDepth = 100
-
-func (s *Scanner) scanFile(filePath string, searchPaths []string, visited map[string]bool, depth int) error {
-	if depth >= maxScanDepth {
-		return statuserr.ResourceExhaustedErrorf("include scan depth exceeded %d at %s", maxScanDepth, filePath)
-	}
-
-	// Use the real path (resolving symlinks) as the visited key to prevent
-	// infinite traversal through symlink cycles. For example, if a/link -> ../b
-	// and b/link -> ../a, following a/link/foo.h and b/link/foo.h would
-	// resolve to the same real files.
-	realPath, err := filepath.EvalSymlinks(filePath)
-	if err != nil {
-		realPath = filePath
-	}
-	if visited[realPath] {
-		return nil
-	}
-	visited[realPath] = true
-
-	inclusions, err := s.parseIncludes(filePath)
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(filePath)
-	for _, inc := range inclusions {
-		resolved := resolveInclude(inc, dir, searchPaths)
-		if resolved == "" {
-			continue
-		}
-		if err := s.scanFile(resolved, searchPaths, visited, depth+1); err != nil {
-			continue
-		}
-	}
-	return nil
 }
 
 func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
