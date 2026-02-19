@@ -326,9 +326,8 @@ func isScannable(path string) bool {
 //   - Directories: if walkDirs is true, recursively collects all files;
 //     otherwise adds the directory path as-is
 //
-// An optional siblingFilter excludes specific sibling filenames (return true to keep).
 // Results are deduplicated.
-func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) bool) ([]string, error) {
+func expandPaths(candidates []string, walkDirs bool) ([]string, error) {
 	var mu sync.Mutex
 	var paths []string
 	seen := make(map[string]struct{})
@@ -393,7 +392,7 @@ func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) 
 					entries, err := os.ReadDir(dir)
 					if err == nil {
 						for _, entry := range entries {
-							if !entry.IsDir() && (siblingFilter == nil || siblingFilter(entry.Name())) {
+							if !entry.IsDir() {
 								siblings = append(siblings, filepath.Join(dir, entry.Name()))
 							}
 						}
@@ -493,9 +492,7 @@ func extractCommandCandidatePaths(command, root string) []string {
 // scripts that include() other modules from the same directory).
 func ExtractCommandReferencedPaths(command, root string) ([]string, error) {
 	candidates := extractCommandCandidatePaths(command, root)
-	return expandPaths(candidates, false, func(name string) bool {
-		return !strings.HasPrefix(name, ".ninja_")
-	})
+	return expandPaths(candidates, false)
 }
 
 // ExtractIntermediateDirsFromCommand finds absolute paths containing ".."
@@ -644,7 +641,7 @@ func extractRelativeDotDotCandidates(command, root string) []string {
 // check_protocol_compatibility.py).
 func ExtractRelativeDotDotContents(command, root string) ([]string, error) {
 	candidates := extractRelativeDotDotCandidates(command, root)
-	return expandPaths(candidates, true, nil)
+	return expandPaths(candidates, true)
 }
 
 // extractCdRelativeCandidates finds "cd <target>" in the command, then for
@@ -652,11 +649,14 @@ func ExtractRelativeDotDotContents(command, root string) ([]string, error) {
 // target directory. Filters to under root and deduplicates.
 // No filesystem access is performed.
 func extractCdRelativeCandidates(command, root string) []string {
-	fields := strings.Fields(command)
+	fields, err := shlex.Split(command)
+	if err != nil {
+		return nil
+	}
 	var cdTarget string
 	for i := 0; i < len(fields)-1; i++ {
 		if fields[i] == "cd" {
-			cdTarget = strings.TrimRight(fields[i+1], ";&|\"'")
+			cdTarget = strings.TrimRight(fields[i+1], ";&|")
 			break
 		}
 	}
@@ -680,7 +680,7 @@ func extractCdRelativeCandidates(command, root string) []string {
 		if token == "&&" || token == "||" || token == "|" || token == ";" || token == "cd" {
 			continue
 		}
-		path := strings.TrimRight(token, ";&|\"'")
+		path := strings.TrimRight(token, ";&|")
 		resolved := filepath.Clean(filepath.Join(cdTarget, path))
 
 		if !strings.HasPrefix(resolved, root+"/") && resolved != root {
@@ -705,7 +705,7 @@ func extractCdRelativeCandidates(command, root string) []string {
 // commonly import neighboring modules (e.g. Python imports).
 func ExtractCdRelativePaths(command, root string) ([]string, error) {
 	candidates := extractCdRelativeCandidates(command, root)
-	return expandPaths(candidates, true, nil)
+	return expandPaths(candidates, true)
 }
 
 // ExtractThinArchiveMembers checks if the given file is a GNU thin archive
