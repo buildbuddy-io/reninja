@@ -43,8 +43,8 @@ type Inclusion struct {
 // Scanner parses C/C++ files for #include directives and resolves them
 // to discover transitively included project files.
 type Scanner struct {
-	parseGroup singleflight.Group
-	mu         sync.Mutex // PROTECTS(parseCache)
+	parseGroup singleflight.Group // map of filepath (string) to inclusions ([]Inclusion)
+	mu         sync.Mutex         // PROTECTS(parseCache)
 	parseCache map[string][]Inclusion
 }
 
