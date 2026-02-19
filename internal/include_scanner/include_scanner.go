@@ -11,8 +11,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/buildbuddy-io/reninja/internal/statuserr"
 	"github.com/google/shlex"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
 
 // scannableExtensions lists file extensions worth scanning for #include directives.
@@ -30,8 +32,7 @@ var scannableExtensions = map[string]bool{
 	".s":   true, // assembly (preprocessed via cpp)
 }
 
-var includeRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import)\s*["<]([^">]+)[">]`)
-var includeKindRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import)\s*(["<])`)
+var includeRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import)\s*(["<])([^">]+)[">]`)
 
 // Inclusion represents a single #include directive.
 type Inclusion struct {
@@ -42,14 +43,14 @@ type Inclusion struct {
 // Scanner parses C/C++ files for #include directives and resolves them
 // to discover transitively included project files.
 type Scanner struct {
-	mu         *sync.Mutex // PROTECTS(parseCache)
+	parseGroup singleflight.Group
+	mu         sync.Mutex // PROTECTS(parseCache)
 	parseCache map[string][]Inclusion
 }
 
 // New creates a new Scanner with an empty parse cache.
 func New() *Scanner {
 	return &Scanner{
-		mu:         &sync.Mutex{},
 		parseCache: make(map[string][]Inclusion),
 	}
 }
@@ -86,7 +87,7 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 		if err != nil {
 			abs = f
 		}
-		if err := s.scanFile(abs, searchPaths, visited); err != nil {
+		if err := s.scanFile(abs, searchPaths, visited, 0); err != nil {
 			// Don't fail the build if we can't scan a file; just skip it.
 			continue
 		}
@@ -99,7 +100,7 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 		if err != nil {
 			abs = f
 		}
-		if err := s.scanFile(abs, searchPaths, visited); err != nil {
+		if err := s.scanFile(abs, searchPaths, visited, 0); err != nil {
 			continue
 		}
 	}
@@ -118,7 +119,13 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 	return extra, nil
 }
 
-func (s *Scanner) scanFile(filePath string, searchPaths []string, visited map[string]bool) error {
+const maxScanDepth = 100
+
+func (s *Scanner) scanFile(filePath string, searchPaths []string, visited map[string]bool, depth int) error {
+	if depth >= maxScanDepth {
+		return statuserr.ResourceExhaustedErrorf("include scan depth exceeded %d at %s", maxScanDepth, filePath)
+	}
+
 	// Use the real path (resolving symlinks) as the visited key to prevent
 	// infinite traversal through symlink cycles. For example, if a/link -> ../b
 	// and b/link -> ../a, following a/link/foo.h and b/link/foo.h would
@@ -143,7 +150,7 @@ func (s *Scanner) scanFile(filePath string, searchPaths []string, visited map[st
 		if resolved == "" {
 			continue
 		}
-		if err := s.scanFile(resolved, searchPaths, visited); err != nil {
+		if err := s.scanFile(resolved, searchPaths, visited, depth+1); err != nil {
 			continue
 		}
 	}
@@ -154,11 +161,26 @@ func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
 	s.mu.Lock()
 	cached, ok := s.parseCache[filePath]
 	s.mu.Unlock()
-
 	if ok {
 		return cached, nil
 	}
 
+	v, err, _ := s.parseGroup.Do(filePath, func() (interface{}, error) {
+		return s.doParseIncludes(filePath)
+	})
+	if err != nil {
+		return nil, err
+	}
+	inclusions := v.([]Inclusion)
+
+	s.mu.Lock()
+	s.parseCache[filePath] = inclusions
+	s.mu.Unlock()
+
+	return inclusions, nil
+}
+
+func (s *Scanner) doParseIncludes(filePath string) ([]Inclusion, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -180,21 +202,14 @@ func (s *Scanner) parseIncludes(filePath string) ([]Inclusion, error) {
 		if m == nil {
 			continue
 		}
-		includePath := m[1]
-		km := includeKindRegex.FindStringSubmatch(line)
-		quoted := km != nil && km[1] == `"`
 		inclusions = append(inclusions, Inclusion{
-			Path:   includePath,
-			Quoted: quoted,
+			Path:   m[2],
+			Quoted: m[1] == `"`,
 		})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-
-	s.mu.Lock()
-	s.parseCache[filePath] = inclusions
-	s.mu.Unlock()
 
 	return inclusions, nil
 }
@@ -257,19 +272,22 @@ func statIncludeCandidate(dir, relPath string) string {
 	return abs
 }
 
-// extractSearchPaths parses -I, -iquote, and -isystem flags from a compiler command.
+// extractSearchPaths parses -I, -iquote, -isystem, and -L flags from a
+// compiler/linker command and returns the directory paths they reference.
 func extractSearchPaths(args []string) []string {
 	var paths []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
-		case arg == "-I" || arg == "-iquote" || arg == "-isystem":
+		case arg == "-I" || arg == "-iquote" || arg == "-isystem" || arg == "-L":
 			if i+1 < len(args) {
 				i++
 				paths = append(paths, args[i])
 			}
 		case strings.HasPrefix(arg, "-I"):
 			paths = append(paths, strings.TrimPrefix(arg, "-I"))
+		case strings.HasPrefix(arg, "-L"):
+			paths = append(paths, strings.TrimPrefix(arg, "-L"))
 		}
 	}
 	return paths
@@ -300,7 +318,7 @@ func isScannable(path string) bool {
 //
 // An optional siblingFilter excludes specific sibling filenames (return true to keep).
 // Results are deduplicated.
-func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) bool) []string {
+func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) bool) ([]string, error) {
 	var mu sync.Mutex
 	var paths []string
 	seen := make(map[string]struct{})
@@ -380,15 +398,17 @@ func expandPaths(candidates []string, walkDirs bool, siblingFilter func(string) 
 			return nil
 		})
 	}
-	g.Wait()
+	if err := g.Wait(); err != nil {
+		return paths, err
+	}
 
-	return paths
+	return paths, nil
 }
 
 // walkDirectoryFiles stats each candidate to confirm it's a directory,
 // then recursively walks it collecting all non-directory entries.
 // Results are deduplicated.
-func walkDirectoryFiles(candidates []string) []string {
+func walkDirectoryFiles(candidates []string) ([]string, error) {
 	var mu sync.Mutex
 	var files []string
 	seen := make(map[string]struct{})
@@ -422,9 +442,11 @@ func walkDirectoryFiles(candidates []string) []string {
 			return nil
 		})
 	}
-	g.Wait()
+	if err := g.Wait(); err != nil {
+		return files, err
+	}
 
-	return files
+	return files, nil
 }
 
 // extractCommandCandidatePaths extracts absolute paths from the command string
@@ -459,7 +481,7 @@ func extractCommandCandidatePaths(command, root string) []string {
 // For regular files, sibling files in the same directory are also included
 // since commands often reference files that depend on neighbors (e.g. cmake
 // scripts that include() other modules from the same directory).
-func ExtractCommandReferencedPaths(command, root string) []string {
+func ExtractCommandReferencedPaths(command, root string) ([]string, error) {
 	candidates := extractCommandCandidatePaths(command, root)
 	return expandPaths(candidates, false, func(name string) bool {
 		return !strings.HasPrefix(name, ".ninja_")
@@ -523,40 +545,26 @@ func extractSearchDirectoryCandidates(command, root string) []string {
 		return nil
 	}
 
+	raw := extractSearchPaths(args)
+
 	seen := make(map[string]struct{})
 	var dirs []string
-
-	addDir := func(dir string) {
+	for _, dir := range raw {
 		if !filepath.IsAbs(dir) {
 			abs, err := filepath.Abs(dir)
 			if err != nil {
-				return
+				continue
 			}
 			dir = abs
 		}
 		if !strings.HasPrefix(dir, root+"/") && dir != root {
-			return
+			continue
 		}
 		if _, ok := seen[dir]; ok {
-			return
+			continue
 		}
 		seen[dir] = struct{}{}
 		dirs = append(dirs, dir)
-	}
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "-I" || arg == "-iquote" || arg == "-isystem" || arg == "-L":
-			if i+1 < len(args) {
-				i++
-				addDir(args[i])
-			}
-		case strings.HasPrefix(arg, "-I"):
-			addDir(strings.TrimPrefix(arg, "-I"))
-		case strings.HasPrefix(arg, "-L"):
-			addDir(strings.TrimPrefix(arg, "-L"))
-		}
 	}
 
 	return dirs
@@ -567,7 +575,7 @@ func extractSearchDirectoryCandidates(command, root string) []string {
 // recursively within those directories that are under the given root.
 // This allows remote execution of commands that search these directories
 // at runtime (e.g. tablegen processing -I paths for .td includes).
-func ExtractSearchDirectoryContents(command, root string) []string {
+func ExtractSearchDirectoryContents(command, root string) ([]string, error) {
 	dirs := extractSearchDirectoryCandidates(command, root)
 	return walkDirectoryFiles(dirs)
 }
@@ -624,7 +632,7 @@ func extractRelativeDotDotCandidates(command, root string) []string {
 // project root. Sibling files are included for regular files because scripts
 // commonly import neighboring modules (e.g. Python's import of pdl.py from
 // check_protocol_compatibility.py).
-func ExtractRelativeDotDotContents(command, root string) []string {
+func ExtractRelativeDotDotContents(command, root string) ([]string, error) {
 	candidates := extractRelativeDotDotCandidates(command, root)
 	return expandPaths(candidates, true, nil)
 }
@@ -685,7 +693,7 @@ func extractCdRelativeCandidates(command, root string) []string {
 // where the script path is relative to the cd target, not to the build
 // directory. Sibling files are included for regular files because scripts
 // commonly import neighboring modules (e.g. Python imports).
-func ExtractCdRelativePaths(command, root string) []string {
+func ExtractCdRelativePaths(command, root string) ([]string, error) {
 	candidates := extractCdRelativeCandidates(command, root)
 	return expandPaths(candidates, true, nil)
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/buildbuddy-io/reninja/internal/include_scanner"
+	"github.com/stretchr/testify/require"
 )
 
 func TestScanEdgeIncludePatterns(t *testing.T) {
@@ -25,6 +26,8 @@ func TestScanEdgeIncludePatterns(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "bar", "baz.h"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(dir, "spaced.h"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(dir, "nospace.h"), []byte(""), 0644)
+	// This file exists but should NOT be found (it's behind a // comment).
+	os.WriteFile(filepath.Join(dir, "commented.h"), []byte(""), 0644)
 
 	// Header reachable via angle-bracket include (search path).
 	os.WriteFile(filepath.Join(incDir, "sys", "types.h"), []byte(""), 0644)
@@ -65,6 +68,12 @@ int x = 0; // not an include
 		if !found[abs] {
 			t.Errorf("expected to find %s, got extra=%v", h, extra)
 		}
+	}
+
+	// Verify commented-out include is NOT resolved.
+	absCommented, _ := filepath.Abs(filepath.Join(dir, "commented.h"))
+	if found[absCommented] {
+		t.Errorf("commented-out include should not be resolved, got extra=%v", extra)
 	}
 }
 
@@ -781,7 +790,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 	os.WriteFile(configTxt, []byte("config"), 0644)
 
 	t.Run("no matching paths", func(t *testing.T) {
-		result := include_scanner.ExtractCommandReferencedPaths("gcc -o test test.c", root)
+		result, err := include_scanner.ExtractCommandReferencedPaths("gcc -o test test.c", root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected no paths, got %v", result)
 		}
@@ -789,7 +799,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("file path includes siblings", func(t *testing.T) {
 		command := "cmake -P " + buildCmake
-		result := include_scanner.ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		// Should include build.cmake and helper.cmake (sibling)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
@@ -805,7 +816,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("directory path no siblings", func(t *testing.T) {
 		command := "ls " + subDir
-		result := include_scanner.ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 1 || result[0] != subDir {
 			t.Errorf("expected [%s], got %v", subDir, result)
 		}
@@ -813,7 +825,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("path embedded in flag", func(t *testing.T) {
 		command := "gcc -DCONFIG_PATH=" + configTxt + " test.c"
-		result := include_scanner.ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -825,7 +838,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("nonexistent path ignored", func(t *testing.T) {
 		command := "gcc " + filepath.Join(root, "nonexistent", "file.c")
-		result := include_scanner.ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected no paths for nonexistent file, got %v", result)
 		}
@@ -833,7 +847,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("deduplicates paths", func(t *testing.T) {
 		command := "cmake -P " + buildCmake + " -P " + buildCmake
-		result := include_scanner.ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		seen := make(map[string]int)
 		for _, p := range result {
 			seen[p]++
@@ -849,7 +864,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 		// Simulates -Wl,--version-script,"/root/path/LTO.exports"
 		// where strings.Fields keeps the quotes as part of the token.
 		command := `-Wl,--version-script,"` + configTxt + `"`
-		result := include_scanner.ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -889,7 +905,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("collects files from -I directory", func(t *testing.T) {
 		command := "gcc -I" + incDir + " -o test test.c"
-		result := include_scanner.ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -907,7 +924,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("collects files from -L directory", func(t *testing.T) {
 		command := "ld -L" + libDir + " -lfoo"
-		result := include_scanner.ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -919,7 +937,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("space-separated -I flag", func(t *testing.T) {
 		command := "gcc -I " + incDir + " test.c"
-		result := include_scanner.ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		found := false
 		for _, p := range result {
 			if p == aH {
@@ -934,7 +953,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("ignores directories outside root", func(t *testing.T) {
 		command := "gcc -I/usr/include -I" + incDir + " test.c"
-		result := include_scanner.ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		for _, p := range result {
 			if !strings.HasPrefix(p, root) {
 				t.Errorf("got path outside root: %s", p)
@@ -944,7 +964,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("deduplicates directories", func(t *testing.T) {
 		command := "gcc -I" + incDir + " -I" + incDir + " test.c"
-		result := include_scanner.ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		seen := make(map[string]int)
 		for _, p := range result {
 			seen[p]++
@@ -958,7 +979,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("no search directories", func(t *testing.T) {
 		command := "gcc -o test test.c"
-		result := include_scanner.ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected no files, got %v", result)
 		}
@@ -1111,7 +1133,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("cd with relative dotdot resolves directory contents", func(t *testing.T) {
 		command := "cd ../../../tools/icu && python icupkg.py"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1129,7 +1152,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("relative dotdot file path includes siblings", func(t *testing.T) {
 		command := "python ../../../tools/icu/icupkg.py"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1154,7 +1178,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 		os.WriteFile(siblingModule, []byte("# pdl module"), 0644)
 
 		command := "cd ../../../tools/v8_gypfiles; python ../../../deps/v8/third_party/inspector_protocol/check_protocol_compatibility.py"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1169,7 +1194,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("no dotdot paths returns empty", func(t *testing.T) {
 		command := "gcc -o test test.c"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty, got %v", result)
 		}
@@ -1177,7 +1203,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("absolute dotdot paths ignored", func(t *testing.T) {
 		command := "gcc -I/some/../path test.c"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for absolute paths, got %v", result)
 		}
@@ -1185,7 +1212,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("dotdot resolving outside root ignored", func(t *testing.T) {
 		command := "cd ../../../../../../../../tmp && ls"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for path outside root, got %v", result)
 		}
@@ -1193,7 +1221,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("strips trailing shell operators", func(t *testing.T) {
 		command := "cd ../../../tools/icu;&& python icupkg.py"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1205,7 +1234,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("flag prefix with dotdot", func(t *testing.T) {
 		command := "gcc -I../../../tools/icu test.c"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1217,7 +1247,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("deduplicates paths", func(t *testing.T) {
 		command := "cd ../../../tools/icu && ls ../../../tools/icu"
-		result := include_scanner.ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		seen := make(map[string]int)
 		for _, p := range result {
 			seen[p]++
@@ -1251,7 +1282,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("resolves relative script path against cd target", func(t *testing.T) {
 		command := "cd " + root + " && /usr/bin/python3 scripts/create_repo.py arg1 arg2"
-		result := include_scanner.ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1267,7 +1299,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("resolves directory path against cd target", func(t *testing.T) {
 		command := "cd " + root + " && ls data"
-		result := include_scanner.ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1279,7 +1312,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("no cd returns empty", func(t *testing.T) {
 		command := "/usr/bin/python3 scripts/create_repo.py"
-		result := include_scanner.ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty without cd, got %v", result)
 		}
@@ -1287,7 +1321,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("cd to non-root directory returns empty", func(t *testing.T) {
 		command := "cd /tmp && python3 scripts/foo.py"
-		result := include_scanner.ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for cd outside root, got %v", result)
 		}
@@ -1295,7 +1330,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("skips flags and shell operators", func(t *testing.T) {
 		command := "cd " + root + " && /usr/bin/python3 -u scripts/create_repo.py --flag arg1"
-		result := include_scanner.ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
@@ -1307,7 +1343,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("nonexistent relative path ignored", func(t *testing.T) {
 		command := "cd " + root + " && python3 nonexistent/script.py"
-		result := include_scanner.ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for nonexistent path, got %v", result)
 		}
@@ -1315,7 +1352,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("strips trailing semicolon from cd target", func(t *testing.T) {
 		command := "cd " + root + "; /usr/bin/python3 scripts/create_repo.py"
-		result := include_scanner.ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		resultSet := make(map[string]bool)
 		for _, p := range result {
 			resultSet[p] = true
