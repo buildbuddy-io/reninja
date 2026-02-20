@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/buildbuddy-io/reninja/internal/build_config"
 	"github.com/buildbuddy-io/reninja/internal/cachetools"
@@ -48,6 +48,7 @@ type RemoteCachingCommandRunner struct {
 	jobserver   jobserver.Client
 	mu          *sync.Mutex
 	activeEdges []*activeEdgeState
+	resultCh    chan *spawn.Result
 
 	context    context.Context
 	cancel     context.CancelFunc
@@ -58,10 +59,8 @@ type RemoteCachingCommandRunner struct {
 }
 
 type activeEdgeState struct {
-	edge           *graph.Edge
-	subprocess     *subprocess.Subprocess
-	finishedResult chan *spawn.Result
-	executing      atomic.Bool
+	edge       *graph.Edge
+	subprocess *subprocess.Subprocess
 }
 
 func NewRemoteCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *RemoteCachingCommandRunner {
@@ -81,6 +80,7 @@ func NewRemoteCachingCommandRunner(config *build_config.Config, jobserver jobser
 		jobserver:   jobserver,
 		mu:          &sync.Mutex{},
 		activeEdges: make([]*activeEdgeState, 0),
+		resultCh:    make(chan *spawn.Result, 1000),
 
 		cancel:     cancelFunc,
 		context:    ctx,
@@ -117,14 +117,17 @@ func (r *RemoteCachingCommandRunner) Abort() {
 }
 
 func (r *RemoteCachingCommandRunner) CanRunMore() int {
-	// returns number of running edges + number of uncollected edges.
-	subprocNumber := 0
-	r.mu.Lock()
-	for _, edgeState := range r.activeEdges {
-		if edgeState.executing.Load() {
-			subprocNumber += 1
-		}
+	// If results are waiting to be collected, tell the build loop to
+	// reap them before starting new work.
+	if len(r.resultCh) > 0 {
+		return 0
 	}
+
+	// Count all active edges (running + finished-but-uncollected) against
+	// parallelism so the build loop is forced to reap finished results
+	// before starting new work.
+	r.mu.Lock()
+	subprocNumber := len(r.activeEdges)
 	r.mu.Unlock()
 	capacity := r.config.Parallelism - subprocNumber
 
@@ -328,9 +331,7 @@ func (r *RemoteCachingCommandRunner) assembleAndHashAction(ctx context.Context, 
 
 func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	edgeState := &activeEdgeState{
-		edge:           edge,
-		finishedResult: make(chan *spawn.Result),
-		executing:      atomic.Bool{},
+		edge: edge,
 	}
 	r.mu.Lock()
 	r.activeEdges = append(r.activeEdges, edgeState)
@@ -360,7 +361,7 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		res, lookupErr := r.downloadCompletedEdge(ctx, action, edge)
 
 		if lookupErr == nil && res != nil {
-			edgeState.finishedResult <- res
+			r.resultCh <- res
 			return
 		}
 
@@ -369,13 +370,11 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		subproc, err := subprocess.NewSubprocess(command, edge.UseConsole())
 		if err != nil {
 			doneExecutingFn()
-			edgeState.finishedResult <- makeFailureResult(err)
+			r.resultCh <- makeFailureResult(err)
 			return
 		}
 
-		edgeState.executing.Store(true)
 		exitCode := subproc.Finish()
-		edgeState.executing.Store(false)
 		output := subproc.GetOutput()
 		doneExecutingFn()
 
@@ -385,14 +384,14 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 			// Upload the outputs (no action result) of this action.
 			outputFiles, stdoutDigest, err := r.uploadEdgeOutputs(ctx, edge, output)
 			if err != nil {
-				edgeState.finishedResult <- makeFailureResult(err)
+				r.resultCh <- makeFailureResult(err)
 				return
 			}
 			uploadedOutputs = outputFiles
 			stdoutDigest = stdoutDigest
 		}
 
-		edgeState.finishedResult <- &spawn.Result{
+		r.resultCh <- &spawn.Result{
 			Edge:         edge,
 			Status:       exitCode,
 			Output:       output,
@@ -599,26 +598,21 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 }
 
 func (r *RemoteCachingCommandRunner) WaitForCommand() *spawn.Result {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
 	for {
-		r.mu.Lock()
-		edges := make([]*activeEdgeState, len(r.activeEdges))
-		copy(edges, r.activeEdges)
-		r.mu.Unlock()
-
-		for i := 0; i < len(edges); i++ {
-			select {
-			case res := <-edges[i].finishedResult:
-				r.mu.Lock()
-				r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
-					return n == edges[i]
-				})
-				r.mu.Unlock()
-				return res
-			default:
-				if subprocess.Interrupted() {
-					r.cancel()
-					return nil
-				}
+		select {
+		case res := <-r.resultCh:
+			r.mu.Lock()
+			r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
+				return n.edge == res.Edge
+			})
+			r.mu.Unlock()
+			return res
+		case <-ticker.C:
+			if subprocess.Interrupted() {
+				r.cancel()
+				return nil
 			}
 		}
 	}
