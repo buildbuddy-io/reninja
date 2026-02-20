@@ -50,18 +50,19 @@ func flagOrRoot(cwd string) string {
 	return WalkUpDirsToFindRoot(cwd)
 }
 
+var root = sync.OnceValue(func() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return flagOrRoot(cwd)
+})
+
 // Root returns the absolute path to the project root.
 // It checks --project_root flag first, then auto-detects by walking up from
 // CWD looking for .gclient or .git markers (outermost wins).
 // Falls back to CWD if no marker is found.
 func Root() string {
-	root := sync.OnceValue(func() string {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "."
-		}
-		return flagOrRoot(cwd)
-	})
 	return root()
 }
 
@@ -134,21 +135,22 @@ func WalkFilesExcluding(exclude map[string]struct{}) ([]string, error) {
 	return files, nil
 }
 
+var workingDir = sync.OnceValue(func() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	root := flagOrRoot(cwd)
+	rel, err := filepath.Rel(root, cwd)
+	if err != nil {
+		return "."
+	}
+	return rel
+})
+
 // WorkingDirectory returns the relative path from the project root to the
 // current working directory. This is used as Command.WorkingDirectory in REAPI.
 func WorkingDirectory() string {
-	workingDir := sync.OnceValue(func() string {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "."
-		}
-		root := flagOrRoot(cwd)
-		rel, err := filepath.Rel(root, cwd)
-		if err != nil {
-			return "."
-		}
-		return rel
-	})
 	wd := workingDir()
 	if wd == "." {
 		return ""
