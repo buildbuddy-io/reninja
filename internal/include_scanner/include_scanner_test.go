@@ -46,9 +46,7 @@ int x = 0; // not an include
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc -I"+incDir+" "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {
@@ -94,9 +92,7 @@ func TestScanEdgeAngleBracketResolution(t *testing.T) {
 
 	// Without search path containing lib.h, angle bracket should not resolve.
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	absLib, _ := filepath.Abs(filepath.Join(dir, "lib.h"))
 	for _, f := range extra {
 		abs, _ := filepath.Abs(f)
@@ -109,9 +105,7 @@ func TestScanEdgeAngleBracketResolution(t *testing.T) {
 	os.WriteFile(filepath.Join(incDir, "lib.h"), []byte(""), 0644)
 	s2 := include_scanner.New()
 	extra, err = s2.ScanEdge([]string{src}, "gcc -I"+incDir+" "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	absInc, _ := filepath.Abs(filepath.Join(incDir, "lib.h"))
 	found := false
 	for _, f := range extra {
@@ -154,9 +148,7 @@ func TestScanEdgeTransitive(t *testing.T) {
 	s := include_scanner.New()
 	command := "gcc -I" + incDir + " -o main " + mainC
 	extra, err := s.ScanEdge([]string{mainC}, command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// main.c is the only input. We should discover a.h, sub/b.h, and c.h.
 	sort.Strings(extra)
@@ -225,9 +217,7 @@ func TestScanEdgeGeneratedIncFile(t *testing.T) {
 	command := fmt.Sprintf("/usr/bin/c++ -I%s -I%s -c %s",
 		filepath.Join(buildDir, "include"), srcIncDir, simplify)
 	extra, err := s.ScanEdge([]string{simplify}, command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {
@@ -259,9 +249,7 @@ func TestScanEdgeNoExtras(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(extra) != 0 {
 		t.Errorf("expected no extra files, got %v", extra)
 	}
@@ -274,9 +262,7 @@ func TestScanEdgeSkipsNonScannableFiles(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{obj}, "ld "+obj)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(extra) != 0 {
 		t.Errorf("expected no extra files for .o, got %v", extra)
 	}
@@ -292,9 +278,7 @@ func TestScanEdgeDeduplicate(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src, hdr}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(extra) != 0 {
 		t.Errorf("expected no extra files (header already in inputs), got %v", extra)
 	}
@@ -321,9 +305,7 @@ func TestScanEdgeUnityBuildAbsoluteIncludes(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{ub}, "g++ -o out "+ub)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	sort.Strings(extra)
 	absA, _ := filepath.Abs(cppA)
@@ -352,9 +334,7 @@ func TestScanEdgeBackslashContinuation(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {
@@ -385,9 +365,7 @@ func TestScanEdgeComputedInclude(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Only real.h should be found; computed includes should be skipped.
 	if len(extra) != 1 {
@@ -416,9 +394,7 @@ func TestScanEdgeImportDirective(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {
@@ -451,9 +427,7 @@ func TestScanEdgeIncludeNext(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {
@@ -489,9 +463,7 @@ func TestScanEdgeMalformedDirectives(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	absValid, _ := filepath.Abs(filepath.Join(dir, "valid.h"))
 	validFound := false
@@ -522,9 +494,7 @@ func TestScanEdgeTrailingComment(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {
@@ -553,9 +523,7 @@ func TestScanEdgeDirectoryNamedAsHeader(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {
@@ -604,9 +572,7 @@ func TestScanEdgeSymlinkCycle(t *testing.T) {
 	s := include_scanner.New()
 	// This should terminate (not hang) even with symlink cycles.
 	extra, err := s.ScanEdge([]string{mainC}, "gcc -I"+dir+" "+mainC)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// We should find at least a/foo.h and b/foo.h.
 	found := make(map[string]bool)
@@ -653,9 +619,7 @@ func TestScanEdgeDotDotThroughSymlink(t *testing.T) {
 
 	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{mainC}, "gcc "+mainC)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// The scanner should find real.h through the symlink/../ path.
 	found := false
@@ -688,9 +652,7 @@ func TestScanEdgeForceInclude(t *testing.T) {
 	s := include_scanner.New()
 	command := "gcc -include " + precomp + " -c " + mainC
 	extra, err := s.ScanEdge([]string{mainC}, command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	found := make(map[string]bool)
 	for _, f := range extra {

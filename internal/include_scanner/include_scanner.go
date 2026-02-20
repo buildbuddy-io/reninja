@@ -425,12 +425,8 @@ func walkDirectoryFiles(candidates []string) ([]string, error) {
 	var g errgroup.Group
 	for _, dir := range candidates {
 		g.Go(func() error {
-			info, err := os.Stat(dir)
-			if err != nil || !info.IsDir() {
-				return nil
-			}
 			var walked []string
-			err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 				if err != nil || d.IsDir() {
 					return nil
 				}
