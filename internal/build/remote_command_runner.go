@@ -297,7 +297,11 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		// that aren't declared as edge inputs (e.g. linker version scripts
 		// specified via --version-script that CMake doesn't declare as deps).
 		command := edge.EvaluateCommand(false)
-		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
+		commandReferencedPaths, err := include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		files = append(files, commandReferencedPaths...)
 	} else if canComputeInputs(edge) {
 		// Optimized path: compute minimal inputs from declared graph
 		// inputs, include scanning, and command-referenced paths.
@@ -317,11 +321,16 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 
 		// Ensure intermediate directories exist for absolute paths containing
 		// ".." so the kernel can resolve them on the remote executor.
-		files = append(files, include_scanner.ExtractIntermediateDirsFromCommand(command)...)
+		intermediateDirs := include_scanner.ExtractIntermediateDirsFromCommand(command)
+		files = append(files, intermediateDirs...)
 
 		// Include files referenced by absolute path in the command that aren't
 		// declared as edge inputs (e.g. cmake scripts, config files).
-		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
+		commandReferencedPaths, err := include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		files = append(files, commandReferencedPaths...)
 	} else {
 		// Estimated path: use declared graph inputs plus paths and
 		// search directories referenced in the command. This covers
@@ -342,11 +351,32 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 			files = append(files, extraFiles...)
 		}
 
-		files = append(files, include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())...)
-		files = append(files, include_scanner.ExtractIntermediateDirsFromCommand(command)...)
-		files = append(files, include_scanner.ExtractSearchDirectoryContents(command, project_root.Root())...)
-		files = append(files, include_scanner.ExtractRelativeDotDotContents(command, project_root.Root())...)
-		files = append(files, include_scanner.ExtractCdRelativePaths(command, project_root.Root())...)
+		commandReferencedPaths, err := include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		files = append(files, commandReferencedPaths...)
+
+		intermediateDirs := include_scanner.ExtractIntermediateDirsFromCommand(command)
+		files = append(files, intermediateDirs...)
+
+		searchDirectoryContents, err := include_scanner.ExtractSearchDirectoryContents(command, project_root.Root())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		files = append(files, searchDirectoryContents...)
+
+		relativeDotDotContents, err := include_scanner.ExtractRelativeDotDotContents(command, project_root.Root())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		files = append(files, relativeDotDotContents...)
+
+		cdRelativePaths, err := include_scanner.ExtractCdRelativePaths(command, project_root.Root())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		files = append(files, cdRelativePaths...)
 	}
 
 	// Resolve thin archive members: thin archives reference .o files by
