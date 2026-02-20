@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/buildbuddy-io/reninja/internal/exit_status"
 )
@@ -148,6 +149,10 @@ type Set struct {
 	mu       *sync.Mutex
 	running  []*Subprocess
 	finished []*Subprocess
+	// wakeup is signaled (non-blocking) when any subprocess completes.
+	// This allows DoWork to block efficiently instead of busy-polling,
+	// matching the C++ ppoll/select behavior.
+	wakeup chan struct{}
 }
 
 func NewSet() *Set {
@@ -155,6 +160,7 @@ func NewSet() *Set {
 		mu:       &sync.Mutex{},
 		running:  make([]*Subprocess, 0),
 		finished: make([]*Subprocess, 0),
+		wakeup:   make(chan struct{}, 1),
 	}
 }
 
@@ -166,6 +172,15 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 	s.mu.Lock()
 	s.running = append(s.running, sub)
 	s.mu.Unlock()
+
+	go func() {
+		<-sub.done
+
+		select {
+		case s.wakeup <- struct{}{}:
+		default:
+		}
+	}()
 	return sub, nil
 }
 
@@ -187,21 +202,68 @@ func (s *Set) Finished() []*Subprocess {
 	return f
 }
 
-func (s *Set) DoWork() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// sweepDone moves all completed subprocesses from running to finished.
+// Must be called with s.mu held. Returns true if any were found.
+func (s *Set) sweepDone() bool {
 	nextRunning := s.running[:0]
+	anyDone := false
 	for _, sub := range s.running {
-		if interrupted.Load() {
-			return true
-		}
 		if sub.Done() {
 			s.finished = append(s.finished, sub)
+			anyDone = true
 		} else {
 			nextRunning = append(nextRunning, sub)
 		}
 	}
 	s.running = nextRunning
+	return anyDone
+}
+
+// DoWork blocks until at least one subprocess has completed, then moves
+// all completed subprocesses from running to finished in start order.
+//
+// This matches the C++ ninja behavior where ppoll/select blocks until at
+// least one fd is ready, then iterates all running subprocesses in start
+// order to collect completions. Without blocking, a busy-poll loop can
+// observe goroutine completions one at a time in non-deterministic order,
+// causing flaky output ordering for concurrent builds.
+func (s *Set) DoWork() bool {
+	if interrupted.Load() {
+		return true
+	}
+
+	s.mu.Lock()
+	foundCompletedTask := s.sweepDone()
+	s.mu.Unlock()
+
+	// First sweep: check if any subprocesses are already done.
+	if foundCompletedTask || len(s.running) == 0 {
+		return interrupted.Load()
+	}
+
+	// No subprocess is done yet. Block until one completes or we're
+	// interrupted.
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for woken := false; !woken; {
+		select {
+		case <-s.wakeup:
+			// A subprocess completed.
+			woken = true
+		case <-ticker.C:
+			if interrupted.Load() {
+				return true
+			}
+		}
+	}
+
+	// At least one subprocess is now done. Sweep all completed
+	// subprocesses in start order (the running slice preserves
+	// insertion order).
+	s.mu.Lock()
+	s.sweepDone()
+	s.mu.Unlock()
+
 	return interrupted.Load()
 }
 
