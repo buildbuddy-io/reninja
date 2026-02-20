@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/buildbuddy-io/reninja/internal/build_config"
 	"github.com/buildbuddy-io/reninja/internal/cachetools"
@@ -41,6 +41,7 @@ type RemoteCommandRunner struct {
 	jobserver      jobserver.Client
 	mu             *sync.Mutex
 	activeEdges    []*activeEdgeState
+	resultCh       chan *spawn.Result
 	includeScanner *include_scanner.Scanner
 
 	context    context.Context
@@ -69,6 +70,7 @@ func NewRemoteCommandRunner(config *build_config.Config, jobserver jobserver.Cli
 		jobserver:      jobserver,
 		mu:             &sync.Mutex{},
 		activeEdges:    make([]*activeEdgeState, 0),
+		resultCh:       make(chan *spawn.Result, 10000),
 		includeScanner: include_scanner.New(),
 
 		cancel:     cancelFunc,
@@ -105,14 +107,16 @@ func (r *RemoteCommandRunner) Abort() {
 }
 
 func (r *RemoteCommandRunner) CanRunMore() int {
-	// returns number of running edges + number of uncollected edges.
-	subprocNumber := 0
-	r.mu.Lock()
-	for _, edgeState := range r.activeEdges {
-		if edgeState.executing.Load() {
-			subprocNumber += 1
-		}
+	// If results are waiting to be collected, tell the build loop to
+	// reap them before starting new work.
+	if len(r.resultCh) > 0 {
+		return 0
 	}
+	// Count all active edges (running + finished-but-uncollected) against
+	// parallelism so the build loop is forced to reap finished results
+	// before starting new work.
+	r.mu.Lock()
+	subprocNumber := len(r.activeEdges)
 	r.mu.Unlock()
 	capacity := r.config.Parallelism - subprocNumber
 
@@ -555,9 +559,7 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 
 func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 	edgeState := &activeEdgeState{
-		edge:           edge,
-		finishedResult: make(chan *spawn.Result),
-		executing:      atomic.Bool{},
+		edge: edge,
 	}
 	r.mu.Lock()
 	r.activeEdges = append(r.activeEdges, edgeState)
@@ -620,35 +622,30 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 
 	go func() {
 		if res, err := r.downloadCompletedEdge(ctx, action, edge); err == nil {
-			edgeState.finishedResult <- res
+			r.resultCh <- res
 			return
 		}
 
-		edgeState.executing.Store(true)
-		defer func() {
-			edgeState.executing.Store(false)
-		}()
-
 		if err := uploadActionInputs(); err != nil {
-			edgeState.finishedResult <- makeFailureResult(err)
+			r.resultCh <- makeFailureResult(err)
 			return
 		}
 
 		rsp, err := runActionRemotely()
 		if err != nil {
-			edgeState.finishedResult <- makeFailureResult(err)
+			r.resultCh <- makeFailureResult(err)
 			return
 		}
 		if rsp.Err != nil {
-			edgeState.finishedResult <- makeFailureResult(rsp.Err)
+			r.resultCh <- makeFailureResult(rsp.Err)
 			return
 		}
 		result, err := r.fetchOutputsAndResult(ctx, rsp.ExecuteResponse.GetResult(), edge)
 		if err != nil {
-			edgeState.finishedResult <- makeFailureResult(err)
+			r.resultCh <- makeFailureResult(err)
 			return
 		}
-		edgeState.finishedResult <- result
+		r.resultCh <- result
 	}()
 
 	return nil
@@ -666,26 +663,21 @@ func (r *RemoteCommandRunner) downloadCompletedEdge(ctx context.Context, action 
 }
 
 func (r *RemoteCommandRunner) WaitForCommand() *spawn.Result {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for {
-		r.mu.Lock()
-		edges := make([]*activeEdgeState, len(r.activeEdges))
-		copy(edges, r.activeEdges)
-		r.mu.Unlock()
-
-		for i := 0; i < len(edges); i++ {
-			select {
-			case res := <-edges[i].finishedResult:
-				r.mu.Lock()
-				r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
-					return n == edges[i]
-				})
-				r.mu.Unlock()
-				return res
-			default:
-				if subprocess.Interrupted() {
-					r.cancel()
-					return nil
-				}
+		select {
+		case res := <-r.resultCh:
+			r.mu.Lock()
+			r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
+				return n.edge == res.Edge
+			})
+			r.mu.Unlock()
+			return res
+		case <-ticker.C:
+			if subprocess.Interrupted() {
+				r.cancel()
+				return nil
 			}
 		}
 	}
