@@ -1,4 +1,4 @@
-package include_scanner
+package include_scanner_test
 
 import (
 	"fmt"
@@ -8,171 +8,100 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/buildbuddy-io/reninja/internal/include_scanner"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestParseIncludes(t *testing.T) {
+// absPaths returns a copy of paths with each element resolved to an absolute path.
+func absPaths(t testing.TB, paths []string) []string {
+	t.Helper()
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		var err error
+		out[i], err = filepath.Abs(p)
+		require.NoError(t, err)
+	}
+	return out
+}
+
+func TestScanEdgeIncludePatterns(t *testing.T) {
+	// Exercises various #include syntax patterns through the public API.
 	dir := t.TempDir()
+
+	incDir := filepath.Join(dir, "inc")
+	os.MkdirAll(filepath.Join(incDir, "sys"), 0755)
+	os.MkdirAll(filepath.Join(dir, "bar"), 0755)
+
+	// Headers reachable via quoted include (relative to source dir).
+	os.WriteFile(filepath.Join(dir, "foo.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "bar", "baz.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "spaced.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "nospace.h"), []byte(""), 0644)
+	// This file exists but should NOT be found (it's behind a // comment).
+	os.WriteFile(filepath.Join(dir, "commented.h"), []byte(""), 0644)
+
+	// Header reachable via angle-bracket include (search path).
+	os.WriteFile(filepath.Join(incDir, "sys", "types.h"), []byte(""), 0644)
+
 	src := filepath.Join(dir, "test.c")
 	content := `
 #include "foo.h"
-#include <stdio.h>
+#include <sys/types.h>
 #include "bar/baz.h"
   #  include   "spaced.h"
-#include <sys/types.h>
 // #include "commented.h"
 int x = 0; // not an include
 #include"nospace.h"
 `
-	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
-		t.Fatal(err)
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc -I"+incDir+" "+src)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	for _, h := range []string{
+		filepath.Join(dir, "foo.h"),
+		filepath.Join(incDir, "sys", "types.h"),
+		filepath.Join(dir, "bar", "baz.h"),
+		filepath.Join(dir, "spaced.h"),
+		filepath.Join(dir, "nospace.h"),
+	} {
+		assert.Contains(t, absExtra, h)
 	}
 
-	s := New()
-	inclusions, err := s.parseIncludes(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := []Inclusion{
-		{Path: "foo.h", Quoted: true},
-		{Path: "stdio.h", Quoted: false},
-		{Path: "bar/baz.h", Quoted: true},
-		{Path: "spaced.h", Quoted: true},
-		{Path: "sys/types.h", Quoted: false},
-		{Path: "nospace.h", Quoted: true},
-	}
-
-	if len(inclusions) != len(expected) {
-		t.Fatalf("expected %d inclusions, got %d: %+v", len(expected), len(inclusions), inclusions)
-	}
-	for i, inc := range inclusions {
-		if inc.Path != expected[i].Path || inc.Quoted != expected[i].Quoted {
-			t.Errorf("inclusion[%d] = %+v, want %+v", i, inc, expected[i])
-		}
-	}
+	// Verify commented-out include is NOT resolved.
+	assert.NotContains(t, absExtra, filepath.Join(dir, "commented.h"))
 }
 
-func TestParseIncludesCache(t *testing.T) {
+func TestScanEdgeAngleBracketResolution(t *testing.T) {
+	// Angle-bracket includes should only check search paths,
+	// NOT relative to the including file's directory.
 	dir := t.TempDir()
+	incDir := filepath.Join(dir, "include")
+	os.MkdirAll(incDir, 0755)
+
+	// lib.h exists ONLY next to the source file (not in search path).
+	os.WriteFile(filepath.Join(dir, "lib.h"), []byte(""), 0644)
+
 	src := filepath.Join(dir, "test.c")
-	if err := os.WriteFile(src, []byte(`#include "a.h"`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	os.WriteFile(src, []byte("#include <lib.h>\n"), 0644)
 
-	s := New()
-	inc1, err := s.parseIncludes(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inc2, err := s.parseIncludes(src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := include_scanner.New()
 
-	if len(inc1) != 1 || len(inc2) != 1 {
-		t.Fatalf("expected 1 inclusion each, got %d and %d", len(inc1), len(inc2))
-	}
-	if inc1[0] != inc2[0] {
-		t.Error("cached result differs from first parse")
-	}
-}
+	// Without search path containing lib.h, angle bracket should not resolve.
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+	assert.NotContains(t, absPaths(t, extra), filepath.Join(dir, "lib.h"))
 
-func TestResolveIncludeQuotedRelative(t *testing.T) {
-	dir := t.TempDir()
-	hdr := filepath.Join(dir, "foo.h")
-	if err := os.WriteFile(hdr, []byte(""), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	inc := Inclusion{Path: "foo.h", Quoted: true}
-	resolved := resolveInclude(inc, dir, nil)
-	if resolved == "" {
-		t.Fatal("expected to resolve foo.h relative to including dir")
-	}
-	absHdr, _ := filepath.Abs(hdr)
-	if resolved != absHdr {
-		t.Errorf("resolved = %q, want %q", resolved, absHdr)
-	}
-}
-
-func TestResolveIncludeQuotedSearchPath(t *testing.T) {
-	dir := t.TempDir()
-	incDir := filepath.Join(dir, "include")
-	os.MkdirAll(incDir, 0755)
-	hdr := filepath.Join(incDir, "bar.h")
-	if err := os.WriteFile(hdr, []byte(""), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Not found relative to "otherdir", should be found via search path.
-	otherDir := filepath.Join(dir, "otherdir")
-	os.MkdirAll(otherDir, 0755)
-
-	inc := Inclusion{Path: "bar.h", Quoted: true}
-	resolved := resolveInclude(inc, otherDir, []string{incDir})
-	absHdr, _ := filepath.Abs(hdr)
-	if resolved != absHdr {
-		t.Errorf("resolved = %q, want %q", resolved, absHdr)
-	}
-}
-
-func TestResolveIncludeAngleBracket(t *testing.T) {
-	dir := t.TempDir()
-	incDir := filepath.Join(dir, "include")
-	os.MkdirAll(incDir, 0755)
-	hdr := filepath.Join(incDir, "lib.h")
-	if err := os.WriteFile(hdr, []byte(""), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Angle bracket should NOT check relative to including file dir.
-	inc := Inclusion{Path: "lib.h", Quoted: false}
-	resolved := resolveInclude(inc, dir, []string{incDir})
-	absHdr, _ := filepath.Abs(hdr)
-	if resolved != absHdr {
-		t.Errorf("resolved = %q, want %q", resolved, absHdr)
-	}
-
-	// Without search path, angle bracket should not resolve.
-	resolved = resolveInclude(inc, dir, nil)
-	if resolved != "" {
-		t.Errorf("expected empty, got %q", resolved)
-	}
-}
-
-func TestResolveIncludeNotFound(t *testing.T) {
-	inc := Inclusion{Path: "nonexistent.h", Quoted: true}
-	resolved := resolveInclude(inc, "/tmp", nil)
-	if resolved != "" {
-		t.Errorf("expected empty, got %q", resolved)
-	}
-}
-
-func TestExtractSearchPaths(t *testing.T) {
-	tests := []struct {
-		command  string
-		expected []string
-	}{
-		{
-			command:  "gcc -I/usr/include -Ilocal/include -o test test.c",
-			expected: []string{"/usr/include", "local/include"},
-		},
-		{
-			command:  "g++ -isystem /usr/lib/include -iquote mydir -I inc test.cc",
-			expected: []string{"/usr/lib/include", "mydir", "inc"},
-		},
-		{
-			command:  "gcc test.c",
-			expected: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		result := extractSearchPaths(tt.command)
-		if !slices.Equal(result, tt.expected) {
-			t.Errorf("extractSearchPaths(%q) = %v, want %v", tt.command, result, tt.expected)
-		}
-	}
+	// With search path, it should resolve.
+	os.WriteFile(filepath.Join(incDir, "lib.h"), []byte(""), 0644)
+	s2 := include_scanner.New()
+	extra, err = s2.ScanEdge([]string{src}, "gcc -I"+incDir+" "+src)
+	require.NoError(t, err)
+	assert.Contains(t, absPaths(t, extra), filepath.Join(incDir, "lib.h"))
 }
 
 func TestScanEdgeTransitive(t *testing.T) {
@@ -200,12 +129,10 @@ func TestScanEdgeTransitive(t *testing.T) {
 	os.WriteFile(bH, []byte(`#include "c.h"`), 0644)
 	os.WriteFile(cH, []byte("// no includes\n"), 0644)
 
-	s := New()
+	s := include_scanner.New()
 	command := "gcc -I" + incDir + " -o main " + mainC
 	extra, err := s.ScanEdge([]string{mainC}, command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// main.c is the only input. We should discover a.h, sub/b.h, and c.h.
 	sort.Strings(extra)
@@ -269,35 +196,16 @@ func TestScanEdgeGeneratedIncFile(t *testing.T) {
 	os.Chdir(buildDir)
 	defer os.Chdir(origDir)
 
-	s := New()
+	s := include_scanner.New()
 	// Command uses absolute paths (like CMake out-of-tree builds)
 	command := fmt.Sprintf("/usr/bin/c++ -I%s -I%s -c %s",
 		filepath.Join(buildDir, "include"), srcIncDir, simplify)
 	extra, err := s.ScanEdge([]string{simplify}, command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	found := make(map[string]bool)
-	for _, f := range extra {
-		abs, _ := filepath.Abs(f)
-		found[abs] = true
-	}
-
-	for _, want := range []struct {
-		path string
-		desc string
-	}{
-		{passBuilder, "PassBuilder.h"},
-		{cgscc, "CGSCCPassManager.h"},
-		{lazyCallGraph, "LazyCallGraph.h"},
-		{targetLibInfo, "TargetLibraryInfo.h"},
-		{targetLibInc, "TargetLibraryInfo.inc (generated)"},
-	} {
-		abs, _ := filepath.Abs(want.path)
-		if !found[abs] {
-			t.Errorf("missing %s (%s), got extra=%v", want.desc, want.path, extra)
-		}
+	absExtra := absPaths(t, extra)
+	for _, want := range []string{passBuilder, cgscc, lazyCallGraph, targetLibInfo, targetLibInc} {
+		assert.Contains(t, absExtra, want)
 	}
 }
 
@@ -306,11 +214,9 @@ func TestScanEdgeNoExtras(t *testing.T) {
 	src := filepath.Join(dir, "test.c")
 	os.WriteFile(src, []byte(`#include <stdio.h>`), 0644)
 
-	s := New()
+	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(extra) != 0 {
 		t.Errorf("expected no extra files, got %v", extra)
 	}
@@ -321,11 +227,9 @@ func TestScanEdgeSkipsNonScannableFiles(t *testing.T) {
 	obj := filepath.Join(dir, "test.o")
 	os.WriteFile(obj, []byte("not a c file"), 0644)
 
-	s := New()
+	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{obj}, "ld "+obj)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(extra) != 0 {
 		t.Errorf("expected no extra files for .o, got %v", extra)
 	}
@@ -339,28 +243,11 @@ func TestScanEdgeDeduplicate(t *testing.T) {
 	os.WriteFile(src, []byte(`#include "already.h"`), 0644)
 	os.WriteFile(hdr, []byte(""), 0644)
 
-	s := New()
+	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{src, hdr}, "gcc "+src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(extra) != 0 {
 		t.Errorf("expected no extra files (header already in inputs), got %v", extra)
-	}
-}
-
-func TestResolveIncludeAbsolutePath(t *testing.T) {
-	dir := t.TempDir()
-	hdr := filepath.Join(dir, "abs.h")
-	if err := os.WriteFile(hdr, []byte(""), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Angle-bracket include with an absolute path (e.g. from a CMake unity build).
-	inc := Inclusion{Path: hdr, Quoted: false}
-	resolved := resolveInclude(inc, "/some/other/dir", []string{"/another/dir"})
-	if resolved != hdr {
-		t.Errorf("resolveInclude with absolute path = %q, want %q", resolved, hdr)
 	}
 }
 
@@ -383,41 +270,274 @@ func TestScanEdgeUnityBuildAbsoluteIncludes(t *testing.T) {
 			"#include <"+cppB+">\n",
 	), 0644)
 
-	s := New()
+	s := include_scanner.New()
 	extra, err := s.ScanEdge([]string{ub}, "g++ -o out "+ub)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	sort.Strings(extra)
-	absA, _ := filepath.Abs(cppA)
-	absB, _ := filepath.Abs(cppB)
-	found := make(map[string]bool)
-	for _, f := range extra {
-		abs, _ := filepath.Abs(f)
-		found[abs] = true
-	}
-	if !found[absA] {
-		t.Errorf("expected to discover %s, got extra=%v", cppA, extra)
-	}
-	if !found[absB] {
-		t.Errorf("expected to discover %s, got extra=%v", cppB, extra)
+	absExtra := absPaths(t, extra)
+	assert.Contains(t, absExtra, cppA)
+	assert.Contains(t, absExtra, cppB)
+}
+
+func TestScanEdgeBackslashContinuation(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "foo.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "bar.h"), []byte(""), 0644)
+
+	src := filepath.Join(dir, "test.c")
+	content := "#include \\\n\"foo.h\"\n#include \\\n  \"bar.h\"\nint x;\n"
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	for _, name := range []string{"foo.h", "bar.h"} {
+		assert.Contains(t, absExtra, filepath.Join(dir, name))
 	}
 }
 
-func TestIsScannable(t *testing.T) {
-	scannable := []string{"foo.c", "bar.cc", "baz.cpp", "x.cxx", "a.h", "b.hh", "c.hpp", "d.hxx", "e.inc"}
-	for _, f := range scannable {
-		if !isScannable(f) {
-			t.Errorf("expected %q to be scannable", f)
-		}
+func TestScanEdgeComputedInclude(t *testing.T) {
+	// Computed includes like #include MACRO should be silently skipped.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "real.h"), []byte(""), 0644)
+
+	src := filepath.Join(dir, "test.c")
+	content := `
+#include SOME_MACRO
+#include MACRO(arg)
+#include "real.h"
+#include CONCAT(A, B)
+`
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	// Only real.h should be found; computed includes should be skipped.
+	if len(extra) != 1 {
+		t.Fatalf("expected 1 extra file (real.h only), got %d: %v", len(extra), extra)
 	}
-	notScannable := []string{"foo.o", "bar.a", "baz.so", "x.py", "y.go", "z.txt", "noext"}
-	for _, f := range notScannable {
-		if isScannable(f) {
-			t.Errorf("expected %q to not be scannable", f)
-		}
+	abs, _ := filepath.Abs(extra[0])
+	absReal, _ := filepath.Abs(filepath.Join(dir, "real.h"))
+	if abs != absReal {
+		t.Errorf("expected real.h, got %s", extra[0])
 	}
+}
+
+func TestScanEdgeImportDirective(t *testing.T) {
+	// Objective-C #import should be treated like #include.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "ObjCHeader.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "regular.h"), []byte(""), 0644)
+
+	// Use .c extension since .m is not in scannableExtensions.
+	src := filepath.Join(dir, "test.c")
+	content := `
+#import "ObjCHeader.h"
+#include "regular.h"
+`
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	assert.Contains(t, absExtra, filepath.Join(dir, "ObjCHeader.h"))
+	assert.Contains(t, absExtra, filepath.Join(dir, "regular.h"))
+}
+
+func TestScanEdgeIncludeNext(t *testing.T) {
+	// GNU extension #include_next is used by glibc and libstdc++.
+	// Our scanner treats it like a regular #include for discovery purposes.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "stdlib.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "regular.h"), []byte(""), 0644)
+
+	src := filepath.Join(dir, "test.h")
+	content := `
+#include_next "stdlib.h"
+#include "regular.h"
+`
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	assert.Contains(t, absExtra, filepath.Join(dir, "stdlib.h"))
+	assert.Contains(t, absExtra, filepath.Join(dir, "regular.h"))
+}
+
+func TestScanEdgeMalformedDirectives(t *testing.T) {
+	// Malformed directives should not crash or produce garbage.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "valid.h"), []byte(""), 0644)
+
+	src := filepath.Join(dir, "test.c")
+	content := `
+#include
+#include <>
+#include ""
+#include <
+#include "
+# include
+#include "valid.h"
+`
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	assert.Contains(t, absPaths(t, extra), filepath.Join(dir, "valid.h"))
+}
+
+func TestScanEdgeTrailingComment(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "foo.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "bar.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "baz.h"), []byte(""), 0644)
+
+	src := filepath.Join(dir, "test.c")
+	content := `
+#include "foo.h" // this is a comment
+#include "bar.h" /* another comment */
+#include "baz.h"   // trailing
+`
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	for _, name := range []string{"foo.h", "bar.h", "baz.h"} {
+		assert.Contains(t, absExtra, filepath.Join(dir, name))
+	}
+}
+
+func TestScanEdgeDirectoryNamedAsHeader(t *testing.T) {
+	// If an include path resolves to a directory rather than a file,
+	// it should not be treated as a valid include.
+	dir := t.TempDir()
+
+	// Create a directory named "foo.h" — this is NOT a file.
+	os.MkdirAll(filepath.Join(dir, "foo.h"), 0755)
+	os.WriteFile(filepath.Join(dir, "real.h"), []byte(""), 0644)
+
+	src := filepath.Join(dir, "test.c")
+	os.WriteFile(src, []byte("#include \"foo.h\"\n#include \"real.h\"\n"), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	assert.Contains(t, absExtra, filepath.Join(dir, "real.h"))
+	assert.NotContains(t, absExtra, filepath.Join(dir, "foo.h"))
+}
+
+func TestScanEdgeSymlinkCycle(t *testing.T) {
+	// Create a symlink cycle and verify the scanner terminates.
+	// Inspired by distcc's symlink farm tests.
+	//
+	// Structure:
+	//   dir/a/link -> ../b
+	//   dir/b/link -> ../a
+	//   dir/a/foo.h (includes "link/foo.h")
+	//   dir/b/foo.h (includes "link/foo.h")
+	//   dir/main.c  (includes "a/foo.h")
+	dir := t.TempDir()
+
+	aDir := filepath.Join(dir, "a")
+	bDir := filepath.Join(dir, "b")
+	os.MkdirAll(aDir, 0755)
+	os.MkdirAll(bDir, 0755)
+
+	// Create symlinks: a/link -> ../b, b/link -> ../a
+	os.Symlink("../b", filepath.Join(aDir, "link"))
+	os.Symlink("../a", filepath.Join(bDir, "link"))
+
+	// Create headers that reference each other through symlinks.
+	os.WriteFile(filepath.Join(aDir, "foo.h"), []byte(`#include "link/foo.h"`+"\n"), 0644)
+	os.WriteFile(filepath.Join(bDir, "foo.h"), []byte(`#include "link/foo.h"`+"\n"), 0644)
+
+	// Main file that starts the chain.
+	mainC := filepath.Join(dir, "main.c")
+	os.WriteFile(mainC, []byte(`#include "a/foo.h"`+"\n"), 0644)
+
+	s := include_scanner.New()
+	// This should terminate (not hang) even with symlink cycles.
+	extra, err := s.ScanEdge([]string{mainC}, "gcc -I"+dir+" "+mainC)
+	require.NoError(t, err)
+
+	// We should find at least a/foo.h and b/foo.h.
+	absExtra := absPaths(t, extra)
+	assert.Contains(t, absExtra, filepath.Join(aDir, "foo.h"))
+	assert.Contains(t, absExtra, filepath.Join(bDir, "foo.h"))
+}
+
+func TestScanEdgeDotDotThroughSymlink(t *testing.T) {
+	// Test that #include "symlink/../real.h" works correctly when
+	// the symlink points to a different directory.
+	// Inspired by distcc's test_DotdotInInclude.
+	dir := t.TempDir()
+
+	// Create:
+	//   dir/real/target/  (symlink target directory)
+	//   dir/src/link -> ../real/target
+	//   dir/real/real.h
+	//   dir/src/main.c -> #include "link/../real.h"
+	realDir := filepath.Join(dir, "real", "target")
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(realDir, 0755)
+	os.MkdirAll(srcDir, 0755)
+
+	realH := filepath.Join(dir, "real", "real.h")
+	os.WriteFile(realH, []byte("// real header\n"), 0644)
+
+	// Symlink: src/link -> ../real/target
+	os.Symlink("../real/target", filepath.Join(srcDir, "link"))
+
+	mainC := filepath.Join(srcDir, "main.c")
+	// This include goes through the symlink, then ".." goes up to where
+	// the symlink target resides (real/), not where the symlink is (src/).
+	os.WriteFile(mainC, []byte(`#include "link/../real.h"`+"\n"), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{mainC}, "gcc "+mainC)
+	require.NoError(t, err)
+
+	// The scanner should find real.h through the symlink/../ path.
+	assert.Contains(t, absPaths(t, extra), realH)
+}
+
+func TestScanEdgeForceInclude(t *testing.T) {
+	// Integration test: -include flag should cause the file to be scanned
+	// and its transitive dependencies discovered.
+	dir := t.TempDir()
+
+	mainC := filepath.Join(dir, "main.c")
+	precomp := filepath.Join(dir, "precompiled.h")
+	dep := filepath.Join(dir, "dep.h")
+
+	os.WriteFile(mainC, []byte("int main() { return 0; }\n"), 0644)
+	os.WriteFile(precomp, []byte(`#include "dep.h"`+"\n"), 0644)
+	os.WriteFile(dep, []byte("// dependency\n"), 0644)
+
+	s := include_scanner.New()
+	command := "gcc -include " + precomp + " -c " + mainC
+	extra, err := s.ScanEdge([]string{mainC}, command)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	assert.Contains(t, absExtra, precomp)
+	assert.Contains(t, absExtra, dep)
 }
 
 func TestExtractIntermediateDirsFromCommand(t *testing.T) {
@@ -470,7 +590,7 @@ func TestExtractIntermediateDirsFromCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ExtractIntermediateDirsFromCommand(tt.command)
+			result := include_scanner.ExtractIntermediateDirsFromCommand(tt.command)
 			if !slices.Equal(result, tt.expected) {
 				t.Errorf("ExtractIntermediateDirsFromCommand(%q) = %v, want %v", tt.command, result, tt.expected)
 			}
@@ -502,7 +622,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 	os.WriteFile(configTxt, []byte("config"), 0644)
 
 	t.Run("no matching paths", func(t *testing.T) {
-		result := ExtractCommandReferencedPaths("gcc -o test test.c", root)
+		result, err := include_scanner.ExtractCommandReferencedPaths("gcc -o test test.c", root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected no paths, got %v", result)
 		}
@@ -510,23 +631,17 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("file path includes siblings", func(t *testing.T) {
 		command := "cmake -P " + buildCmake
-		result := ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		// Should include build.cmake and helper.cmake (sibling)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[buildCmake] {
-			t.Errorf("expected %s in result, got %v", buildCmake, result)
-		}
-		if !resultSet[helperCmake] {
-			t.Errorf("expected sibling %s in result, got %v", helperCmake, result)
-		}
+		assert.Contains(t, result, buildCmake)
+		assert.Contains(t, result, helperCmake)
 	})
 
 	t.Run("directory path no siblings", func(t *testing.T) {
 		command := "ls " + subDir
-		result := ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 1 || result[0] != subDir {
 			t.Errorf("expected [%s], got %v", subDir, result)
 		}
@@ -534,19 +649,15 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("path embedded in flag", func(t *testing.T) {
 		command := "gcc -DCONFIG_PATH=" + configTxt + " test.c"
-		result := ExtractCommandReferencedPaths(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[configTxt] {
-			t.Errorf("expected %s in result, got %v", configTxt, result)
-		}
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, configTxt)
 	})
 
 	t.Run("nonexistent path ignored", func(t *testing.T) {
 		command := "gcc " + filepath.Join(root, "nonexistent", "file.c")
-		result := ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected no paths for nonexistent file, got %v", result)
 		}
@@ -554,7 +665,8 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 
 	t.Run("deduplicates paths", func(t *testing.T) {
 		command := "cmake -P " + buildCmake + " -P " + buildCmake
-		result := ExtractCommandReferencedPaths(command, root)
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
 		seen := make(map[string]int)
 		for _, p := range result {
 			seen[p]++
@@ -570,14 +682,9 @@ func TestExtractCommandReferencedPaths(t *testing.T) {
 		// Simulates -Wl,--version-script,"/root/path/LTO.exports"
 		// where strings.Fields keeps the quotes as part of the token.
 		command := `-Wl,--version-script,"` + configTxt + `"`
-		result := ExtractCommandReferencedPaths(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[configTxt] {
-			t.Errorf("expected %s in result (trailing quote should be stripped), got %v", configTxt, result)
-		}
+		result, err := include_scanner.ExtractCommandReferencedPaths(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, configTxt)
 	})
 }
 
@@ -610,54 +717,34 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("collects files from -I directory", func(t *testing.T) {
 		command := "gcc -I" + incDir + " -o test test.c"
-		result := ExtractSearchDirectoryContents(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[aH] || !resultSet[bH] {
-			t.Errorf("expected a.h and b.h, got %v", result)
-		}
-		if !resultSet[cH] {
-			t.Errorf("expected recursive sub/c.h, got %v", result)
-		}
-		if resultSet[outside] {
-			t.Errorf("should not include files outside search dirs, got %v", result)
-		}
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, aH)
+		assert.Contains(t, result, bH)
+		assert.Contains(t, result, cH)
+		assert.NotContains(t, result, outside)
 	})
 
 	t.Run("collects files from -L directory", func(t *testing.T) {
 		command := "ld -L" + libDir + " -lfoo"
-		result := ExtractSearchDirectoryContents(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[libFoo] {
-			t.Errorf("expected libfoo.a from -L dir, got %v", result)
-		}
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, libFoo)
 	})
 
 	t.Run("space-separated -I flag", func(t *testing.T) {
 		command := "gcc -I " + incDir + " test.c"
-		result := ExtractSearchDirectoryContents(command, root)
-		found := false
-		for _, p := range result {
-			if p == aH {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected a.h from space-separated -I, got %v", result)
-		}
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, aH)
 	})
 
 	t.Run("ignores directories outside root", func(t *testing.T) {
 		command := "gcc -I/usr/include -I" + incDir + " test.c"
-		result := ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		for _, p := range result {
-			if !filepath.HasPrefix(p, root) {
+			if !strings.HasPrefix(p, root) {
 				t.Errorf("got path outside root: %s", p)
 			}
 		}
@@ -665,7 +752,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("deduplicates directories", func(t *testing.T) {
 		command := "gcc -I" + incDir + " -I" + incDir + " test.c"
-		result := ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		seen := make(map[string]int)
 		for _, p := range result {
 			seen[p]++
@@ -679,7 +767,8 @@ func TestExtractSearchDirectoryContents(t *testing.T) {
 
 	t.Run("no search directories", func(t *testing.T) {
 		command := "gcc -o test test.c"
-		result := ExtractSearchDirectoryContents(command, root)
+		result, err := include_scanner.ExtractSearchDirectoryContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected no files, got %v", result)
 		}
@@ -741,14 +830,14 @@ func TestExtractThinArchiveMembers(t *testing.T) {
 	t.Run("not a thin archive", func(t *testing.T) {
 		path := filepath.Join(dir, "regular.a")
 		os.WriteFile(path, []byte("!<arch>\nnot thin"), 0644)
-		members := ExtractThinArchiveMembers(path)
+		members := include_scanner.ExtractThinArchiveMembers(path)
 		if members != nil {
 			t.Errorf("expected nil for regular archive, got %v", members)
 		}
 	})
 
 	t.Run("nonexistent file", func(t *testing.T) {
-		members := ExtractThinArchiveMembers(filepath.Join(dir, "nope.a"))
+		members := include_scanner.ExtractThinArchiveMembers(filepath.Join(dir, "nope.a"))
 		if members != nil {
 			t.Errorf("expected nil for nonexistent file, got %v", members)
 		}
@@ -763,7 +852,7 @@ func TestExtractThinArchiveMembers(t *testing.T) {
 		archivePath := filepath.Join(dir, "libtest.a")
 		os.WriteFile(archivePath, buildThinArchive(names), 0644)
 
-		members := ExtractThinArchiveMembers(archivePath)
+		members := include_scanner.ExtractThinArchiveMembers(archivePath)
 		if len(members) != len(names) {
 			t.Fatalf("expected %d members, got %d: %v", len(names), len(members), members)
 		}
@@ -787,7 +876,7 @@ func TestExtractThinArchiveMembers(t *testing.T) {
 		archivePath := filepath.Join(dir, "libpadded.a")
 		os.WriteFile(archivePath, buildThinArchive(names), 0644)
 
-		members := ExtractThinArchiveMembers(archivePath)
+		members := include_scanner.ExtractThinArchiveMembers(archivePath)
 		if len(members) != 2 {
 			t.Fatalf("expected 2 members, got %d: %v", len(members), members)
 		}
@@ -798,7 +887,7 @@ func TestExtractThinArchiveMembers(t *testing.T) {
 		archivePath := filepath.Join(dir, "libabs.a")
 		os.WriteFile(archivePath, buildThinArchive([]string{absPath}), 0644)
 
-		members := ExtractThinArchiveMembers(archivePath)
+		members := include_scanner.ExtractThinArchiveMembers(archivePath)
 		if len(members) != 1 || members[0] != absPath {
 			t.Errorf("expected [%s], got %v", absPath, members)
 		}
@@ -832,36 +921,20 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("cd with relative dotdot resolves directory contents", func(t *testing.T) {
 		command := "cd ../../../tools/icu && python icupkg.py"
-		result := ExtractRelativeDotDotContents(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[icupkg] {
-			t.Errorf("expected %s in result, got %v", icupkg, result)
-		}
-		if !resultSet[icudata] {
-			t.Errorf("expected %s in result, got %v", icudata, result)
-		}
-		if !resultSet[subFile] {
-			t.Errorf("expected nested %s in result, got %v", subFile, result)
-		}
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, icupkg)
+		assert.Contains(t, result, icudata)
+		assert.Contains(t, result, subFile)
 	})
 
 	t.Run("relative dotdot file path includes siblings", func(t *testing.T) {
 		command := "python ../../../tools/icu/icupkg.py"
-		result := ExtractRelativeDotDotContents(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[icupkg] {
-			t.Errorf("expected %s in result, got %v", icupkg, result)
-		}
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, icupkg)
 		// Sibling file in the same directory should also be included.
-		if !resultSet[icudata] {
-			t.Errorf("expected sibling %s in result, got %v", icudata, result)
-		}
+		assert.Contains(t, result, icudata)
 	})
 
 	t.Run("file path sibling inclusion for scripts", func(t *testing.T) {
@@ -875,22 +948,16 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 		os.WriteFile(siblingModule, []byte("# pdl module"), 0644)
 
 		command := "cd ../../../tools/v8_gypfiles; python ../../../deps/v8/third_party/inspector_protocol/check_protocol_compatibility.py"
-		result := ExtractRelativeDotDotContents(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[mainScript] {
-			t.Errorf("expected %s in result, got %v", mainScript, result)
-		}
-		if !resultSet[siblingModule] {
-			t.Errorf("expected sibling %s in result, got %v", siblingModule, result)
-		}
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, mainScript)
+		assert.Contains(t, result, siblingModule)
 	})
 
 	t.Run("no dotdot paths returns empty", func(t *testing.T) {
 		command := "gcc -o test test.c"
-		result := ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty, got %v", result)
 		}
@@ -898,7 +965,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("absolute dotdot paths ignored", func(t *testing.T) {
 		command := "gcc -I/some/../path test.c"
-		result := ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for absolute paths, got %v", result)
 		}
@@ -906,7 +974,8 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("dotdot resolving outside root ignored", func(t *testing.T) {
 		command := "cd ../../../../../../../../tmp && ls"
-		result := ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for path outside root, got %v", result)
 		}
@@ -914,31 +983,22 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 
 	t.Run("strips trailing shell operators", func(t *testing.T) {
 		command := "cd ../../../tools/icu;&& python icupkg.py"
-		result := ExtractRelativeDotDotContents(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[icupkg] {
-			t.Errorf("expected %s after stripping ';', got %v", icupkg, result)
-		}
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, icupkg)
 	})
 
 	t.Run("flag prefix with dotdot", func(t *testing.T) {
 		command := "gcc -I../../../tools/icu test.c"
-		result := ExtractRelativeDotDotContents(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[icupkg] {
-			t.Errorf("expected files from -I dir, got %v", result)
-		}
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, icupkg)
 	})
 
 	t.Run("deduplicates paths", func(t *testing.T) {
 		command := "cd ../../../tools/icu && ls ../../../tools/icu"
-		result := ExtractRelativeDotDotContents(command, root)
+		result, err := include_scanner.ExtractRelativeDotDotContents(command, root)
+		require.NoError(t, err)
 		seen := make(map[string]int)
 		for _, p := range result {
 			seen[p]++
@@ -972,35 +1032,24 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("resolves relative script path against cd target", func(t *testing.T) {
 		command := "cd " + root + " && /usr/bin/python3 scripts/create_repo.py arg1 arg2"
-		result := ExtractCdRelativePaths(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[createRepo] {
-			t.Errorf("expected %s in result, got %v", createRepo, result)
-		}
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, createRepo)
 		// Sibling should be included.
-		if !resultSet[helperPy] {
-			t.Errorf("expected sibling %s in result, got %v", helperPy, result)
-		}
+		assert.Contains(t, result, helperPy)
 	})
 
 	t.Run("resolves directory path against cd target", func(t *testing.T) {
 		command := "cd " + root + " && ls data"
-		result := ExtractCdRelativePaths(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[dataFile] {
-			t.Errorf("expected %s in result, got %v", dataFile, result)
-		}
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, dataFile)
 	})
 
 	t.Run("no cd returns empty", func(t *testing.T) {
 		command := "/usr/bin/python3 scripts/create_repo.py"
-		result := ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty without cd, got %v", result)
 		}
@@ -1008,7 +1057,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("cd to non-root directory returns empty", func(t *testing.T) {
 		command := "cd /tmp && python3 scripts/foo.py"
-		result := ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for cd outside root, got %v", result)
 		}
@@ -1016,19 +1066,15 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("skips flags and shell operators", func(t *testing.T) {
 		command := "cd " + root + " && /usr/bin/python3 -u scripts/create_repo.py --flag arg1"
-		result := ExtractCdRelativePaths(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[createRepo] {
-			t.Errorf("expected %s in result, got %v", createRepo, result)
-		}
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, createRepo)
 	})
 
 	t.Run("nonexistent relative path ignored", func(t *testing.T) {
 		command := "cd " + root + " && python3 nonexistent/script.py"
-		result := ExtractCdRelativePaths(command, root)
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
 		if len(result) != 0 {
 			t.Errorf("expected empty for nonexistent path, got %v", result)
 		}
@@ -1036,13 +1082,8 @@ func TestExtractCdRelativePaths(t *testing.T) {
 
 	t.Run("strips trailing semicolon from cd target", func(t *testing.T) {
 		command := "cd " + root + "; /usr/bin/python3 scripts/create_repo.py"
-		result := ExtractCdRelativePaths(command, root)
-		resultSet := make(map[string]bool)
-		for _, p := range result {
-			resultSet[p] = true
-		}
-		if !resultSet[createRepo] {
-			t.Errorf("expected %s in result, got %v", createRepo, result)
-		}
+		result, err := include_scanner.ExtractCdRelativePaths(command, root)
+		require.NoError(t, err)
+		assert.Contains(t, result, createRepo)
 	})
 }
