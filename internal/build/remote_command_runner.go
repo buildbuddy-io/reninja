@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -179,7 +180,12 @@ func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, 
 	cmdProto := &repb.Command{
 		Arguments:        args,
 		WorkingDirectory: workingDir,
-		Platform:         &repb.Platform{},
+		Platform: &repb.Platform{
+			Properties: []*repb.Platform_Property{
+				{Name: "Arch", Value: runtime.GOARCH},
+				{Name: "OSFamily", Value: runtime.GOOS},
+			},
+		},
 	}
 	//fmt.Printf("workingDir set to %q\n", cmdProto.WorkingDirectory)
 

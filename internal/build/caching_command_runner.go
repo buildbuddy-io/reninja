@@ -5,10 +5,11 @@ import (
 	"context"
 	"math"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/buildbuddy-io/reninja/internal/build_config"
 	"github.com/buildbuddy-io/reninja/internal/cachetools"
@@ -17,7 +18,6 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/filetransfer"
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
-	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/remote_headers"
 	"github.com/buildbuddy-io/reninja/internal/request_metadata"
@@ -49,6 +49,7 @@ type RemoteCachingCommandRunner struct {
 	jobserver   jobserver.Client
 	mu          *sync.Mutex
 	activeEdges []*activeEdgeState
+	resultCh    chan *spawn.Result
 
 	context    context.Context
 	cancel     context.CancelFunc
@@ -59,10 +60,8 @@ type RemoteCachingCommandRunner struct {
 }
 
 type activeEdgeState struct {
-	edge           *graph.Edge
-	subprocess     *subprocess.Subprocess
-	finishedResult chan *spawn.Result
-	executing      atomic.Bool
+	edge       *graph.Edge
+	subprocess *subprocess.Subprocess
 }
 
 func NewRemoteCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *RemoteCachingCommandRunner {
@@ -82,6 +81,7 @@ func NewRemoteCachingCommandRunner(config *build_config.Config, jobserver jobser
 		jobserver:   jobserver,
 		mu:          &sync.Mutex{},
 		activeEdges: make([]*activeEdgeState, 0),
+		resultCh:    make(chan *spawn.Result, 1000),
 
 		cancel:     cancelFunc,
 		context:    ctx,
@@ -118,14 +118,17 @@ func (r *RemoteCachingCommandRunner) Abort() {
 }
 
 func (r *RemoteCachingCommandRunner) CanRunMore() int {
-	// returns number of running edges + number of uncollected edges.
-	subprocNumber := 0
-	r.mu.Lock()
-	for _, edgeState := range r.activeEdges {
-		if edgeState.executing.Load() {
-			subprocNumber += 1
-		}
+	// If results are waiting to be collected, tell the build loop to
+	// reap them before starting new work.
+	if len(r.resultCh) > 0 {
+		return 0
 	}
+
+	// Count all active edges (running + finished-but-uncollected) against
+	// parallelism so the build loop is forced to reap finished results
+	// before starting new work.
+	r.mu.Lock()
+	subprocNumber := len(r.activeEdges)
 	r.mu.Unlock()
 	capacity := r.config.Parallelism - subprocNumber
 
@@ -161,13 +164,17 @@ func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 		return nil, err
 	}
 	cmdProto := &repb.Command{
-		Arguments:        splitCommand,
-		WorkingDirectory: project_root.WorkingDirectory(),
+		Arguments: splitCommand,
+		Platform: &repb.Platform{
+			Properties: []*repb.Platform_Property{
+				{Name: "Arch", Value: runtime.GOARCH},
+				{Name: "OSFamily", Value: runtime.GOOS},
+			},
+		},
 	}
 	for _, output := range edge.Outputs() {
 		cmdProto.OutputPaths = append(cmdProto.OutputPaths, output.Path())
 	}
-	// TODO(tylerw): maybe hash and include other stuff here???
 	return cmdProto, nil
 }
 
@@ -260,30 +267,6 @@ func (r *RemoteCachingCommandRunner) fetchOutputsAndResult(ctx context.Context, 
 		})
 	}
 
-	// Handle symlink outputs: prefer v2.1 output_symlinks, fall back to
-	// deprecated output_file_symlinks + output_directory_symlinks.
-	outputSymlinks := actionResult.GetOutputSymlinks()
-	if len(outputSymlinks) == 0 {
-		outputSymlinks = append(actionResult.GetOutputFileSymlinks(), actionResult.GetOutputDirectorySymlinks()...)
-	}
-	for _, symlink := range outputSymlinks {
-		matchedEdgeOutput := false
-		for _, output := range edge.Outputs() {
-			if output.Path() == symlink.GetPath() {
-				matchedEdgeOutput = true
-				break
-			}
-		}
-		if !matchedEdgeOutput {
-			util.Errorf("ActionResult contained symlink output (%s) not found in edge!", symlink.GetPath())
-			continue
-		}
-		os.Remove(symlink.GetPath())
-		if err := os.Symlink(symlink.GetTarget(), symlink.GetPath()); err != nil {
-			return nil, err
-		}
-	}
-
 	var output string
 	if len(actionResult.StdoutRaw) > 0 {
 		output = string(actionResult.StdoutRaw)
@@ -304,15 +287,14 @@ func (r *RemoteCachingCommandRunner) fetchOutputsAndResult(ctx context.Context, 
 		return nil, err
 	}
 	return &spawn.Result{
-		Status:         exit_status.ExitStatusType(actionResult.GetExitCode()),
-		Output:         output,
-		Edge:           edge,
-		Runner:         remoteCacheRunner,
-		CacheHit:       true,
-		Context:        ctx,
-		Outputs:        actionResult.GetOutputFiles(),
-		OutputSymlinks: outputSymlinks,
-		StdoutDigest:   actionResult.GetStdoutDigest(),
+		Status:       exit_status.ExitStatusType(actionResult.GetExitCode()),
+		Output:       output,
+		Edge:         edge,
+		Runner:       remoteCacheRunner,
+		CacheHit:     true,
+		Context:      ctx,
+		Outputs:      actionResult.GetOutputFiles(),
+		StdoutDigest: actionResult.GetStdoutDigest(),
 	}, nil
 }
 
@@ -355,9 +337,7 @@ func (r *RemoteCachingCommandRunner) assembleAndHashAction(ctx context.Context, 
 
 func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 	edgeState := &activeEdgeState{
-		edge:           edge,
-		finishedResult: make(chan *spawn.Result),
-		executing:      atomic.Bool{},
+		edge: edge,
 	}
 	r.mu.Lock()
 	r.activeEdges = append(r.activeEdges, edgeState)
@@ -387,7 +367,7 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		res, lookupErr := r.downloadCompletedEdge(ctx, action, edge)
 
 		if lookupErr == nil && res != nil {
-			edgeState.finishedResult <- res
+			r.resultCh <- res
 			return
 		}
 
@@ -396,41 +376,36 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		subproc, err := subprocess.NewSubprocess(command, edge.UseConsole())
 		if err != nil {
 			doneExecutingFn()
-			edgeState.finishedResult <- makeFailureResult(err)
+			r.resultCh <- makeFailureResult(err)
 			return
 		}
 
-		edgeState.executing.Store(true)
 		exitCode := subproc.Finish()
-		edgeState.executing.Store(false)
 		output := subproc.GetOutput()
 		doneExecutingFn()
 
 		var uploadedOutputs []*repb.OutputFile
-		var uploadedSymlinks []*repb.OutputSymlink
 		var stdoutDigest *repb.Digest
 		if exitCode == exit_status.ExitSuccess {
 			// Upload the outputs (no action result) of this action.
-			outputFiles, outputSymlinks, stdoutDigest, err := r.uploadEdgeOutputs(ctx, edge, output)
+			outputFiles, stdoutDigest, err := r.uploadEdgeOutputs(ctx, edge, output)
 			if err != nil {
-				edgeState.finishedResult <- makeFailureResult(err)
+				r.resultCh <- makeFailureResult(err)
 				return
 			}
 			uploadedOutputs = outputFiles
-			uploadedSymlinks = outputSymlinks
 			stdoutDigest = stdoutDigest
 		}
 
-		edgeState.finishedResult <- &spawn.Result{
-			Edge:           edge,
-			Status:         exitCode,
-			Output:         output,
-			Runner:         localRunner,
-			CacheHit:       false,
-			Context:        ctx,
-			Outputs:        uploadedOutputs,
-			OutputSymlinks: uploadedSymlinks,
-			StdoutDigest:   stdoutDigest,
+		r.resultCh <- &spawn.Result{
+			Edge:         edge,
+			Status:       exitCode,
+			Output:       output,
+			Runner:       localRunner,
+			CacheHit:     false,
+			Context:      ctx,
+			Outputs:      uploadedOutputs,
+			StdoutDigest: stdoutDigest,
 		}
 	}()
 
@@ -500,37 +475,25 @@ func (r *RemoteCachingCommandRunner) downloadCompletedEdge(ctx context.Context, 
 // uploadEdgeOutputs uploads the outputs of a completed edge to the CAS.
 // It does not upload any action result pointing to these outputs, that
 // should happen seperately.
-func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge *graph.Edge, output string) ([]*repb.OutputFile, []*repb.OutputSymlink, *repb.Digest, error) {
+func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge *graph.Edge, output string) ([]*repb.OutputFile, *repb.Digest, error) {
 	defer span.Record(ctx, "upload outputs")()
 	instanceName := remote_flags.RemoteInstanceName()
 	digestFunction := remote_flags.DigestFunction()
 
 	ul := cachetools.NewBatchCASUploader(ctx, r.uploader, r.uploader, instanceName, digestFunction)
 	outputFiles := make([]*repb.OutputFile, 0, len(edge.Outputs()))
-	var outputSymlinks []*repb.OutputSymlink
 
 	for _, output := range edge.Outputs() {
-		fi, err := os.Lstat(output.Path())
+		fi, err := os.Stat(output.Path())
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, nil, nil, err
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(output.Path())
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			outputSymlinks = append(outputSymlinks, &repb.OutputSymlink{
-				Path:   output.Path(),
-				Target: target,
-			})
-			continue
+			return nil, nil, err
 		}
 		d, err := ul.UploadFile(output.Path())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		outputFiles = append(outputFiles, &repb.OutputFile{
 			Path:         output.Path(),
@@ -542,12 +505,12 @@ func (r *RemoteCachingCommandRunner) uploadEdgeOutputs(ctx context.Context, edge
 	// Upload stdout.
 	stdoutDigest, err := ul.UploadBlob([]byte(output))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	if err := ul.Wait(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	return outputFiles, outputSymlinks, stdoutDigest, nil
+	return outputFiles, stdoutDigest, nil
 }
 
 func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, result *spawn.Result, depsNodes []*graph.Node) error {
@@ -593,9 +556,8 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 
 	uploadFullActionResult := func(inputs []*graph.Node) error {
 		ar := &repb.ActionResult{
-			ExitCode:       int32(result.Status),
-			OutputFiles:    result.Outputs,
-			OutputSymlinks: result.OutputSymlinks,
+			ExitCode:    int32(result.Status),
+			OutputFiles: result.Outputs,
 		}
 		return setActionResult(inputs, ar)
 	}
@@ -642,26 +604,21 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 }
 
 func (r *RemoteCachingCommandRunner) WaitForCommand() *spawn.Result {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
 	for {
-		r.mu.Lock()
-		edges := make([]*activeEdgeState, len(r.activeEdges))
-		copy(edges, r.activeEdges)
-		r.mu.Unlock()
-
-		for i := 0; i < len(edges); i++ {
-			select {
-			case res := <-edges[i].finishedResult:
-				r.mu.Lock()
-				r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
-					return n == edges[i]
-				})
-				r.mu.Unlock()
-				return res
-			default:
-				if subprocess.Interrupted() {
-					r.cancel()
-					return nil
-				}
+		select {
+		case res := <-r.resultCh:
+			r.mu.Lock()
+			r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
+				return n.edge == res.Edge
+			})
+			r.mu.Unlock()
+			return res
+		case <-ticker.C:
+			if subprocess.Interrupted() {
+				r.cancel()
+				return nil
 			}
 		}
 	}
