@@ -5,6 +5,7 @@ import (
 	"context"
 	"math"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -164,11 +165,16 @@ func assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 	}
 	cmdProto := &repb.Command{
 		Arguments: splitCommand,
+		Platform: &repb.Platform{
+			Properties: []*repb.Platform_Property{
+				{Name: "Arch", Value: runtime.GOARCH},
+				{Name: "OSFamily", Value: runtime.GOOS},
+			},
+		},
 	}
 	for _, output := range edge.Outputs() {
 		cmdProto.OutputPaths = append(cmdProto.OutputPaths, output.Path())
 	}
-	// TODO(tylerw): maybe hash and include other stuff here???
 	return cmdProto, nil
 }
 
