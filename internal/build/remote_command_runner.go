@@ -415,6 +415,13 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		return excluded
 	})
 
+	// Filter out ninja metadata files (.ninja_log, .ninja_deps, etc.) that
+	// may have been picked up by heuristic directory walks. These are local
+	// build state and should never be uploaded as action inputs.
+	files = slices.DeleteFunc(files, func(f string) bool {
+		return strings.HasPrefix(filepath.Base(f), ".ninja_")
+	})
+
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
 		return nil, nil, nil, err
