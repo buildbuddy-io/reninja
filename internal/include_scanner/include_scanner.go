@@ -198,14 +198,25 @@ func (s *Scanner) doParseIncludes(filePath string) ([]Inclusion, error) {
 	defer f.Close()
 
 	var inclusions []Inclusion
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
+	reader := bufio.NewReader(f)
+
+	for {
+		line, err := readLine(reader)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
 
 		// Handle backslash-newline continuations: join lines ending
 		// with '\' before applying the include regex.
-		for strings.HasSuffix(line, "\\") && scanner.Scan() {
-			line = line[:len(line)-1] + scanner.Text()
+		for strings.HasSuffix(line, "\\") {
+			next, nextErr := readLine(reader)
+			line = line[:len(line)-1] + next
+			if nextErr != nil {
+				break
+			}
 		}
 
 		m := includeRegex.FindStringSubmatch(line)
@@ -217,11 +228,25 @@ func (s *Scanner) doParseIncludes(filePath string) ([]Inclusion, error) {
 			Quoted: m[1] == `"`,
 		})
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
 
 	return inclusions, nil
+}
+
+// readLine reads a single line from r, stripping the trailing newline.
+// If the line exceeds the internal buffer size (e.g. very long lines in
+// generated files), only the buffered prefix is returned and the remainder
+// is discarded. This keeps memory usage constant regardless of line length
+// — an #include directive always appears at the start of a line, so the
+// prefix is sufficient for matching.
+func readLine(r *bufio.Reader) (string, error) {
+	line, isPrefix, err := r.ReadLine()
+	if isPrefix {
+		// Discard the rest of the oversized line.
+		for isPrefix && err == nil {
+			_, isPrefix, err = r.ReadLine()
+		}
+	}
+	return string(line), err
 }
 
 // resolveInclude resolves an Inclusion to an absolute file path, or returns ""
