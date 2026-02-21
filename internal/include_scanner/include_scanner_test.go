@@ -1011,6 +1011,34 @@ func TestExtractRelativeDotDotContents(t *testing.T) {
 	})
 }
 
+func TestScanEdgeOversizedLine(t *testing.T) {
+	// Regression test: files with lines exceeding bufio.MaxScanTokenSize
+	// (64KB) should not cause "bufio.Scanner: token too long" errors.
+	// This reproduces the issue with generated files like
+	// AMDGPUGenRegisterInfoTargetDesc.inc.
+	dir := t.TempDir()
+
+	beforeH := filepath.Join(dir, "before.h")
+	afterH := filepath.Join(dir, "after.h")
+	os.WriteFile(beforeH, []byte(""), 0644)
+	os.WriteFile(afterH, []byte(""), 0644)
+
+	// Build a source file with an include before and after a line that
+	// exceeds the default scanner buffer size (64KB).
+	longLine := strings.Repeat("x", 128*1024) // 128KB line
+	src := filepath.Join(dir, "big.inc")
+	content := "#include \"before.h\"\n" + longLine + "\n#include \"after.h\"\n"
+	os.WriteFile(src, []byte(content), 0644)
+
+	s := include_scanner.New()
+	extra, err := s.ScanEdge([]string{src}, "gcc "+src)
+	require.NoError(t, err)
+
+	absExtra := absPaths(t, extra)
+	assert.Contains(t, absExtra, beforeH)
+	assert.Contains(t, absExtra, afterH)
+}
+
 func TestExtractCdRelativePaths(t *testing.T) {
 	root := t.TempDir()
 
