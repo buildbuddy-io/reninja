@@ -286,8 +286,8 @@ func canComputeInputs(edge *graph.Edge) bool {
 	return true
 }
 
-func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*repb.Action, *repb.Command, filetransfer.FlattenedTree, error) {
-	defer span.Record(ctx, "MerkleTreeComputer.buildForSpawn")()
+func (r *RemoteCommandRunner) computeInputs(ctx context.Context, edge *graph.Edge) ([]string, error) {
+	defer span.Record(ctx, "include scanning")()
 
 	var files []string
 
@@ -309,7 +309,7 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		command := edge.EvaluateCommand(false)
 		commandReferencedPaths, err := include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		files = append(files, commandReferencedPaths...)
 	} else if canComputeInputs(edge) {
@@ -325,7 +325,7 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 
 		extraFiles, err := r.includeScanner.ScanEdge(files, command)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		files = append(files, extraFiles...)
 
@@ -338,7 +338,7 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		// declared as edge inputs (e.g. cmake scripts, config files).
 		commandReferencedPaths, err := include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		files = append(files, commandReferencedPaths...)
 	} else {
@@ -363,7 +363,7 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 
 		commandReferencedPaths, err := include_scanner.ExtractCommandReferencedPaths(command, project_root.Root())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		files = append(files, commandReferencedPaths...)
 
@@ -372,19 +372,19 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 
 		searchDirectoryContents, err := include_scanner.ExtractSearchDirectoryContents(command, project_root.Root())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		files = append(files, searchDirectoryContents...)
 
 		relativeDotDotContents, err := include_scanner.ExtractRelativeDotDotContents(command, project_root.Root())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		files = append(files, relativeDotDotContents...)
 
 		cdRelativePaths, err := include_scanner.ExtractCdRelativePaths(command, project_root.Root())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
 		files = append(files, cdRelativePaths...)
 	}
@@ -422,6 +422,16 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 		return strings.HasPrefix(filepath.Base(f), ".ninja_")
 	})
 
+	return files, nil
+}
+
+func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *graph.Edge) (*repb.Action, *repb.Command, filetransfer.FlattenedTree, error) {
+	files, err := r.computeInputs(ctx, edge)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	defer span.Record(ctx, "MerkleTreeComputer.buildForSpawn")()
 	inputRootDigest, flattenedTree, err := r.uploader.HashDirectoryTree(files)
 	if err != nil {
 		return nil, nil, nil, err
