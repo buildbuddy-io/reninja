@@ -301,8 +301,8 @@ func (g *Flamegraph) RecordEdge(edge *graph.Edge, start, end time.Time, events .
 			g.targets[commandHash] = target
 		}
 		g.targets[commandHash].Targets = append(g.targets[commandHash].Targets, out.Path())
-		g.targets[commandHash].SpanEvents = append(g.targets[commandHash].SpanEvents, events...)
 	}
+	g.targets[commandHash].SpanEvents = append(g.targets[commandHash].SpanEvents, events...)
 }
 
 type ThreadTracker struct {
@@ -391,6 +391,10 @@ func (g *Flamegraph) Write(w io.Writer) error {
 			}
 		}
 
+		targetName := ""
+		if len(target.Targets) > 0 {
+			targetName = target.Targets[0]
+		}
 		ev := &Event{
 			Category:  "targets",
 			Name:      fmt.Sprintf("%0s", strings.Join(target.Targets, ", ")),
@@ -399,7 +403,7 @@ func (g *Flamegraph) Write(w io.Writer) error {
 			Duration:  target.End.Sub(target.Start).Microseconds(),
 			ProcessID: 1,
 			ThreadID:  int64(tid),
-			Args:      map[string]any{},
+			Args:      map[string]any{"target": targetName},
 		}
 
 		if err := g.writeEvent(w, ev); err != nil {
