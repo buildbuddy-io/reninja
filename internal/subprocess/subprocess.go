@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,10 +48,9 @@ type Subprocess struct {
 	cmd          *exec.Cmd
 	stdOutAndErr *bytes.Buffer
 
-	mu          *sync.Mutex
-	exitError   *exec.ExitError
-	done        chan struct{}
-	completedAt int64 // UnixMilli timestamp, set just before close(done)
+	mu        *sync.Mutex
+	exitError *exec.ExitError
+	done      chan struct{}
 }
 
 func NewSubprocess(command string, useConsole bool) (*Subprocess, error) {
@@ -85,7 +83,6 @@ func NewSubprocess(command string, useConsole bool) (*Subprocess, error) {
 			s.exitError = err.(*exec.ExitError)
 			s.mu.Unlock()
 		}
-		s.completedAt = time.Now().UnixMilli()
 		close(s.done)
 	}()
 	return s, nil
@@ -204,53 +201,34 @@ func (s *Set) Finished() []*Subprocess {
 	return f
 }
 
-// sweepDone moves all completed subprocesses from running to finished,
-// sorted by completion time with start order as tiebreaker for
-// simultaneous completions.
+// sweepDone moves all completed subprocesses from running to finished
+// in start order (the running slice preserves insertion order).
 //
 // This matches the C++ ninja ppoll/pselect behavior: when multiple fds
 // are ready in the same ppoll call, they are iterated in start order.
-// Here, subprocesses that completed in the same millisecond are treated
-// as simultaneous and ordered by their position in the running slice
-// (which preserves start order).
 //
 // Must be called with s.mu held. Returns true if any were found.
 func (s *Set) sweepDone() bool {
-	type indexed struct {
-		sub *Subprocess
-		pos int // position in running slice (start order)
-	}
 	nextRunning := s.running[:0]
-	var swept []indexed
-	for i, sub := range s.running {
+	anyDone := false
+	for _, sub := range s.running {
 		if sub.Done() {
-			swept = append(swept, indexed{sub, i})
+			s.finished = append(s.finished, sub)
+			anyDone = true
 		} else {
 			nextRunning = append(nextRunning, sub)
 		}
 	}
 	s.running = nextRunning
-
-	slices.SortFunc(swept, func(a, b indexed) int {
-		if a.sub.completedAt != b.sub.completedAt {
-			return int(a.sub.completedAt - b.sub.completedAt)
-		}
-		return a.pos - b.pos
-	})
-	for _, item := range swept {
-		s.finished = append(s.finished, item.sub)
-	}
-	return len(swept) > 0
+	return anyDone
 }
 
 // DoWork blocks until at least one subprocess has completed, then moves
-// all completed subprocesses from running to finished.
+// all completed subprocesses from running to finished in start order.
 //
-// Completed subprocesses are ordered by completion time (millisecond
-// precision), with start order as a tiebreaker for subprocesses that
-// complete within the same millisecond. This matches the C++ ninja
-// ppoll/pselect behavior where simultaneously-ready fds are iterated
-// in their position order within the running_ vector.
+// This matches the C++ ninja behavior where ppoll/select blocks until at
+// least one fd is ready, then iterates all running subprocesses in start
+// order to collect completions.
 func (s *Set) DoWork() bool {
 	if interrupted.Load() {
 		return true
