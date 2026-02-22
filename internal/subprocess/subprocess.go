@@ -261,8 +261,8 @@ func (s *Set) DoWork() bool {
 	}
 
 	// At least one subprocess is now done. Sweep all completed
-	// subprocesses, sorted by completion time with start order
-	// as tiebreaker for simultaneous completions.
+	// subprocesses in start order (the running slice preserves
+	// insertion order).
 	s.mu.Lock()
 	s.sweepDone()
 	s.mu.Unlock()
