@@ -57,6 +57,8 @@ var (
 	maxLoad         = flag.Float64("l", -1, "do not start new jobs if the load average is greater than N")
 	dryRun          = flag.Bool("n", false, "dry run (don't run commands but act like they succeeded)")
 	tool            = flag.String("t", "", "run a subtool (use '-t list' to list subtools)")
+	ignoreConfig    = flag.Bool("norc", false, "ignore all RC files (including ones in default locations)")
+	ninjaRCFile     = flag.String("ninjarc", "", "path to a ninjarc file to parse")
 	configFlag      = flag.String("config", "", "ninjarc configuration to apply")
 )
 
@@ -1662,7 +1664,17 @@ func main() {
 	knownFlags, unknownFlags := StripUnknownFlags(flag.CommandLine, preprocessedArgs)
 	os.Args = knownFlags
 
-	rcRules, err := ninjarc.ParseRCFiles(options.WorkingDir, "~/.ninjarc")
+	flag.Parse()
+
+	// Parse RC files.
+	rcFileLocations := []string{".ninjarc", "~/.ninjarc", "/etc/.ninjarc"}
+	if *ninjaRCFile != "" {
+		if !disk.FileExists(*ninjaRCFile) {
+			util.Fatalf("ninjarc file '%s' not found", *ninjaRCFile)
+		}
+		rcFileLocations = append(rcFileLocations, *ninjaRCFile)
+	}
+	rcRules, err := ninjarc.ParseRCFiles(options.WorkingDir, rcFileLocations...)
 	if err != nil {
 		util.Fatal(err.Error())
 	}
@@ -1678,6 +1690,9 @@ func main() {
 			continue
 		}
 		if rule.Config != *configFlag {
+			continue
+		}
+		if *ignoreConfig {
 			continue
 		}
 		rule.ApplyToFlags()
