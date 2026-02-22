@@ -25,7 +25,7 @@ var (
 	digestFunction     = flag.String("digest_function", "BLAKE3", "If set, use this digest function for uploads.")
 
 	// Path munging and stuff. Configure this if your project needs it.
-	includeScanning = flag.Bool("enable_include_scanning", false, "If true, scan header files for implicit deps and include in the input root of remotely executed actions")
+	includeScanning = flag.Bool("enable_include_scanning", true, "If true, scan header files for implicit deps and include in the input root of remotely executed actions")
 	containerImage  = flag.String("container_image", "", "Container image for remote execution, e.g. docker://gcr.io/YOUR:IMAGE")
 )
 
