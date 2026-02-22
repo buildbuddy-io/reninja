@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,10 +48,9 @@ type Subprocess struct {
 	cmd          *exec.Cmd
 	stdOutAndErr *bytes.Buffer
 
-	mu          *sync.Mutex
-	exitError   *exec.ExitError
-	done        chan struct{}
-	completedAt int64 // UnixMilli timestamp, set just before close(done)
+	mu        *sync.Mutex
+	exitError *exec.ExitError
+	done      chan struct{}
 }
 
 func NewSubprocess(command string, useConsole bool) (*Subprocess, error) {
@@ -85,7 +83,6 @@ func NewSubprocess(command string, useConsole bool) (*Subprocess, error) {
 			s.exitError = err.(*exec.ExitError)
 			s.mu.Unlock()
 		}
-		s.completedAt = time.Now().UnixMilli()
 		close(s.done)
 	}()
 	return s, nil
@@ -152,8 +149,9 @@ type Set struct {
 	mu       *sync.Mutex
 	running  []*Subprocess
 	finished []*Subprocess
+
 	// wakeup is signaled (non-blocking) when any subprocess completes.
-	// This allows DoWork to block efficiently instead of busy-polling.
+	// This lets DoWork block efficiently instead of busy-polling.
 	wakeup chan struct{}
 }
 
@@ -174,10 +172,9 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 	s.mu.Lock()
 	s.running = append(s.running, sub)
 	s.mu.Unlock()
-
 	go func() {
 		<-sub.done
-
+		// Non-blocking send: if there's already a wakeup pending, skip.
 		select {
 		case s.wakeup <- struct{}{}:
 		default:
@@ -204,91 +201,61 @@ func (s *Set) Finished() []*Subprocess {
 	return f
 }
 
-// sweepDone moves all completed subprocesses from running to finished,
-// sorted by completion time with start order as tiebreaker for
-// simultaneous completions.
+// sweepDone moves all completed subprocesses from running to finished
+// in start order. This matches C++ ninja's ppoll behavior: when ppoll
+// returns with multiple ready fds, they are iterated in their position
+// within running_ (i.e. start order).
 //
-// This matches the C++ ninja ppoll/pselect behavior: when multiple fds
-// are ready in the same ppoll call, they are iterated in start order.
-// Here, subprocesses that completed in the same millisecond are treated
-// as simultaneous and ordered by their position in the running slice
-// (which preserves start order).
-//
-// Must be called with s.mu held. Returns true if any were found.
+// Must be called with s.mu held. Returns true if any were moved.
 func (s *Set) sweepDone() bool {
-	type indexed struct {
-		sub *Subprocess
-		pos int // position in running slice (start order)
-	}
 	nextRunning := s.running[:0]
-	var swept []indexed
-	for i, sub := range s.running {
+	found := false
+	for _, sub := range s.running {
 		if sub.Done() {
-			swept = append(swept, indexed{sub, i})
+			s.finished = append(s.finished, sub)
+			found = true
 		} else {
 			nextRunning = append(nextRunning, sub)
 		}
 	}
 	s.running = nextRunning
-
-	slices.SortFunc(swept, func(a, b indexed) int {
-		if a.sub.completedAt != b.sub.completedAt {
-			return int(a.sub.completedAt - b.sub.completedAt)
-		}
-		return a.pos - b.pos
-	})
-	for _, item := range swept {
-		s.finished = append(s.finished, item.sub)
-	}
-	return len(swept) > 0
+	return found
 }
 
-// DoWork blocks until at least one subprocess has completed, then moves
-// all completed subprocesses from running to finished.
+// DoWork waits for at least one subprocess to finish, then sweeps all
+// completed subprocesses into the finished list in start order.
 //
-// Completed subprocesses are ordered by completion time (millisecond
-// precision), with start order as a tiebreaker for subprocesses that
-// complete within the same millisecond. This matches the C++ ninja
-// ppoll/pselect behavior where simultaneously-ready fds are iterated
-// in their position order within the running_ vector.
+// This matches C++ ninja's ppoll-based DoWork: block until at least one
+// fd is ready, then iterate running_ in order processing all ready fds.
+// Simultaneous completions get start order; separated completions get
+// completion order (because only the first one is done when we sweep).
+// Returns true if interrupted.
 func (s *Set) DoWork() bool {
 	if interrupted.Load() {
 		return true
 	}
 
+	// Check if any subprocesses are already done (non-blocking).
 	s.mu.Lock()
-	foundCompletedTask := s.sweepDone()
-	noRunning := len(s.running) == 0
+	found := s.sweepDone()
 	s.mu.Unlock()
-
-	// First sweep: check if any subprocesses are already done.
-	if foundCompletedTask || noRunning {
+	if found {
 		return interrupted.Load()
 	}
 
-	// No subprocess is done yet. Block until one completes or we're
-	// interrupted.
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for woken := false; !woken; {
-		select {
-		case <-s.wakeup:
-			// A subprocess completed.
-			woken = true
-		case <-ticker.C:
-			if interrupted.Load() {
-				return true
-			}
+	// Block until a subprocess completes or check for interrupts.
+	select {
+	case <-s.wakeup:
+	case <-time.After(25 * time.Millisecond):
+		if interrupted.Load() {
+			return true
 		}
 	}
 
-	// At least one subprocess is now done. Sweep all completed
-	// subprocesses, sorted by completion time with start order
-	// as tiebreaker for simultaneous completions.
+	// Sweep all done subprocesses in start order.
 	s.mu.Lock()
 	s.sweepDone()
 	s.mu.Unlock()
-
 	return interrupted.Load()
 }
 
@@ -304,8 +271,6 @@ func (s *Set) NextFinished() *Subprocess {
 }
 
 func (s *Set) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, sub := range s.running {
 		sub.Kill()
 	}
