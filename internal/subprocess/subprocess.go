@@ -49,10 +49,10 @@ type Subprocess struct {
 	cmd          *exec.Cmd
 	stdOutAndErr *bytes.Buffer
 
-	mu        *sync.Mutex
-	exitError *exec.ExitError
-	done      chan struct{}
-	index     int
+	mu          *sync.Mutex
+	exitError   *exec.ExitError
+	done        chan struct{}
+	completedAt int64 // UnixMilli timestamp, set just before close(done)
 }
 
 func NewSubprocess(command string, useConsole bool) (*Subprocess, error) {
@@ -85,6 +85,7 @@ func NewSubprocess(command string, useConsole bool) (*Subprocess, error) {
 			s.exitError = err.(*exec.ExitError)
 			s.mu.Unlock()
 		}
+		s.completedAt = time.Now().UnixMilli()
 		close(s.done)
 	}()
 	return s, nil
@@ -151,19 +152,17 @@ type Set struct {
 	mu       *sync.Mutex
 	running  []*Subprocess
 	finished []*Subprocess
-	// completed receives subprocesses as they finish. Buffered so
-	// completion goroutines don't block. DoWork drains this channel,
-	// sorts each batch by start index, then appends to finished.
-	completed    chan *Subprocess
-	subprocCount int
+	// wakeup is signaled (non-blocking) when any subprocess completes.
+	// This allows DoWork to block efficiently instead of busy-polling.
+	wakeup chan struct{}
 }
 
 func NewSet() *Set {
 	return &Set{
-		mu:        &sync.Mutex{},
-		running:   make([]*Subprocess, 0),
-		finished:  make([]*Subprocess, 0),
-		completed: make(chan *Subprocess, 1024),
+		mu:       &sync.Mutex{},
+		running:  make([]*Subprocess, 0),
+		finished: make([]*Subprocess, 0),
+		wakeup:   make(chan struct{}, 1),
 	}
 }
 
@@ -173,14 +172,16 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 		return nil, err
 	}
 	s.mu.Lock()
-	sub.index = s.subprocCount
-	s.subprocCount++
 	s.running = append(s.running, sub)
 	s.mu.Unlock()
 
 	go func() {
 		<-sub.done
-		s.completed <- sub
+
+		select {
+		case s.wakeup <- struct{}{}:
+		default:
+		}
 	}()
 	return sub, nil
 }
@@ -203,37 +204,77 @@ func (s *Set) Finished() []*Subprocess {
 	return f
 }
 
-// DoWork blocks until at least one subprocess has completed, then
-// moves all simultaneously-completed subprocesses from running to
-// finished in start order.
+// sweepDone moves all completed subprocesses from running to finished,
+// sorted by completion time with start order as tiebreaker for
+// simultaneous completions.
 //
-// This matches the C++ ninja ppoll/pselect behavior: completions that
-// arrive between DoWork calls are batched and sorted by start order
-// (the position in running_), while completions separated by DoWork
-// calls preserve their natural completion order.
+// This matches the C++ ninja ppoll/pselect behavior: when multiple fds
+// are ready in the same ppoll call, they are iterated in start order.
+// Here, subprocesses that completed in the same millisecond are treated
+// as simultaneous and ordered by their position in the running slice
+// (which preserves start order).
+//
+// Must be called with s.mu held. Returns true if any were found.
+func (s *Set) sweepDone() bool {
+	type indexed struct {
+		sub *Subprocess
+		pos int // position in running slice (start order)
+	}
+	nextRunning := s.running[:0]
+	var swept []indexed
+	for i, sub := range s.running {
+		if sub.Done() {
+			swept = append(swept, indexed{sub, i})
+		} else {
+			nextRunning = append(nextRunning, sub)
+		}
+	}
+	s.running = nextRunning
+
+	slices.SortFunc(swept, func(a, b indexed) int {
+		if a.sub.completedAt != b.sub.completedAt {
+			return int(a.sub.completedAt - b.sub.completedAt)
+		}
+		return a.pos - b.pos
+	})
+	for _, item := range swept {
+		s.finished = append(s.finished, item.sub)
+	}
+	return len(swept) > 0
+}
+
+// DoWork blocks until at least one subprocess has completed, then moves
+// all completed subprocesses from running to finished.
+//
+// Completed subprocesses are ordered by completion time (millisecond
+// precision), with start order as a tiebreaker for subprocesses that
+// complete within the same millisecond. This matches the C++ ninja
+// ppoll/pselect behavior where simultaneously-ready fds are iterated
+// in their position order within the running_ vector.
 func (s *Set) DoWork() bool {
 	if interrupted.Load() {
 		return true
 	}
 
 	s.mu.Lock()
-	hasFinished := len(s.finished) > 0
-	hasRunning := len(s.running) > 0
+	foundCompletedTask := s.sweepDone()
+	noRunning := len(s.running) == 0
 	s.mu.Unlock()
 
-	// If any subprocesses have already completed, return immediately.
-	if hasFinished || !hasRunning {
+	// First sweep: check if any subprocesses are already done.
+	if foundCompletedTask || noRunning {
 		return interrupted.Load()
 	}
 
-	// Block until at least one subprocess completes or we're interrupted.
-	var batch []*Subprocess
+	// No subprocess is done yet. Block until one completes or we're
+	// interrupted.
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
-	for len(batch) == 0 {
+	for woken := false; !woken; {
 		select {
-		case sub := <-s.completed:
-			batch = append(batch, sub)
+		case <-s.wakeup:
+			// A subprocess completed.
+			woken = true
 		case <-ticker.C:
 			if interrupted.Load() {
 				return true
@@ -241,31 +282,11 @@ func (s *Set) DoWork() bool {
 		}
 	}
 
-	// Drain any other completions that arrived at the same time.
-	draining := true
-	for draining {
-		select {
-		case sub := <-s.completed:
-			batch = append(batch, sub)
-		default:
-			draining = false
-		}
-	}
-
-	// Sort the batch by start order so that simultaneously-completing
-	// subprocesses appear in the same order they were started. This
-	// matches C++ ninja's ppoll behavior where multiple ready fds are
-	// iterated in their position order within the running_ vector.
-	slices.SortFunc(batch, func(a, b *Subprocess) int {
-		return a.index - b.index
-	})
-
-	// Move from running to finished in sorted order.
+	// At least one subprocess is now done. Sweep all completed
+	// subprocesses, sorted by completion time with start order
+	// as tiebreaker for simultaneous completions.
 	s.mu.Lock()
-	for _, sub := range batch {
-		s.running = slices.DeleteFunc(s.running, func(r *Subprocess) bool { return r == sub })
-	}
-	s.finished = append(s.finished, batch...)
+	s.sweepDone()
 	s.mu.Unlock()
 
 	return interrupted.Load()
