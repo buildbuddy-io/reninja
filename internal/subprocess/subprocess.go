@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -176,6 +177,16 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 	go func() {
 		<-sub.done
 
+		// Move this subprocess from running to finished under the lock.
+		// Because each goroutine appends to finished as it completes,
+		// the finished slice preserves completion order (not start order).
+		// This matches the C++ ppoll/pselect behavior where events are
+		// delivered per-fd as they become ready.
+		s.mu.Lock()
+		s.running = slices.DeleteFunc(s.running, func(r *Subprocess) bool { return r == sub })
+		s.finished = append(s.finished, sub)
+		s.mu.Unlock()
+
 		select {
 		case s.wakeup <- struct{}{}:
 		default:
@@ -202,42 +213,23 @@ func (s *Set) Finished() []*Subprocess {
 	return f
 }
 
-// sweepDone moves all completed subprocesses from running to finished.
-// Must be called with s.mu held. Returns true if any were found.
-func (s *Set) sweepDone() bool {
-	nextRunning := s.running[:0]
-	anyDone := false
-	for _, sub := range s.running {
-		if sub.Done() {
-			s.finished = append(s.finished, sub)
-			anyDone = true
-		} else {
-			nextRunning = append(nextRunning, sub)
-		}
-	}
-	s.running = nextRunning
-	return anyDone
-}
-
-// DoWork blocks until at least one subprocess has completed, then moves
-// all completed subprocesses from running to finished in start order.
+// DoWork blocks until at least one subprocess has completed.
 //
-// This matches the C++ ninja behavior where ppoll/select blocks until at
-// least one fd is ready, then iterates all running subprocesses in start
-// order to collect completions. Without blocking, a busy-poll loop can
-// observe goroutine completions one at a time in non-deterministic order,
-// causing flaky output ordering for concurrent builds.
+// Subprocesses move themselves from running to finished in completion
+// order (see Add), matching the C++ ninja behavior where ppoll/pselect
+// delivers events per-fd as they become ready.
 func (s *Set) DoWork() bool {
 	if interrupted.Load() {
 		return true
 	}
 
 	s.mu.Lock()
-	foundCompletedTask := s.sweepDone()
+	hasFinished := len(s.finished) > 0
+	hasRunning := len(s.running) > 0
 	s.mu.Unlock()
 
-	// First sweep: check if any subprocesses are already done.
-	if foundCompletedTask || len(s.running) == 0 {
+	// If any subprocesses have already completed, return immediately.
+	if hasFinished || !hasRunning {
 		return interrupted.Load()
 	}
 
@@ -257,13 +249,6 @@ func (s *Set) DoWork() bool {
 		}
 	}
 
-	// At least one subprocess is now done. Sweep all completed
-	// subprocesses in start order (the running slice preserves
-	// insertion order).
-	s.mu.Lock()
-	s.sweepDone()
-	s.mu.Unlock()
-
 	return interrupted.Load()
 }
 
@@ -279,6 +264,8 @@ func (s *Set) NextFinished() *Subprocess {
 }
 
 func (s *Set) Clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, sub := range s.running {
 		sub.Kill()
 	}
