@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/buildbuddy-io/reninja/internal/exit_status"
 )
@@ -148,6 +149,10 @@ type Set struct {
 	mu       *sync.Mutex
 	running  []*Subprocess
 	finished []*Subprocess
+
+	// wakeup is signaled (non-blocking) when any subprocess completes.
+	// This lets DoWork block efficiently instead of busy-polling.
+	wakeup chan struct{}
 }
 
 func NewSet() *Set {
@@ -155,6 +160,7 @@ func NewSet() *Set {
 		mu:       &sync.Mutex{},
 		running:  make([]*Subprocess, 0),
 		finished: make([]*Subprocess, 0),
+		wakeup:   make(chan struct{}, 1),
 	}
 }
 
@@ -166,6 +172,14 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 	s.mu.Lock()
 	s.running = append(s.running, sub)
 	s.mu.Unlock()
+	go func() {
+		<-sub.done
+		// Non-blocking send: if there's already a wakeup pending, skip.
+		select {
+		case s.wakeup <- struct{}{}:
+		default:
+		}
+	}()
 	return sub, nil
 }
 
@@ -187,21 +201,61 @@ func (s *Set) Finished() []*Subprocess {
 	return f
 }
 
-func (s *Set) DoWork() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// sweepDone moves all completed subprocesses from running to finished
+// in start order. This matches C++ ninja's ppoll behavior: when ppoll
+// returns with multiple ready fds, they are iterated in their position
+// within running_ (i.e. start order).
+//
+// Must be called with s.mu held. Returns true if any were moved.
+func (s *Set) sweepDone() bool {
 	nextRunning := s.running[:0]
+	found := false
 	for _, sub := range s.running {
-		if interrupted.Load() {
-			return true
-		}
 		if sub.Done() {
 			s.finished = append(s.finished, sub)
+			found = true
 		} else {
 			nextRunning = append(nextRunning, sub)
 		}
 	}
 	s.running = nextRunning
+	return found
+}
+
+// DoWork waits for at least one subprocess to finish, then sweeps all
+// completed subprocesses into the finished list in start order.
+//
+// This matches C++ ninja's ppoll-based DoWork: block until at least one
+// fd is ready, then iterate running_ in order processing all ready fds.
+// Simultaneous completions get start order; separated completions get
+// completion order (because only the first one is done when we sweep).
+// Returns true if interrupted.
+func (s *Set) DoWork() bool {
+	if interrupted.Load() {
+		return true
+	}
+
+	// Check if any subprocesses are already done (non-blocking).
+	s.mu.Lock()
+	found := s.sweepDone()
+	s.mu.Unlock()
+	if found {
+		return interrupted.Load()
+	}
+
+	// Block until a subprocess completes or check for interrupts.
+	select {
+	case <-s.wakeup:
+	case <-time.After(25 * time.Millisecond):
+		if interrupted.Load() {
+			return true
+		}
+	}
+
+	// Sweep all done subprocesses in start order.
+	s.mu.Lock()
+	s.sweepDone()
+	s.mu.Unlock()
 	return interrupted.Load()
 }
 
