@@ -559,7 +559,7 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 			if err := r.downloader.GetBlob(gctx, casDigest, buf); err != nil {
 				return err
 			}
-			stderr += buf.String()
+			stderr = buf.String()
 			return nil
 		})
 	}
