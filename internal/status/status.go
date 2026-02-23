@@ -180,7 +180,6 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		progressStatusFormat: progressStatusFormat,
 		ticker:               time.NewTicker(500 * time.Millisecond),
 		done:                 make(chan bool),
-		mu:                   &sync.Mutex{},
 		logsInitialized:      &sync.Once{},
 	}
 
@@ -603,9 +602,7 @@ func (p *StatusPrinter) recordSystemMetrics(t time.Time) {
 	if p.flamegraph == nil {
 		return
 	}
-	p.mu.Lock()
 	actionsRunning := p.runningEdges
-	p.mu.Unlock()
 
 	p.flamegraph.RecordActionCount(actionsRunning, t)
 	p.flamegraph.RecordLoadAverage(util.GetLoadAverage(), t)

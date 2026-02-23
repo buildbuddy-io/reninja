@@ -149,9 +149,9 @@ type Set struct {
 	mu       *sync.Mutex
 	running  []*Subprocess
 	finished []*Subprocess
+
 	// wakeup is signaled (non-blocking) when any subprocess completes.
-	// This allows DoWork to block efficiently instead of busy-polling,
-	// matching the C++ ppoll/select behavior.
+	// This lets DoWork block efficiently instead of busy-polling.
 	wakeup chan struct{}
 }
 
@@ -172,10 +172,9 @@ func (s *Set) Add(command string, useConsole bool) (*Subprocess, error) {
 	s.mu.Lock()
 	s.running = append(s.running, sub)
 	s.mu.Unlock()
-
 	go func() {
 		<-sub.done
-
+		// Non-blocking send: if there's already a wakeup pending, skip.
 		select {
 		case s.wakeup <- struct{}{}:
 		default:
@@ -202,68 +201,61 @@ func (s *Set) Finished() []*Subprocess {
 	return f
 }
 
-// sweepDone moves all completed subprocesses from running to finished.
-// Must be called with s.mu held. Returns true if any were found.
+// sweepDone moves all completed subprocesses from running to finished
+// in start order. This matches C++ ninja's ppoll behavior: when ppoll
+// returns with multiple ready fds, they are iterated in their position
+// within running_ (i.e. start order).
+//
+// Must be called with s.mu held. Returns true if any were moved.
 func (s *Set) sweepDone() bool {
 	nextRunning := s.running[:0]
-	anyDone := false
+	found := false
 	for _, sub := range s.running {
 		if sub.Done() {
 			s.finished = append(s.finished, sub)
-			anyDone = true
+			found = true
 		} else {
 			nextRunning = append(nextRunning, sub)
 		}
 	}
 	s.running = nextRunning
-	return anyDone
+	return found
 }
 
-// DoWork blocks until at least one subprocess has completed, then moves
-// all completed subprocesses from running to finished in start order.
+// DoWork waits for at least one subprocess to finish, then sweeps all
+// completed subprocesses into the finished list in start order.
 //
-// This matches the C++ ninja behavior where ppoll/select blocks until at
-// least one fd is ready, then iterates all running subprocesses in start
-// order to collect completions. Without blocking, a busy-poll loop can
-// observe goroutine completions one at a time in non-deterministic order,
-// causing flaky output ordering for concurrent builds.
+// This matches C++ ninja's ppoll-based DoWork: block until at least one
+// fd is ready, then iterate running_ in order processing all ready fds.
+// Simultaneous completions get start order; separated completions get
+// completion order (because only the first one is done when we sweep).
+// Returns true if interrupted.
 func (s *Set) DoWork() bool {
 	if interrupted.Load() {
 		return true
 	}
 
+	// Check if any subprocesses are already done (non-blocking).
 	s.mu.Lock()
-	foundCompletedTask := s.sweepDone()
+	found := s.sweepDone()
 	s.mu.Unlock()
-
-	// First sweep: check if any subprocesses are already done.
-	if foundCompletedTask || len(s.running) == 0 {
+	if found {
 		return interrupted.Load()
 	}
 
-	// No subprocess is done yet. Block until one completes or we're
-	// interrupted.
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for woken := false; !woken; {
-		select {
-		case <-s.wakeup:
-			// A subprocess completed.
-			woken = true
-		case <-ticker.C:
-			if interrupted.Load() {
-				return true
-			}
+	// Block until a subprocess completes or check for interrupts.
+	select {
+	case <-s.wakeup:
+	case <-time.After(25 * time.Millisecond):
+		if interrupted.Load() {
+			return true
 		}
 	}
 
-	// At least one subprocess is now done. Sweep all completed
-	// subprocesses in start order (the running slice preserves
-	// insertion order).
+	// Sweep all done subprocesses in start order.
 	s.mu.Lock()
 	s.sweepDone()
 	s.mu.Unlock()
-
 	return interrupted.Load()
 }
 
