@@ -151,30 +151,6 @@ func (r *RemoteCommandRunner) CanRunMore() int {
 	return capacity
 }
 
-// activeOutputPaths returns the set of absolute output paths from all
-// currently-active edges. On incremental builds, stale outputs from a previous
-// build exist on disk and would be included in a full-tree walk. If an active
-// edge's fetchOutputsAndResult rewrites one of these files between the hash and
-// upload phases, the server detects a digest mismatch. Excluding these paths
-// from the walk prevents that race.
-func (r *RemoteCommandRunner) activeOutputPaths() map[string]struct{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	outputs := make(map[string]struct{})
-	for _, edgeState := range r.activeEdges {
-		for _, output := range edgeState.edge.Outputs() {
-			p := output.Path()
-			if !filepath.IsAbs(p) {
-				if abs, err := filepath.Abs(p); err == nil {
-					p = abs
-				}
-			}
-			outputs[p] = struct{}{}
-		}
-	}
-	return outputs
-}
-
 func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, error) {
 	command := edge.EvaluateCommand(false)
 	absoluteMode := strings.Contains(command, project_root.Root())
@@ -400,29 +376,16 @@ func (r *RemoteCommandRunner) computeInputs(ctx context.Context, edge *graph.Edg
 		}
 	}
 
-	// Exclude outputs of concurrently-active edges. On incremental builds,
-	// stale outputs from a previous build exist on disk and may be picked up
-	// by heuristic input discovery (e.g. sibling files in a directory walk).
-	// If a concurrent edge rewrites one of these files between the hash and
-	// upload phases, the server detects a digest mismatch. Filtering them
-	// out prevents that race.
-	activeOutputs := r.activeOutputPaths()
-	files = slices.DeleteFunc(files, func(f string) bool {
-		p := f
-		if !filepath.IsAbs(p) {
-			if abs, err := filepath.Abs(p); err == nil {
-				p = abs
-			}
-		}
-		_, excluded := activeOutputs[p]
-		return excluded
-	})
-
 	// Filter out ninja metadata files (.ninja_log, .ninja_deps, etc.) that
 	// may have been picked up by heuristic directory walks. These are local
 	// build state and should never be uploaded as action inputs.
+	// Also filter out .ninjatmp files which are transient temp files created
+	// during atomic output writes. A concurrent edge's directory walk may
+	// discover these before the rename completes. By definition, these cannot
+	// be inputs of this action, as they have not finished yet.
 	files = slices.DeleteFunc(files, func(f string) bool {
-		return strings.HasPrefix(filepath.Base(f), ".ninja_")
+		base := filepath.Base(f)
+		return strings.HasPrefix(base, ".ninja_") || strings.HasSuffix(base, ninjaTempFileSuffix)
 	})
 
 	return files, nil
@@ -456,6 +419,22 @@ func (r *RemoteCommandRunner) assembleAndHashAction(ctx context.Context, edge *g
 	return action, cmd, flattenedTree, nil
 }
 
+const ninjaTempFileSuffix = ".ninjatmp"
+
+func inplaceTempFilePath(filePath string) string {
+	fnameOnly := filepath.Base(filePath)
+	tmpFileName := "." + fnameOnly + ninjaTempFileSuffix
+	return filepath.Join(filepath.Dir(filePath), tmpFileName)
+}
+
+func removeIfExists(filename string) error {
+	err := os.Remove(filename)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionResult *repb.ActionResult, edge *graph.Edge) (*spawn.Result, error) {
 	defer span.Record(ctx, "remote output download")()
 	instanceName := remote_flags.RemoteInstanceName()
@@ -486,23 +465,33 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 				return nil // Skip writing any outputs that aren't outputs of this edge.
 			}
 
-			f, err := os.Create(outputFile.GetPath())
+			tmpFilePath := inplaceTempFilePath(outputFile.GetPath())
+			f, err := os.Create(tmpFilePath)
 			if err != nil {
 				return err
 			}
-			defer f.Close()
+
+			// We defer a cleanup function that would delete our tempfile here.
+			// That way if the write is truncated, we still remove the temp file.
+			defer func() {
+				if err := removeIfExists(tmpFilePath); err != nil {
+					util.Warningf("Failed to delete temp file %s: %s", tmpFilePath, err)
+				}
+			}()
 
 			casDigest := digest.NewCASResourceName(outputFile.GetDigest(), instanceName, digestFunction)
 			if err := r.downloader.GetBlob(gctx, casDigest, f); err != nil {
 				return err
 			}
+			if err := f.Close(); err != nil {
+				return err
+			}
 			if outputFile.GetIsExecutable() {
-				if err := os.Chmod(outputFile.GetPath(), 0755); err != nil {
+				if err := os.Chmod(tmpFilePath, 0755); err != nil {
 					return err
 				}
 			}
-
-			return nil
+			return os.Rename(tmpFilePath, outputFile.GetPath())
 		})
 	}
 
@@ -563,7 +552,7 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 			if err := r.downloader.GetBlob(gctx, casDigest, buf); err != nil {
 				return err
 			}
-			stderr += buf.String()
+			stderr = buf.String()
 			return nil
 		})
 	}
