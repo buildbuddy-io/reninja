@@ -3,7 +3,6 @@ package build
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -253,14 +252,11 @@ func canComputeInputs(edge *graph.Edge) bool {
 			continue
 		}
 		// Source file — check if the include scanner can handle it.
-		ext := strings.ToLower(filepath.Ext(input.Path()))
-		switch ext {
-		case ".c", ".cc", ".cpp", ".cxx", ".s":
+		scannable := include_scanner.IsScannable(input.Path())
+		if scannable {
 			continue
-		default:
-			fmt.Printf("canComputeInputs: unknown source input %s\n", input.Path())
-			return false
 		}
+		return false
 	}
 	return true
 }

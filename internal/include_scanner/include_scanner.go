@@ -32,6 +32,13 @@ var scannableExtensions = map[string]bool{
 	".s":   true, // assembly (preprocessed via cpp)
 }
 
+// IsScannable returns true if the fileExtension is one that this library could
+// be used to scan. fileExtension must be of the format ".ext" or ".EXT"
+func IsScannable(filePath string) bool {
+	fileExtension := strings.ToLower(filepath.Ext(filePath))
+	return scannableExtensions[fileExtension]
+}
+
 var includeRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import)\s*(["<])([^">]+)[">]`)
 
 // Inclusion represents a single #include directive.
