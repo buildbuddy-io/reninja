@@ -12,7 +12,9 @@ import (
 var (
 	enableBES   = flag.Bool("bes", false, "If true, send Build Event Stream (BES) to --bes_backend")
 	enableCache = flag.Bool("cache", false, "If true, read and write actions to --remote_cache")
+	enableExec  = flag.Bool("exec", false, "If true, execute actions remotely on --remote_executor")
 
+	// Easy defaults
 	besBackend         = flag.String("bes_backend", "remote.buildbuddy.io", "BES backend target, like remote.buildbuddy.io")
 	remoteCache        = flag.String("remote_cache", "remote.buildbuddy.io", "Remote cache target, like remote.buildbuddy.io")
 	remoteExecutor     = flag.String("remote_executor", "remote.buildbuddy.io", "Remote execution target, like remote.buildbuddy.io")
@@ -21,6 +23,10 @@ var (
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
 	projectRoot        = flag.String("project_root", "", "Project root directory for remote execution. Auto-detected from .gclient/.git if not set.")
 	digestFunction     = flag.String("digest_function", "BLAKE3", "If set, use this digest function for uploads.")
+
+	// Path munging and stuff. Configure this if your project needs it.
+	includeScanning = flag.Bool("enable_include_scanning", true, "If true, scan header files for implicit deps and include in the input root of remotely executed actions")
+	containerImage  = flag.String("container_image", "", "Container image for remote execution, e.g. docker://gcr.io/YOUR:IMAGE")
 )
 
 func EnableBES() bool {
@@ -29,6 +35,10 @@ func EnableBES() bool {
 
 func EnableCache() bool {
 	return *enableCache
+}
+
+func EnableExec() bool {
+	return *enableExec
 }
 
 func BESBackend() string {
@@ -77,4 +87,12 @@ func parseDigestFuncString() repb.DigestFunction_Value {
 func DigestFunction() repb.DigestFunction_Value {
 	once := sync.OnceValue(parseDigestFuncString)
 	return once()
+}
+
+func IncludeScanning() bool {
+	return *includeScanning
+}
+
+func ContainerImage() string {
+	return *containerImage
 }

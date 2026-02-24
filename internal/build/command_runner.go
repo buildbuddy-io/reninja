@@ -26,6 +26,14 @@ type CommandRunner interface {
 	ClearJobTokens()
 }
 
+// CancellableCommandRunner is an optional interface that command runners
+// can implement to support cancelling in-flight work without a full abort.
+// This is used to stop pending remote actions promptly when the failure
+// budget is exhausted, rather than waiting for all of them to complete.
+type CancellableCommandRunner interface {
+	Cancel()
+}
+
 type DryCommandRunner struct {
 	finished []*graph.Edge
 }
@@ -79,6 +87,9 @@ type RealCommandRunner struct {
 }
 
 func NewRealCommandRunner(config *build_config.Config, jobserver jobserver.Client) CommandRunner {
+	if remote_flags.EnableCache() && remote_flags.EnableExec() {
+		return NewRemoteCommandRunner(config, jobserver)
+	}
 	if remote_flags.EnableCache() {
 		return NewRemoteCachingCommandRunner(config, jobserver)
 	}

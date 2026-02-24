@@ -112,6 +112,10 @@ func (r *RemoteCachingCommandRunner) GetActiveEdges() []*graph.Edge {
 	return active
 }
 
+func (r *RemoteCachingCommandRunner) Cancel() {
+	r.cancel()
+}
+
 func (r *RemoteCachingCommandRunner) Abort() {
 	r.cancel()
 	r.ClearJobTokens()

@@ -1,6 +1,7 @@
 package filetransfer
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/cachetools"
 	"github.com/buildbuddy-io/reninja/internal/digest"
 	"github.com/buildbuddy-io/reninja/internal/grpc_client"
+	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/remote_headers"
 	"github.com/buildbuddy-io/reninja/internal/statuserr"
@@ -44,12 +46,12 @@ var (
 	defaultDownloader *Downloader
 )
 
-func initializeClients() {
+func InitializeClients(maxJobs int) {
 	once.Do(func() {
 		if remote_flags.RemoteCache() == "" {
 			return
 		}
-		conn, err := grpc_client.DialSimple(context.TODO(), remote_flags.RemoteCache())
+		conn, err := grpc_client.DialSimpleWithPoolSize(context.TODO(), remote_flags.RemoteCache(), max(1, maxJobs/100))
 		if err != nil {
 			util.Errorf("error dialing remote cache: %s", err)
 			return
@@ -63,12 +65,12 @@ func initializeClients() {
 }
 
 func DefaultUploader() *Uploader {
-	initializeClients()
+	InitializeClients(100)
 	return defaultUploader
 }
 
 func DefaultDownloader() *Downloader {
-	initializeClients()
+	InitializeClients(100)
 	return defaultDownloader
 }
 
@@ -126,17 +128,23 @@ func (u *Uploader) UploadFile(ctx context.Context, path string) (*digest.CASReso
 }
 
 func cleanPaths(dirty []string) ([]string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
+	root := project_root.Root()
 	cleanedFiles := make([]string, len(dirty))
 	for i, dirtyPath := range dirty {
-		if !filepath.IsAbs(dirtyPath) {
-			cleaned, err := filepath.Abs(dirtyPath)
-			if err != nil {
-				return nil, err
-			}
-			cleanedFiles[i] = cleaned
-		} else {
-			cleanedFiles[i] = filepath.Clean(dirtyPath)
+		absPath := dirtyPath
+		if !filepath.IsAbs(absPath) {
+			absPath = filepath.Join(cwd, absPath)
 		}
+		cleaned, err := filepath.Rel(root, absPath)
+		if err != nil {
+			return nil, err
+		}
+		cleanedFiles[i] = cleaned
 	}
 	return cleanedFiles, nil
 }
@@ -169,6 +177,7 @@ func hierarchicalPathCompare(p1, p2 string) int {
 
 func expandTree(cleanedFiles []string) []string {
 	paths := make(map[string]struct{}, len(cleanedFiles))
+	paths["."] = struct{}{} // Always include the root directory
 	for _, path := range cleanedFiles {
 		start := 0
 		for i := strings.IndexRune(path, filepath.Separator); i >= 0; i = strings.IndexRune(path[start:], filepath.Separator) {
@@ -181,10 +190,21 @@ func expandTree(cleanedFiles []string) []string {
 		paths[path] = struct{}{}
 	}
 
+	// Ensure the working directory and all its parents exist in the tree.
+	// REAPI requires working_directory to be present in the input root.
+	wd := project_root.WorkingDirectory()
+	if wd != "." && wd != "" {
+		for wd != "." && wd != "" {
+			paths[wd] = struct{}{}
+			wd = filepath.Dir(wd)
+		}
+	}
+
 	// Sort so that each path is directly followed by its children.
-	return slices.SortedFunc(maps.Keys(paths), func(i, j string) int {
+	sorted := slices.SortedFunc(maps.Keys(paths), func(i, j string) int {
 		return hierarchicalPathCompare(i, j)
 	})
+	return sorted
 }
 
 type FlattenedTree []*UploadableNode
@@ -200,6 +220,7 @@ func (u Uploader) HashDirectoryTree(files []string) (*repb.Digest, FlattenedTree
 	if err != nil {
 		return nil, nil, err
 	}
+
 	return rootDirectoryDigest, visited, nil
 }
 
@@ -255,12 +276,14 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 		rest = pathsToUpload[1:]
 	}
 
+	diskRoot := project_root.Root()
 	for i, path := range rest {
 		if filepath.Dir(path) != root {
 			continue
 		}
 		name := filepath.Base(path)
-		entry, err := os.Lstat(path) // NB: Lstat.
+		diskPath := filepath.Join(diskRoot, path)
+		entry, err := os.Lstat(diskPath) // NB: Lstat.
 		if err != nil {
 			return nil, nil, err
 		}
@@ -276,7 +299,8 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 			})
 		} else if entry.Mode().IsRegular() {
 			info := entry
-			d, err := digest.ComputeForFile(path, digestFunction)
+			diskPath := diskPath
+			d, err := digest.ComputeForFile(diskPath, digestFunction)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -285,15 +309,14 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 				Digest:       d,
 				IsExecutable: isExecutable(info),
 			})
-			path := path
 			visited = append(visited, &UploadableNode{
 				Digest: d,
 				ReadFn: func() (io.ReadSeekCloser, error) {
-					return os.Open(path)
+					return os.Open(diskPath)
 				},
 			})
 		} else if entry.Mode()&os.ModeSymlink == os.ModeSymlink {
-			target, err := os.Readlink(path)
+			target, err := os.Readlink(diskPath)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -302,6 +325,32 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 				Target: target,
 			})
 			// Symlinks don't need to be uploaded separately; they're part of the Directory proto
+		}
+	}
+
+	// Workaround: some REAPI servers (e.g. BuildBuddy) skip empty
+	// directories during GetTree, which causes working_directory validation
+	// to fail. If this directory is empty and lies on the working directory
+	// path, inject a small synthetic ".reninja" file so the directory proto
+	// is non-empty and the server processes it.
+	if len(dir.Files) == 0 && len(dir.Directories) == 0 && len(dir.Symlinks) == 0 {
+		wd := project_root.WorkingDirectory()
+		if wd != "" && wd != "." && (root == wd || strings.HasPrefix(wd, root+"/")) {
+			content := []byte("reninja")
+			fd, err := digest.Compute(bytes.NewReader(content), digestFunction)
+			if err != nil {
+				return nil, nil, err
+			}
+			dir.Files = append(dir.Files, &repb.FileNode{
+				Name:   ".reninja",
+				Digest: fd,
+			})
+			visited = append(visited, &UploadableNode{
+				Digest: fd,
+				ReadFn: func() (io.ReadSeekCloser, error) {
+					return cachetools.NewBytesReadSeekCloser(content), nil
+				},
+			})
 		}
 	}
 

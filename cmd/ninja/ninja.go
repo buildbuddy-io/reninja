@@ -28,6 +28,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/dyndep"
 	"github.com/buildbuddy-io/reninja/internal/dyndep_parser"
 	"github.com/buildbuddy-io/reninja/internal/exit_status"
+	"github.com/buildbuddy-io/reninja/internal/filetransfer"
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/graphviz"
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
@@ -35,6 +36,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/metrics"
 	"github.com/buildbuddy-io/reninja/internal/missing_deps"
 	"github.com/buildbuddy-io/reninja/internal/ninjarc"
+	"github.com/buildbuddy-io/reninja/internal/remote_exec"
 	"github.com/buildbuddy-io/reninja/internal/state"
 	"github.com/buildbuddy-io/reninja/internal/status"
 	"github.com/buildbuddy-io/reninja/internal/subprocess"
@@ -1707,6 +1709,9 @@ func main() {
 	if exitCode >= 0 {
 		os.Exit(exitCode)
 	}
+
+	remote_exec.InitializeClients(config.Parallelism)
+	filetransfer.InitializeClients(config.Parallelism)
 
 	status := status.NewPrinter(config)
 	status.InitializeTool(toolName, positionalArgs)

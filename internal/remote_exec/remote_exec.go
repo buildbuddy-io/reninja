@@ -24,7 +24,7 @@ var (
 	defaultExecutor *Executor
 )
 
-func initializeClients() {
+func InitializeClients(maxJobs int) {
 	once.Do(func() {
 		if remote_flags.RemoteCache() == "" {
 			return
@@ -32,7 +32,7 @@ func initializeClients() {
 		if remote_flags.RemoteExecutor() == "" {
 			return
 		}
-		conn, err := grpc_client.DialSimpleWithPoolSize(context.TODO(), remote_flags.RemoteExecutor(), 10)
+		conn, err := grpc_client.DialSimpleWithPoolSize(context.TODO(), remote_flags.RemoteExecutor(), max(1, maxJobs/100))
 		if err != nil {
 			util.Errorf("error dialing remote execution service: %s", err)
 			return
@@ -43,7 +43,7 @@ func initializeClients() {
 }
 
 func DefaultExecutor() *Executor {
-	initializeClients()
+	InitializeClients(100)
 	return defaultExecutor
 }
 

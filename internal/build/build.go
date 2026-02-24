@@ -866,6 +866,17 @@ func (b *Builder) Build() (exit_status.ExitStatusType, error) {
 				if failuresAllowed > 0 {
 					failuresAllowed -= 1
 				}
+
+				// HACK: when remote execution is enabled, it's
+				// common to run with -j 1000 or more. This
+				// makes ninja very slow to stop on error. So
+				// for caching/remote command runner, allow
+				// yanking the context on failure.
+				if failuresAllowed == 0 {
+					if c, ok := b.commandRunner.(CancellableCommandRunner); ok {
+						c.Cancel()
+					}
+				}
 			}
 
 			// We made some progress; start the main loop over.
