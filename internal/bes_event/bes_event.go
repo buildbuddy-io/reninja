@@ -64,6 +64,9 @@ func getStructuredCommandLine() *clpb.CommandLine {
 		if val == "" {
 			return
 		}
+		if val == f.DefValue {
+			return
+		}
 		options = append(options, &clpb.Option{
 			CombinedForm: fmt.Sprintf("--%s=%s", f.Name, val),
 			OptionName:   f.Name,

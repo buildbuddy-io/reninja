@@ -53,10 +53,10 @@ type RemoteCommandRunner struct {
 
 func NewRemoteCommandRunner(config *build_config.Config, jobserver jobserver.Client) *RemoteCommandRunner {
 	if filetransfer.DefaultUploader() == nil || filetransfer.DefaultDownloader() == nil {
-		util.Fatalf("--cache requires --remote_cache to be set")
+		util.Fatalf("--remote_cache is set but cache client could not be initialized")
 	}
 	if remote_exec.DefaultExecutor() == nil {
-		util.Fatalf("--exec requires --remote_executor to be set")
+		util.Fatalf("--remote_executor is set but executor client could not be initialized")
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.TODO())

@@ -66,7 +66,7 @@ type activeEdgeState struct {
 
 func NewRemoteCachingCommandRunner(config *build_config.Config, jobserver jobserver.Client) *RemoteCachingCommandRunner {
 	if filetransfer.DefaultUploader() == nil || filetransfer.DefaultDownloader() == nil {
-		util.Fatalf("--cache requires --remote_cache to be set")
+		util.Fatalf("--remote_cache is set but cache client could not be initialized")
 	}
 	ctx, cancelFunc := context.WithCancel(context.TODO())
 

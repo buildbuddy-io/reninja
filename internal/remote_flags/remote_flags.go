@@ -10,14 +10,9 @@ import (
 )
 
 var (
-	enableBES   = flag.Bool("bes", false, "If true, send Build Event Stream (BES) to --bes_backend")
-	enableCache = flag.Bool("cache", false, "If true, read and write actions to --remote_cache")
-	enableExec  = flag.Bool("exec", false, "If true, execute actions remotely on --remote_executor")
-
-	// Easy defaults
-	besBackend         = flag.String("bes_backend", "remote.buildbuddy.io", "BES backend target, like remote.buildbuddy.io")
-	remoteCache        = flag.String("remote_cache", "remote.buildbuddy.io", "Remote cache target, like remote.buildbuddy.io")
-	remoteExecutor     = flag.String("remote_executor", "remote.buildbuddy.io", "Remote execution target, like remote.buildbuddy.io")
+	besBackend         = flag.String("bes_backend", "", "BES backend target, like remote.buildbuddy.io")
+	remoteCache        = flag.String("remote_cache", "", "Remote cache target, like remote.buildbuddy.io")
+	remoteExecutor     = flag.String("remote_executor", "", "Remote execution target, like remote.buildbuddy.io")
 	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
 	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
@@ -30,15 +25,15 @@ var (
 )
 
 func EnableBES() bool {
-	return *enableBES
+	return *besBackend != ""
 }
 
 func EnableCache() bool {
-	return *enableCache
+	return *remoteCache != ""
 }
 
 func EnableExec() bool {
-	return *enableExec
+	return *remoteExecutor != ""
 }
 
 func BESBackend() string {
