@@ -102,6 +102,10 @@ func (r *RemoteCommandRunner) GetActiveEdges() []*graph.Edge {
 	return active
 }
 
+func (r *RemoteCommandRunner) Cancel() {
+	r.cancel()
+}
+
 func (r *RemoteCommandRunner) Abort() {
 	r.cancel()
 	r.ClearJobTokens()
@@ -187,7 +191,6 @@ func (r *RemoteCommandRunner) assembleCommand(edge *graph.Edge) (*repb.Command, 
 			},
 		},
 	}
-	//fmt.Printf("workingDir set to %q\n", cmdProto.WorkingDirectory)
 
 	// If the command references absolute paths, set execroot-path so they
 	// resolve correctly on the remote executor.
@@ -498,6 +501,7 @@ func (r *RemoteCommandRunner) fetchOutputsAndResult(ctx context.Context, actionR
 					return err
 				}
 			}
+
 			return nil
 		})
 	}
@@ -691,6 +695,9 @@ func (r *RemoteCommandRunner) WaitForCommand() *spawn.Result {
 	for {
 		select {
 		case res := <-r.resultCh:
+			if r.context.Err() != nil {
+				return nil
+			}
 			r.mu.Lock()
 			r.activeEdges = slices.DeleteFunc(r.activeEdges, func(n *activeEdgeState) bool {
 				return n.edge == res.Edge
@@ -698,6 +705,9 @@ func (r *RemoteCommandRunner) WaitForCommand() *spawn.Result {
 			r.mu.Unlock()
 			return res
 		case <-ticker.C:
+			if r.context.Err() != nil {
+				return nil
+			}
 			if subprocess.Interrupted() {
 				r.cancel()
 				return nil
