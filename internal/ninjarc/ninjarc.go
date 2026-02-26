@@ -2,19 +2,32 @@ package ninjarc
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/buildbuddy-io/reninja/internal/disk"
+	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/google/shlex"
 )
 
 const (
 	workspacePrefix = `%workspace%/`
+)
+
+var (
+	ignoreConfig = flag.Bool("norc", false, "ignore all RC files (including ones in default locations)")
+	ninjaRCFile  = flag.String("ninjarc", "", "path to a ninjarc file to parse")
+	configFlag   = flag.String("config", "", "ninjarc configuration to apply")
+
+	rcFileLocations = []string{".ninjarc", "%workspace%/.ninjarc", "~/.ninjarc", "/etc/.ninjarc"}
 )
 
 // Package ninjarc defines a simple RC format to configure ninja flags without
@@ -40,53 +53,51 @@ const (
 // value, the `--bes_backend`, `--remote_cache` and `--results_url` flags will
 // be set.
 
-// RcRule is a rule parsed from a bazelrc file.
+// RcRule is a rule parsed from a ninjarc file.
 type RcRule struct {
-	Phase   string
-	Config  string
-	Options []string
+	Phase string
+
+	// Make Config a pointer to a string so we can distinguish default configs
+	// from configs with blank names.
+	Config *string
+
+	// Tokens contains the raw (non-canonicalized) tokens in the rule.
+	Tokens []string
 }
 
-func (r *RcRule) ApplyToFlags() {
-	for _, opt := range r.Options {
-		key, val, ok := strings.Cut(strings.TrimLeft(opt, "-"), "=")
-		if ok {
-			flag.Set(key, val)
-		} else {
-			util.Infof("Skipping unknown opt %q\n", opt)
-		}
-	}
-}
-
-func appendRcRulesFromImport(workspaceDir, path string, opts []*RcRule, optional bool, importStack []string) ([]*RcRule, error) {
-	if strings.HasPrefix(path, workspacePrefix) {
-		path = filepath.Join(workspaceDir, path[len(workspacePrefix):])
-	}
-
-	file, err := os.Open(path)
+func appendRcRulesFromImport(workspaceDir, path string, namedConfigs map[string]map[string][]string, defaultConfig map[string][]string, optional bool, importStack []string) error {
+	realPath, err := Realpath(workspaceDir, path)
 	if err != nil {
 		if optional {
-			return opts, nil
+			return nil
 		}
-		return nil, err
+		return fmt.Errorf("could not determine real path of ninjarc file: %s", err)
 	}
-	defer file.Close()
-	return appendRcRulesFromFile(workspaceDir, file, opts, importStack)
+
+	return AppendRcRulesFromFile(workspaceDir, realPath, namedConfigs, defaultConfig, importStack, optional)
 }
 
-func appendRcRulesFromFile(workspaceDir string, f *os.File, opts []*RcRule, importStack []string) ([]*RcRule, error) {
-	rpath, err := realpath(f.Name())
+// AppendRCRulesFromFile reads and lexes the provided rc file and appends the
+// args to the provided configs based on the detected phase and name.
+//
+// configs is a map keyed by config name where the values are maps keyed by
+// phase name where the values are lists containing all the rules for that
+// config in the order they are encountered.
+func AppendRcRulesFromFile(workspaceDir string, realPath string, namedConfigs map[string]map[string][]string, defaultConfig map[string][]string, importStack []string, optional bool) error {
+	if slices.Contains(importStack, realPath) {
+		return fmt.Errorf("circular import detected: %s -> %s", strings.Join(importStack, " -> "), realPath)
+	}
+	importStack = append(importStack, realPath)
+	file, err := os.Open(realPath)
 	if err != nil {
-		return nil, fmt.Errorf("could not determine real path of bazelrc file: %s", err)
-	}
-	for _, path := range importStack {
-		if path == rpath {
-			return nil, fmt.Errorf("circular import detected: %s -> %s", strings.Join(importStack, " -> "), rpath)
+		if optional {
+			return nil
 		}
+		return err
 	}
-	importStack = append(importStack, rpath)
+	defer file.Close()
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
 		// Handle line continuations (lines can end with "\" to effectively
@@ -94,10 +105,18 @@ func appendRcRulesFromFile(workspaceDir string, f *os.File, opts []*RcRule, impo
 		for strings.HasSuffix(line, `\`) && scanner.Scan() {
 			line = line[:len(line)-1] + scanner.Text()
 		}
-
-		line = stripCommentsAndWhitespace(line)
-
-		tokens := strings.Fields(line)
+		lexer := shlex.NewLexer(strings.NewReader(line))
+		tokens := []string{}
+		for {
+			token, err := lexer.Next()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return fmt.Errorf("Error parsing ninjarc: %s\nFailed to lex '%s'.", err, line)
+			}
+			tokens = append(tokens, token)
+		}
 		if len(tokens) == 0 {
 			// blank line
 			continue
@@ -105,37 +124,54 @@ func appendRcRulesFromFile(workspaceDir string, f *os.File, opts []*RcRule, impo
 		if tokens[0] == "import" || tokens[0] == "try-import" {
 			isOptional := tokens[0] == "try-import"
 			path := strings.TrimSpace(strings.TrimPrefix(line, tokens[0]))
-			opts, err = appendRcRulesFromImport(workspaceDir, path, opts, isOptional, importStack)
-			if err != nil {
-				return nil, err
+			if err := appendRcRulesFromImport(workspaceDir, path, namedConfigs, defaultConfig, isOptional, importStack); err != nil {
+				return err
 			}
 			continue
 		}
 
-		opt, err := parseRcRule(line)
+		rule, err := parseRcRule(line)
 		if err != nil {
-			util.Infof("Error parsing bazelrc option: %s", err.Error())
+			util.Errorf("Error parsing ninjarc option: %s", err.Error())
 			continue
 		}
-		opts = append(opts, opt)
+		if rule == nil {
+			continue
+		}
+		if rule.Config == nil {
+			defaultConfig[rule.Phase] = append(defaultConfig[rule.Phase], rule.Tokens...)
+			continue
+		}
+
+		config, ok := namedConfigs[*rule.Config]
+		if !ok {
+			config = make(map[string][]string)
+			namedConfigs[*rule.Config] = config
+		}
+		config[rule.Phase] = append(config[rule.Phase], rule.Tokens...)
 	}
-	return opts, scanner.Err()
+	return scanner.Err()
 }
 
-func realpath(path string) (string, error) {
+// Realpath evaluates any symlinks in the given path and then returns the
+// absolute path.
+func Realpath(workspaceDir, path string) (string, error) {
+	if strings.HasPrefix(path, workspacePrefix) {
+		path = filepath.Join(workspaceDir, path[len(workspacePrefix):])
+	}
+
+	if strings.HasPrefix(path, "~") {
+		currentUser, err := user.Current()
+		if err != nil {
+			return "", err
+		}
+		path = strings.Replace(path, "~", currentUser.HomeDir, 1)
+	}
 	directPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Abs(directPath)
-}
-
-func stripCommentsAndWhitespace(line string) string {
-	index := strings.Index(line, "#")
-	if index >= 0 {
-		line = line[:index]
-	}
-	return strings.TrimSpace(line)
 }
 
 func parseRcRule(line string) (*RcRule, error) {
@@ -146,48 +182,104 @@ func parseRcRule(line string) (*RcRule, error) {
 	if len(tokens) == 0 {
 		return nil, fmt.Errorf("unexpected empty line")
 	}
-	if strings.HasPrefix(tokens[0], "-") {
-		return &RcRule{
-			Phase:   "common",
-			Options: tokens,
-		}, nil
+	if len(tokens) == 1 {
+		// ninja ignores .ninjarc lines consisting of a single shlex token
+		return nil, nil
 	}
-	if !strings.Contains(tokens[0], ":") {
-		return &RcRule{
-			Phase:   tokens[0],
-			Options: tokens[1:],
-		}, nil
+	phase := tokens[0]
+	var configName *string
+	if colonIndex := strings.Index(tokens[0], ":"); colonIndex != -1 {
+		phase = tokens[0][:colonIndex]
+		v := tokens[0][colonIndex+1:]
+		configName = &v
 	}
-	phaseConfig := strings.Split(tokens[0], ":")
-	if len(phaseConfig) != 2 {
-		return nil, fmt.Errorf("invalid ninjarc syntax: %s", phaseConfig)
-	}
+
 	return &RcRule{
-		Phase:   phaseConfig[0],
-		Config:  phaseConfig[1],
-		Options: tokens[1:],
+		Phase:  phase,
+		Config: configName,
+		Tokens: tokens[1:],
 	}, nil
 }
 
-func ParseRCFiles(workspaceDir string, filePaths ...string) ([]*RcRule, error) {
-	options := make([]*RcRule, 0)
-	for _, filePath := range filePaths {
-		if strings.HasPrefix(filePath, "~") {
-			currentUser, err := user.Current()
-			if err != nil {
-				return nil, err
+type RCConfig struct {
+	namedRcRules   map[string]map[string][]string
+	defaultRcRules map[string][]string
+}
+
+func (c *RCConfig) Apply(toolName string) {
+	for _, opt := range c.defaultRcRules[toolName] {
+		key, val, ok := strings.Cut(strings.TrimLeft(opt, "-"), "=")
+		if ok {
+			if err := flag.Set(key, val); err != nil {
+				util.Warningf("Skipping unknown .ninjarc option %q\n", opt)
 			}
-			filePath = strings.Replace(filePath, "~", currentUser.HomeDir, 1)
 		}
-		file, err := os.Open(filePath)
+	}
+
+	optsByTool := c.namedRcRules[*configFlag]
+	for _, opt := range optsByTool[toolName] {
+		key, val, ok := strings.Cut(strings.TrimLeft(opt, "-"), "=")
+		if ok {
+			if err := flag.Set(key, val); err != nil {
+				util.Warningf("Skipping unknown .ninjarc option %q\n", opt)
+			}
+		}
+	}
+	flag.Parse() // Ensure all RC settings have been applied.
+}
+
+// ParseRCFiles parses the provided rc files in the given workspace into Configs
+// and returns a map of the named configs as well as the default (unnamed)
+// Config.
+func ParseRCFiles(workspaceDir string, filePaths ...string) (*RCConfig, error) {
+	seen := make(map[string]struct{}, len(filePaths))
+	namedRcRules := map[string]map[string][]string{}
+	defaultRcRules := map[string][]string{}
+
+	for _, filePath := range filePaths {
+		r, err := Realpath(workspaceDir, filePath)
 		if err != nil {
 			continue
 		}
-		defer file.Close()
-		options, err = appendRcRulesFromFile(workspaceDir, file, options, nil /*=importStack*/)
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+
+		err = AppendRcRulesFromFile(workspaceDir, r, namedRcRules, defaultRcRules, nil /*=importStack*/, true)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return options, nil
+
+	return &RCConfig{
+		namedRcRules:   namedRcRules,
+		defaultRcRules: defaultRcRules,
+	}, nil
+
+}
+
+func ParseAndApplyRCFilesToFlags(toolName string) error {
+	flag.Parse() // Parse flags once to ensure we have --config, --ninjarc, and --norc
+
+	if *ignoreConfig {
+		return nil
+	}
+
+	filePaths := rcFileLocations
+	if *ninjaRCFile != "" {
+		if !disk.FileExists(*ninjaRCFile) {
+			util.Fatalf("ninjarc file '%s' not found", *ninjaRCFile)
+		}
+		filePaths = append(filePaths, *ninjaRCFile)
+	}
+
+	workspaceDir := project_root.Root()
+	rcConfig, err := ParseRCFiles(workspaceDir, rcFileLocations...)
+	if err != nil {
+		return err
+	}
+
+	rcConfig.Apply(toolName)
+	return nil
 }
