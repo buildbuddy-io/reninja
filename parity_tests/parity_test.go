@@ -64,7 +64,7 @@ func TestParity(t *testing.T) {
 		{
 			Name:      "ninja",
 			Archive:   "ninja-src.tar.gz",
-			Configure: "cmake -G Ninja {source}",
+			Configure: "cmake -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5 {source}",
 			Outputs:   []string{"ninja"},
 			SourceDir: "ninja-1.12.1",
 		},
