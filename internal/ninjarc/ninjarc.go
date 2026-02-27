@@ -207,25 +207,43 @@ type RCConfig struct {
 }
 
 func (c *RCConfig) Apply(toolName string) {
-	for _, opt := range c.defaultRcRules[toolName] {
+	expandedValues := make([]string, 0)
+	seenConfigs := make(map[string]struct{}, 0)
+	tools := []string{"common", toolName}
+
+	var expandRules func(config string)
+	addOptionToExpanded := func(opt string) {
 		key, val, ok := strings.Cut(strings.TrimLeft(opt, "-"), "=")
-		if ok {
-			if err := flag.Set(key, val); err != nil {
-				util.Warningf("Skipping unknown .ninjarc option %q\n", opt)
+		// if we encounter a flag like "--config=dev", then
+		// expand the rules from "dev".
+		if ok && key == "config" {
+			expandRules(val)
+		}
+		expandedValues = append(expandedValues, opt)
+	}
+
+	expandRules = func(config string) {
+		if _, ok := seenConfigs[config]; ok {
+			return
+		}
+		optsByTool := c.namedRcRules[config]
+
+		for _, toolName := range tools {
+			for _, opt := range optsByTool[toolName] {
+				addOptionToExpanded(opt)
 			}
+		}
+		seenConfigs[config] = struct{}{}
+	}
+
+	for _, toolName := range tools {
+		for _, opt := range c.defaultRcRules[toolName] {
+			addOptionToExpanded(opt)
 		}
 	}
 
-	optsByTool := c.namedRcRules[*configFlag]
-	for _, opt := range optsByTool[toolName] {
-		key, val, ok := strings.Cut(strings.TrimLeft(opt, "-"), "=")
-		if ok {
-			if err := flag.Set(key, val); err != nil {
-				util.Warningf("Skipping unknown .ninjarc option %q\n", opt)
-			}
-		}
-	}
-	flag.Parse() // Ensure all RC settings have been applied.
+	expandRules(*configFlag)
+	flag.CommandLine.Parse(expandedValues)
 }
 
 // ParseRCFiles parses the provided rc files in the given workspace into Configs
