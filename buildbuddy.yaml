@@ -42,4 +42,5 @@ actions:
           - "*"
     steps:
       - run: *install_go
+      - run: "source ~/.bashrc && ./parity_tests/generate_testdata.sh"
       - run: "source ~/.bashrc && go test -tags=parity ./parity_tests/"
