@@ -109,7 +109,14 @@ class BuildDir:
           are removed according to the rules described in the comments
           below.
         """
-        ninja_cmd = '{} {}'.format(NINJA_PATH, flags if flags else '')
+        # HACK: ensure ninja ignores config rc files when run in this
+        # test harness.
+        if flags:
+          flags = "--norc " + flags
+        else:
+          flags = "--norc"
+
+        ninja_cmd = '{} {}'.format(NINJA_PATH, flags)
         try:
             if pipe:
                 output = subprocess.check_output(
