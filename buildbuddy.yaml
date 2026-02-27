@@ -49,6 +49,6 @@ actions:
     steps:
       - run: *install_go
       - run: *install_cmake
-      - run: "source ~/.bashrc && go build cmd/ninja/ninja.go && mv ninja /usr/local/bin/ninja"
+      - run: "source ~/.bashrc && go build cmd/ninja/ninja.go && sudo mv ninja /usr/local/bin/ninja"
       - run: "source ~/.bashrc && ./parity_tests/generate_testdata.sh"
       - run: "source ~/.bashrc && go test -tags=parity ./parity_tests/"
