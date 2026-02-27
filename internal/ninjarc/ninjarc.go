@@ -215,6 +215,7 @@ func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) 
 		if _, ok := seenConfigs[config]; ok {
 			return
 		}
+		seenConfigs[config] = struct{}{}
 		optsByTool := c.namedRcRules[config]
 
 		for _, toolName := range tools {
