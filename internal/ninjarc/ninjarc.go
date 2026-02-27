@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -65,30 +66,39 @@ type RcRule struct {
 	Tokens []string
 }
 
-func appendRcRulesFromImport(workspaceDir, path string, namedConfigs map[string]map[string][]string, defaultConfig map[string][]string, optional bool, importStack []string) error {
-	realPath, err := Realpath(workspaceDir, path)
-	if err != nil {
-		if optional {
-			return nil
-		}
-		return fmt.Errorf("could not determine real path of ninjarc file: %s", err)
+// resolvePath resolves a ninjarc path by expanding %workspace%/ and ~
+// prefixes, cleaning the path, and stripping the leading "/" so it is
+// suitable for use with fs.FS (which requires unrooted paths).
+func resolvePath(workspaceDir, path string) string {
+	if strings.HasPrefix(path, workspacePrefix) {
+		path = filepath.Join(workspaceDir, path[len(workspacePrefix):])
 	}
 
-	return AppendRcRulesFromFile(workspaceDir, realPath, namedConfigs, defaultConfig, importStack, optional)
+	if strings.HasPrefix(path, "~") {
+		currentUser, err := user.Current()
+		if err == nil {
+			path = strings.Replace(path, "~", currentUser.HomeDir, 1)
+		}
+	}
+
+	path = filepath.Clean(path)
+	// fs.FS paths must be unrooted — strip leading "/".
+	path = strings.TrimPrefix(path, "/")
+	return path
 }
 
-// AppendRCRulesFromFile reads and lexes the provided rc file and appends the
+// AppendRcRulesFromFile reads and lexes the provided rc file and appends the
 // args to the provided configs based on the detected phase and name.
 //
 // configs is a map keyed by config name where the values are maps keyed by
 // phase name where the values are lists containing all the rules for that
 // config in the order they are encountered.
-func AppendRcRulesFromFile(workspaceDir string, realPath string, namedConfigs map[string]map[string][]string, defaultConfig map[string][]string, importStack []string, optional bool) error {
-	if slices.Contains(importStack, realPath) {
-		return fmt.Errorf("circular import detected: %s -> %s", strings.Join(importStack, " -> "), realPath)
+func AppendRcRulesFromFile(fsys fs.FS, workspaceDir string, path string, namedConfigs map[string]map[string][]string, defaultConfig map[string][]string, importStack []string, optional bool) error {
+	if slices.Contains(importStack, path) {
+		return fmt.Errorf("circular import detected: %s -> %s", strings.Join(importStack, " -> "), path)
 	}
-	importStack = append(importStack, realPath)
-	file, err := os.Open(realPath)
+	importStack = append(importStack, path)
+	file, err := fsys.Open(path)
 	if err != nil {
 		if optional {
 			return nil
@@ -123,8 +133,8 @@ func AppendRcRulesFromFile(workspaceDir string, realPath string, namedConfigs ma
 		}
 		if tokens[0] == "import" || tokens[0] == "try-import" {
 			isOptional := tokens[0] == "try-import"
-			path := strings.TrimSpace(strings.TrimPrefix(line, tokens[0]))
-			if err := appendRcRulesFromImport(workspaceDir, path, namedConfigs, defaultConfig, isOptional, importStack); err != nil {
+			importPath := strings.TrimSpace(strings.TrimPrefix(line, tokens[0]))
+			if err := AppendRcRulesFromFile(fsys, workspaceDir, resolvePath(workspaceDir, importPath), namedConfigs, defaultConfig, importStack, isOptional); err != nil {
 				return err
 			}
 			continue
@@ -151,27 +161,6 @@ func AppendRcRulesFromFile(workspaceDir string, realPath string, namedConfigs ma
 		config[rule.Phase] = append(config[rule.Phase], rule.Tokens...)
 	}
 	return scanner.Err()
-}
-
-// Realpath evaluates any symlinks in the given path and then returns the
-// absolute path.
-func Realpath(workspaceDir, path string) (string, error) {
-	if strings.HasPrefix(path, workspacePrefix) {
-		path = filepath.Join(workspaceDir, path[len(workspacePrefix):])
-	}
-
-	if strings.HasPrefix(path, "~") {
-		currentUser, err := user.Current()
-		if err != nil {
-			return "", err
-		}
-		path = strings.Replace(path, "~", currentUser.HomeDir, 1)
-	}
-	directPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Abs(directPath)
 }
 
 func parseRcRule(line string) (*RcRule, error) {
@@ -206,7 +195,7 @@ type RCConfig struct {
 	defaultRcRules map[string][]string
 }
 
-func (c *RCConfig) Apply(toolName string) {
+func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) {
 	expandedValues := make([]string, 0)
 	seenConfigs := make(map[string]struct{}, 0)
 	tools := []string{"common", toolName}
@@ -242,29 +231,26 @@ func (c *RCConfig) Apply(toolName string) {
 		}
 	}
 
-	expandRules(*configFlag)
-	flag.CommandLine.Parse(expandedValues)
+	expandRules(config)
+	flagSet.Parse(expandedValues)
 }
 
 // ParseRCFiles parses the provided rc files in the given workspace into Configs
 // and returns a map of the named configs as well as the default (unnamed)
 // Config.
-func ParseRCFiles(workspaceDir string, filePaths ...string) (*RCConfig, error) {
+func ParseRCFiles(fsys fs.FS, workspaceDir string, filePaths ...string) (*RCConfig, error) {
 	seen := make(map[string]struct{}, len(filePaths))
 	namedRcRules := map[string]map[string][]string{}
 	defaultRcRules := map[string][]string{}
 
 	for _, filePath := range filePaths {
-		r, err := Realpath(workspaceDir, filePath)
-		if err != nil {
-			continue
-		}
+		r := resolvePath(workspaceDir, filePath)
 		if _, ok := seen[r]; ok {
 			continue
 		}
 		seen[r] = struct{}{}
 
-		err = AppendRcRulesFromFile(workspaceDir, r, namedRcRules, defaultRcRules, nil /*=importStack*/, true)
+		err := AppendRcRulesFromFile(fsys, workspaceDir, r, namedRcRules, defaultRcRules, nil /*=importStack*/, true)
 		if err != nil {
 			return nil, err
 		}
@@ -293,11 +279,11 @@ func ParseAndApplyRCFilesToFlags(toolName string) error {
 	}
 
 	workspaceDir := project_root.Root()
-	rcConfig, err := ParseRCFiles(workspaceDir, rcFileLocations...)
+	rcConfig, err := ParseRCFiles(os.DirFS("/"), workspaceDir, rcFileLocations...)
 	if err != nil {
 		return err
 	}
 
-	rcConfig.Apply(toolName)
+	rcConfig.Apply(toolName, *configFlag, flag.CommandLine)
 	return nil
 }
