@@ -223,7 +223,7 @@ func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) 
 				addOptionToExpanded(opt)
 			}
 		}
-		seenConfigs[config] = struct{}{}
+		delete(seenConfigs, config)
 	}
 
 	for _, toolName := range tools {
