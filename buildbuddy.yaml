@@ -1,8 +1,14 @@
-x_templates: &install_go |
+x_templates:
+  - &install_go |
     if ! [ -x "$(command -v go)" ] || true; then
       curl -LO https://go.dev/dl/go1.25.6.linux-amd64.tar.gz
       sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.6.linux-amd64.tar.gz
       echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+    fi
+  - &install_cmake |
+    if ! [ -x "$(command -v cmake)" ]; then
+      curl -LO https://github.com/Kitware/CMake/releases/download/v4.3.0-rc1/cmake-4.3.0-rc1-linux-x86_64.sh
+      sudo sh cmake-4.3.0-rc1-linux-x86_64.sh --skip-license --prefix=/usr/local
     fi
 
 actions:
@@ -31,4 +37,18 @@ actions:
       - run: *install_go
       - run: "source ~/.bashrc && go build cmd/ninja/ninja.go"
       - run: "misc/output_test.py"
-
+  - name: "[Reninja] Parity Tests"
+    container_image: "ubuntu-24.04"
+    triggers:
+      push:
+        branches:
+          - "main"
+      pull_request:
+        branches:
+          - "*"
+    steps:
+      - run: *install_go
+      - run: *install_cmake
+      - run: "source ~/.bashrc && go build cmd/ninja/ninja.go && sudo mv ninja /usr/local/bin/ninja"
+      - run: "source ~/.bashrc && ./parity_tests/generate_testdata.sh"
+      - run: "source ~/.bashrc && go test -tags=parity ./parity_tests/"
