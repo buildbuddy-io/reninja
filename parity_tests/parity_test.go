@@ -1,3 +1,5 @@
+//go:build parity
+
 package parity_test
 
 import (
