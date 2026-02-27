@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -115,31 +117,100 @@ func expandSource(t *testing.T, archive, sourceDir string) string {
 	return srcDir
 }
 
+type statsEntry struct {
+	count   int
+	totalMS float64
+}
+
+type buildResult struct {
+	hashes  map[string]string
+	stats   map[string]statsEntry
+	elapsed time.Duration
+}
+
+func parseStats(output string) map[string]statsEntry {
+	stats := make(map[string]statsEntry)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "metric") {
+			continue
+		}
+		if strings.Contains(line, "hash load") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(fields[0])
+		count, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+		if err != nil {
+			continue
+		}
+		ms, err := strconv.ParseFloat(strings.TrimSpace(fields[2]), 64)
+		if err != nil {
+			continue
+		}
+		stats[name] = statsEntry{count: count, totalMS: ms}
+	}
+	return stats
+}
+
 func runParityTest(t *testing.T, proj parityProject) {
 	sourceDir := expandSource(t, proj.Archive, proj.SourceDir)
 
-	// Each build gets a fresh temp dir (out-of-source cmake build).
-	buildAndHash := func(label string, ninjaBin string) map[string]string {
+	buildAndHash := func(label string, ninjaBin string) buildResult {
 		buildDir := t.TempDir()
 		configCmd := strings.ReplaceAll(proj.Configure, "{source}", sourceDir)
 		run(t, buildDir, "bash", "-c", configCmd)
 
 		t.Logf("Building with %s...", label)
-		run(t, buildDir, ninjaBin, "-j1")
+		cmd := exec.Command(ninjaBin, "-d", "stats", "-j1")
+		cmd.Dir = buildDir
+		start := time.Now()
+		out, err := cmd.CombinedOutput()
+		elapsed := time.Since(start)
+		require.NoError(t, err, "%s build failed:\n%s", label, string(out))
 
 		hashes := hashOutputs(t, buildDir, proj.Outputs)
 		for f, h := range hashes {
 			t.Logf("  %s: %s = %s", label, f, h)
 		}
-		return hashes
+
+		stats := parseStats(string(out))
+		t.Logf("  %s: elapsed=%s", label, elapsed)
+		for name, s := range stats {
+			t.Logf("  %s: stat %s count=%d total=%.3fms", label, name, s.count, s.totalMS)
+		}
+
+		return buildResult{hashes: hashes, stats: stats, elapsed: elapsed}
 	}
 
-	cppHashes := buildAndHash("C++ ninja", cppNinjaBin)
-	goHashes := buildAndHash("reninja", reninjaBin)
+	cppResult := buildAndHash("C++ ninja", cppNinjaBin)
+	goResult := buildAndHash("reninja", reninjaBin)
 
+	// Compare output hashes.
 	for _, output := range proj.Outputs {
-		require.Equal(t, cppHashes[output], goHashes[output], "output mismatch for %s", output)
+		require.Equal(t, cppResult.hashes[output], goResult.hashes[output], "output mismatch for %s", output)
 	}
+
+	// Compare stats counts (exact match) for key metrics.
+	compareStats := []string{"StartEdge", "FinishCommand", ".ninja_log load", ".ninja_deps load"}
+	for _, name := range compareStats {
+		cppStat, cppOK := cppResult.stats[name]
+		goStat, goOK := goResult.stats[name]
+		if cppOK && goOK {
+			require.Equal(t, cppStat.count, goStat.count, "stats count mismatch for %q", name)
+		}
+	}
+
+	// Compare wall-clock time: reninja should be no more than 2x C++ ninja.
+	t.Logf("Wall-clock: C++ ninja=%s, reninja=%s", cppResult.elapsed, goResult.elapsed)
+	require.LessOrEqual(t, goResult.elapsed, 2*cppResult.elapsed,
+		"reninja took %s, more than 2x C++ ninja's %s", goResult.elapsed, cppResult.elapsed)
 }
 
 func run(t *testing.T, dir string, name string, args ...string) {
