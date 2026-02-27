@@ -31,4 +31,15 @@ actions:
       - run: *install_go
       - run: "source ~/.bashrc && go build cmd/ninja/ninja.go"
       - run: "misc/output_test.py"
-
+  - name: "[Reninja] Parity Tests"
+    container_image: "ubuntu-24.04"
+    triggers:
+      push:
+        branches:
+          - "main"
+      pull_request:
+        branches:
+          - "*"
+    steps:
+      - run: *install_go
+      - run: "source ~/.bashrc && go test -tags=parity ./parity_tests/"
