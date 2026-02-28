@@ -5,6 +5,11 @@ x_templates:
       sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.6.linux-amd64.tar.gz
       echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
     fi
+  - &install_gh_cli |
+    if ! [ -x "$(command -v gh)" ]; then
+      curl -LO https://github.com/cli/cli/releases/download/v2.67.0/gh_2.67.0_linux_amd64.tar.gz
+      sudo tar -C /usr/local -xzf gh_2.67.0_linux_amd64.tar.gz --strip-components=1
+    fi
   - &install_cmake |
     if ! [ -x "$(command -v cmake)" ]; then
       curl -LO https://github.com/Kitware/CMake/releases/download/v4.3.0-rc1/cmake-4.3.0-rc1-linux-x86_64.sh
@@ -52,3 +57,18 @@ actions:
       - run: "source ~/.bashrc && go build cmd/ninja/ninja.go && sudo mv ninja /usr/local/bin/ninja"
       - run: "source ~/.bashrc && ./parity_tests/generate_testdata.sh"
       - run: "source ~/.bashrc && go test -tags=parity ./parity_tests/"
+  - name: "[Reninja] Release"
+    container_image: "ubuntu-24.04"
+    triggers:
+      push:
+        tags:
+          - "v*"
+    steps:
+      - run: *install_go
+      - run: *install_gh_cli
+      - run: 'source ~/.bashrc && go build -ldflags="-s -w" cmd/ninja/ninja.go'
+      - run: "env"
+      - run: "echo $(git describe --tags --exact-match)">TAG
+      - run: 'gh release create "$(<TAG)" --draft --title "Version $(<TAG)"'
+      - run: 'gh release upload "$(<TAG)" ninja'
+      - run: 'gh release edit "$(<TAG)" --draft=false'
