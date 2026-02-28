@@ -68,7 +68,7 @@ actions:
       - run: *install_gh_cli
       - run: 'source ~/.bashrc && go build -ldflags="-s -w" cmd/ninja/ninja.go'
       - run: "env"
-      - run: "echo $(git describe --tags --exact-match)">TAG
+      - run: "echo $(git describe --tags --exact-match)>TAG"
       - run: 'gh release create "$(<TAG)" --draft --title "Version $(<TAG)"'
       - run: 'gh release upload "$(<TAG)" ninja'
       - run: 'gh release edit "$(<TAG)" --draft=false'
