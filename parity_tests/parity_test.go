@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -125,6 +126,7 @@ type statsEntry struct {
 type buildResult struct {
 	hashes  map[string]string
 	stats   map[string]statsEntry
+	deps    map[string][]string
 	elapsed time.Duration
 }
 
@@ -180,13 +182,16 @@ func runParityTest(t *testing.T, proj parityProject) {
 			t.Logf("  %s: %s = %s", label, f, h)
 		}
 
+		deps := collectDeps(t, buildDir, ninjaBin)
+		t.Logf("  %s: %d deps entries", label, len(deps))
+
 		stats := parseStats(string(out))
 		t.Logf("  %s: elapsed=%s", label, elapsed)
 		for name, s := range stats {
 			t.Logf("  %s: stat %s count=%d total=%.3fms", label, name, s.count, s.totalMS)
 		}
 
-		return buildResult{hashes: hashes, stats: stats, elapsed: elapsed}
+		return buildResult{hashes: hashes, stats: stats, deps: deps, elapsed: elapsed}
 	}
 
 	cppResult := buildAndHash("C++ ninja", cppNinjaBin)
@@ -196,6 +201,9 @@ func runParityTest(t *testing.T, proj parityProject) {
 	for _, output := range proj.Outputs {
 		require.Equal(t, cppResult.hashes[output], goResult.hashes[output], "output mismatch for %s", output)
 	}
+
+	// Compare deps (from -t deps, with build dir paths normalized).
+	require.Equal(t, cppResult.deps, goResult.deps, "deps mismatch")
 
 	// Compare stats counts (exact match) for key metrics.
 	compareStats := []string{"StartEdge", "FinishCommand", ".ninja_log load", ".ninja_deps load"}
@@ -230,6 +238,52 @@ func hashFile(t *testing.T, path string) string {
 	_, err = io.Copy(hasher, f)
 	require.NoError(t, err)
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// collectDeps runs `ninja -t deps` and parses the output into a map of
+// target -> sorted dependency list, with build-dir-relative paths normalized.
+func collectDeps(t *testing.T, buildDir, ninjaBin string) map[string][]string {
+	t.Helper()
+	cmd := exec.Command(ninjaBin, "-t", "deps")
+	cmd.Dir = buildDir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "-t deps failed:\n%s", string(out))
+	return parseDeps(string(out), buildDir)
+}
+
+// parseDeps parses `ninja -t deps` output. Format:
+//
+//	target.o: #deps N, deps mtime M (VALID)
+//	    dep1.h
+//	    dep2.h
+//
+// Returns map of target -> sorted dep paths, with buildDir prefix stripped.
+func parseDeps(output, buildDir string) map[string][]string {
+	result := make(map[string][]string)
+	buildPrefix := buildDir + "/"
+	var currentTarget string
+	for _, line := range strings.Split(output, "\n") {
+		if line == "" {
+			currentTarget = ""
+			continue
+		}
+		if strings.HasPrefix(line, "    ") {
+			if currentTarget != "" {
+				dep := strings.TrimSpace(line)
+				dep = strings.TrimPrefix(dep, buildPrefix)
+				result[currentTarget] = append(result[currentTarget], dep)
+			}
+			continue
+		}
+		// Header line: "target.o: #deps N, deps mtime M (VALID)"
+		if idx := strings.Index(line, ": #deps "); idx > 0 {
+			currentTarget = strings.TrimPrefix(line[:idx], buildPrefix)
+		}
+	}
+	for _, deps := range result {
+		sort.Strings(deps)
+	}
+	return result
 }
 
 func hashOutputs(t *testing.T, dir string, outputs []string) map[string]string {
