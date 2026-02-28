@@ -286,3 +286,22 @@ func TestDuplicateConfigExpansion(t *testing.T) {
 	assert.Equal(t, "dev", *config)
 	assert.Equal(t, "4", *jobs)
 }
+
+func TestApplyPreservesPositionalArgs(t *testing.T) {
+	fsys := fstest.MapFS{
+		"rc": &fstest.MapFile{
+			Data: []byte("build --jobs=4\n"),
+		},
+	}
+	rc, err := ninjarc.ParseRCFiles(fsys, "/workspace", "rc")
+	require.NoError(t, err)
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	jobs := fs.String("jobs", "", "")
+	// Simulate a prior parse that left positional args behind.
+	fs.Parse([]string{"--jobs=8", "target1", "target2"})
+	assert.Equal(t, []string{"target1", "target2"}, fs.Args())
+
+	rc.Apply("build", "", fs)
+	assert.Equal(t, "4", *jobs)
+	assert.Equal(t, []string{"target1", "target2"}, fs.Args())
+}

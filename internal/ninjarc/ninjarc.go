@@ -196,6 +196,7 @@ type RCConfig struct {
 }
 
 func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) {
+	existingArgs := flagSet.Args()
 	expandedValues := make([]string, 0)
 	seenConfigs := make(map[string]struct{}, 0)
 	tools := []string{"common", toolName}
@@ -233,6 +234,7 @@ func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) 
 	}
 
 	expandRules(config)
+	expandedValues = append(expandedValues, existingArgs...)
 	flagSet.Parse(expandedValues)
 }
 
