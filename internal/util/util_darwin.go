@@ -2,15 +2,21 @@
 
 package util
 
-/*
-#include <stdlib.h>
-*/
-import "C"
+import (
+	"syscall"
+	"unsafe"
+)
+
+type LoadAvg struct {
+	LoadAvg [3]uint32
+	Scale   int64
+}
 
 func GetLoadAverage() float64 {
-	avg := []C.double{0, 0, 0}
-
-	C.getloadavg(&avg[0], C.int(len(avg)))
-
-	return float64(avg[0])
+	data, err := syscall.Sysctl("vm.loadavg")
+	if err != nil {
+		return 0
+	}
+	load := (*LoadAvg)(unsafe.Pointer(&[]byte(data)[0]))
+	return float64(load.LoadAvg[0]) / float64(load.Scale)
 }
