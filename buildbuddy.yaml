@@ -68,6 +68,6 @@ actions:
       - run: *install_gh_cli
       - run: 'if [[ -z "$GIT_TAG" ]]; then echo "Error: GIT_TAG must be set"; exit 1; fi'
       - run: 'source ~/.bashrc && go build -ldflags="-s -w" cmd/ninja/ninja.go'
-      - run: 'GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release create "$GIT_TAG" --draft --title "Version $GIT_TAG"'
+      - run: 'GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release create "$GIT_TAG" --generate-notes --draft --title="Version $GIT_TAG" --verify-tag'
       - run: 'GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release upload "$GIT_TAG" ./ninja'
       - run: 'GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release edit "$GIT_TAG" --draft=false'
