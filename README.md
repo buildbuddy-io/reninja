@@ -38,6 +38,10 @@ telemetry.
   $ reninja --bes_backend=remote.buildbuddy.io --remote_cache=remote.buildbuddy.io
 ```
 
+[![asciicast](https://asciinema.org/a/Vz6V2YkbVfG6gREZ.svg)](https://asciinema.org/a/Vz6V2YkbVfG6gREZ)
+
+![](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-299222afd754 | width 500)
+
 #### Build with remote execution (see [Remote Execution](#remote-execution) below for details)
 ```bash
   $ SRC=$PWD
