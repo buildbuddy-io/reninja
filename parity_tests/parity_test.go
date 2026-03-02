@@ -34,7 +34,7 @@ func TestMain(m *testing.M) {
 	}
 
 	reninjaBin = filepath.Join(tmpDir, "reninja")
-	cmd := exec.Command("go", "build", "-o", reninjaBin, "../cmd/ninja")
+	cmd := exec.Command("go", "build", "-o", reninjaBin, "../cmd/reninja")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

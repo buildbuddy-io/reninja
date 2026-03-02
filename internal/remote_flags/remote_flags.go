@@ -13,7 +13,7 @@ var (
 	besBackend         = flag.String("bes_backend", "", "BES backend target, like remote.buildbuddy.io")
 	remoteCache        = flag.String("remote_cache", "", "Remote cache target, like remote.buildbuddy.io")
 	remoteExecutor     = flag.String("remote_executor", "", "Remote execution target, like remote.buildbuddy.io")
-	resultsURL         = flag.String("results_url", "https://app.buildbuddy.io", "BuildBuddy results URL")
+	resultsURL         = flag.String("results_url", "", "BuildBuddy results URL")
 	invocationID       = flag.String("invocation_id", "", "Invocation ID to use (auto-generated if not specified)")
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
 	projectRoot        = flag.String("project_root", "", "Project root directory for remote execution. Auto-detected from .gclient/.git if not set.")
