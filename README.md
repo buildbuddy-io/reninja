@@ -86,7 +86,8 @@ environment or with more observability.
 I wanted to make those features available to ninja-based projects and
 offer Reninja as a simple, generic replacement for distcc-style
 building. There's nothing BuildBuddy specific here -- Reninja is just
-a normal [remote-apis](https://github.com/bazelbuild/remote-apis/) client.
+a normal [remote-apis](https://github.com/bazelbuild/remote-apis/)
+client.
 
 ## Features
  - **Drop in replacement for Ninja** - If it works in Ninja, Reninja
@@ -173,14 +174,15 @@ specifying everything at the project level (cmake toolchains are kind
 of an option here, but not often used).
 
 To sidestep these issues, remote execution with Reninja generally
-requires two things: 1) configuring the build inside a container and
-2) using include scanning to determine the inputs for an action.
- 
-This sounds more complex than it is. It also has the nice property
-that once a project does this, all contributors to the project are
-working with a commonly known set of tools -- everything is fully
-declared either in the container image used for remote execution or in
-the source code.
+requires two things:
+
+1. configuring the build inside a container
+2. using include scanning to determine the inputs for an action
+
+Building projects this way has the nice property that all contributors
+to the project are working with a commonly known set of tools --
+everything is fully declared either in the container image used for
+remote execution or in the source code.
 
 Here's an example of using ninja with remote execution to build duckdb
 (a small to mid-size c++ project configured with cmake):
@@ -215,6 +217,12 @@ Run the build using remote execution:
 
 Is this just another AI slop project? **No!**
 
-Reninja was born from a bet (could AI do this?) but since the [initial version](https://github.com/buildbuddy-io/reninja/commit/8c1bde042af17056246167a338b74aa2172b728c) I have re-written each file by hand in go. I have occasionally relied on claude to port unit tests, but only after writing several examples myself would I then ask it to port more tests following my lead.
+Reninja was born from a bet (could AI do this?) but since the [initial
+version](https://github.com/buildbuddy-io/reninja/commit/8c1bde042af17056246167a338b74aa2172b728c)
+I have re-written each file by hand in go. I have occasionally relied
+on claude to port unit tests, but only after writing several examples
+myself would I then ask it to port more tests following my lead.
 
-Some other BES, remote caching, and remote execution libraries were borrowed from BuildBuddy and lightly modified to be suitable for Reninja.
+Some other BES, remote caching, and remote execution libraries were
+borrowed from BuildBuddy and lightly modified to be suitable for
+Reninja.
