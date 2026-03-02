@@ -41,7 +41,7 @@ actions:
           - "*"
     steps:
       - run: *install_go
-      - run: "source ~/.bashrc && go build cmd/ninja/ninja.go"
+      - run: "source ~/.bashrc && go build cmd/reninja/reninja.go && mv reninja ninja"
       - run: "misc/output_test.py"
 
   - name: "[Reninja] Parity Tests"
@@ -56,7 +56,7 @@ actions:
     steps:
       - run: *install_go
       - run: *install_cmake
-      - run: "source ~/.bashrc && go build cmd/ninja/ninja.go && sudo mv ninja /usr/local/bin/ninja"
+      - run: "source ~/.bashrc && go build cmd/reninja/reninja.go && sudo mv reninja /usr/local/bin/ninja"
       - run: "source ~/.bashrc && ./parity_tests/generate_testdata.sh"
       - run: "source ~/.bashrc && go test -tags=parity ./parity_tests/"
 
@@ -73,13 +73,13 @@ actions:
           if [[ -z "$GIT_TAG" ]]; then echo "Error: GIT_TAG must be set"; exit 1; fi
       - run: |
           source ~/.bashrc
-          mkdir -p /tmp/ninja-zips
+          mkdir -p /tmp/reninja-zips
           for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             export GOOS=${pair%/*} GOARCH=${pair#*/}
-            go build -ldflags="-s -w" cmd/ninja/ninja.go \
-              && zip /tmp/ninja-zips/ninja-$GOOS-$GOARCH.zip ninja
+           go build -ldflags="-s -w" cmd/reninja/reninja.go \
+              && zip /tmp/reninja-zips/reninja-$GOOS-$GOARCH.zip reninja
           done
       - run: GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release create "$GIT_TAG" --generate-notes --draft --title="Version $GIT_TAG" --verify-tag
-      - run: GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release upload "$GIT_TAG" /tmp/ninja-zips/ninja-*.zip
+      - run: GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release upload "$GIT_TAG" /tmp/reninja-zips/reninja-*.zip
       - run: GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release edit "$GIT_TAG" --draft=false
-      - run: mv /tmp/ninja-zips/ninja-*.zip $BUILDBUDDY_ARTIFACTS_DIRECTORY/
+      - run: mv /tmp/reninja-zips/reninja-*.zip $BUILDBUDDY_ARTIFACTS_DIRECTORY/
