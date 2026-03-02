@@ -163,7 +163,7 @@ build --config=cache
 This config defines three different modes `bes`, `cache`, and `remote`
 and selects `cache` by default for ninja builds.
 
-## Remote Execution (#remote-execution)
+## Remote Execution
 
 Remote execution with Reninja is more challenging than with Bazel
 because build actions (edges, in ninja parlance) do not always fully
