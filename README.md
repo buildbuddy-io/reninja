@@ -30,7 +30,8 @@ telemetry.
   $ reninja --bes_backend=remote.buildbuddy.io --results_url=https://app.buildbuddy.io
 ```
 
-[![asciicast](https://asciinema.org/a/Vz6V2YkbVfG6gREZ.svg)](https://asciinema.org/a/Vz6V2YkbVfG6gREZ)
+This will show basic information about the build and allow for later analysis of build time trends.
+[Example build](https://app.buildbuddy.io/invocation/695b24ca-b8ea-4781-9594-6b621474455c)
 
 
 #### Build your project with BES and Remote Cache enabled
@@ -38,9 +39,13 @@ telemetry.
   $ reninja --bes_backend=remote.buildbuddy.io --remote_cache=remote.buildbuddy.io
 ```
 
-[![asciicast](https://asciinema.org/a/Vz6V2YkbVfG6gREZ.svg)](https://asciinema.org/a/Vz6V2YkbVfG6gREZ)
+This will show more information about the build (including the timing profile!) and allow for
+reusing cached results from previous builds which is significantly faster than building from
+scratch.
 
-![](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-299222afd754 | width 500)
+[Example build](https://app.buildbuddy.io/invocation/93289e2d-595e-4452-8cb5-61874935fe98)
+
+![Timing Profile](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-299222afd754)
 
 #### Build with remote execution (see [Remote Execution](#remote-execution) below for details)
 ```bash
