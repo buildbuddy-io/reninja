@@ -27,8 +27,11 @@ telemetry.
 
 #### Build with Build Event Stream (BES) enabled
 ```bash
-  $ reninja --bes_backend=remote.buildbuddy.io
+  $ reninja --bes_backend=remote.buildbuddy.io --results_url=https://app.buildbuddy.io
 ```
+
+[![asciicast](https://asciinema.org/a/Vz6V2YkbVfG6gREZ.svg)](https://asciinema.org/a/Vz6V2YkbVfG6gREZ)
+
 
 #### Build your project with BES and Remote Cache enabled
 ```bash
