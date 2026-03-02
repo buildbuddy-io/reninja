@@ -8,6 +8,10 @@
 |_| \_\_____|_| \_|___|_| \_|\___/_/   \_\
 ```
 
+Reninja is a complete reimplementation of the Ninja build system
+focused on correctness, remote caching, remote execution, and build
+telemetry.
+
 ## Quick Start
 
 #### Install the Reninja binary:
@@ -55,18 +59,11 @@
 
 ## About
 
-Reninja is a complete reimplementation of the Ninja build system
-focused on correctness, remote caching, remote execution, and build
-telemetry.
-
 Reninja owes its existence to the original [Ninja Build
 System](https://ninja-build.org/) and all credit goes to the [original
 author](https://neugierig.org/) and [many open source
 contributors](https://github.com/ninja-build/ninja/graphs/contributors).
 All bugs / mistakes are my own.
-
-You can read about how Reninja was developed
-[here](https://www.buildbuddy.io/blog/).
 
 ## Motivation
 
@@ -93,12 +90,12 @@ client.
  - **Drop in replacement for Ninja** - If it works in Ninja, Reninja
  will build it too. By default, all flags and options are honored,
  even the hidden 🐢 ones.
- - **Build Visibility** - use the timing profile (flame graph) to
+ - **Build visibility** - use the timing profile (flame graph) to
  visualize the slow parts of the build and fix them.
  - **Remote caching** - allows for massive reductions in CPU usage and
  drastically reduces build times by not building the same thing twice.
- - **Remote execution** - run builds with massive parallelization (-j
- 2000) to speed them up. Build LLVM from scratch in 3 minutes!
+ - **Remote execution** - run builds with massive parallelization (`-j
+   2000`) to speed them up. Build LLVM from scratch in 3 minutes!
  - **Extensive unit and integration tests** - all Ninja tests were
  ported over, and new ones added for Reninja-only
  functionality. Additional parity tests ensure that Reninja and Ninja
