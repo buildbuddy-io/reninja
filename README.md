@@ -8,21 +8,6 @@
 |_| \_\_____|_| \_|___|_| \_|\___/_/   \_\
 ```
 
-## About
-
-Reninja is a complete reimplementation of the Ninja build system
-focused on correctness, remote caching, remote execution, and build
-telemetry.
-
-Reninja owes its existence to the original [Ninja Build
-System](https://ninja-build.org/) and all credit goes to the [original
-author](https://neugierig.org/) and [many open source
-contributors](https://github.com/ninja-build/ninja/graphs/contributors).
-All bugs / mistakes are my own.
-
-You can read about how Reninja was developed
-[here](https://www.buildbuddy.io/blog/).
-
 ## Quick Start
 
 #### Install the Reninja binary:
@@ -67,6 +52,21 @@ You can read about how Reninja was developed
 	  --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE \
 	  -j 1000
 ```
+
+## About
+
+Reninja is a complete reimplementation of the Ninja build system
+focused on correctness, remote caching, remote execution, and build
+telemetry.
+
+Reninja owes its existence to the original [Ninja Build
+System](https://ninja-build.org/) and all credit goes to the [original
+author](https://neugierig.org/) and [many open source
+contributors](https://github.com/ninja-build/ninja/graphs/contributors).
+All bugs / mistakes are my own.
+
+You can read about how Reninja was developed
+[here](https://www.buildbuddy.io/blog/).
 
 ## Motivation
 
