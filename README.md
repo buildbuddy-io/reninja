@@ -90,7 +90,7 @@ each action. [Example
 build](https://app.buildbuddy.io/invocation/aec6d04d-d354-4d69-9811-ab08d5cb2bca)
 
 [![Local vs
-Remote](https://asciinema.org/a/1QYN5vK5kUSD38MB.svg)](https://asciinema.org/a/1QYN5vK5kUSD38MB)
+Remote](https://asciinema.org/a/yvz42ATqgpJHtEU4.svg)](https://asciinema.org/a/yvz42ATqgpJHtEU4)
 
 ## About
 
