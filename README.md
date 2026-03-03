@@ -205,7 +205,8 @@ Here's an example of using ninja with remote execution to build duckdb
 Clone the repo:
 ```shell
   cd ~/
-  git clone https://github.com/duckdb/duckdb.git
+  git clone https://github.com/duckdb/duckdb.git --depth=1
+  mkdir -p ~/duckdb/build-rbe
 ```
 
 Configure it with cmake (against a docker image):
@@ -221,6 +222,7 @@ Configure it with cmake (against a docker image):
 
 Run the build using remote execution:
 ```shell
+  cd ~/duckdb/build-rbe
   reninja --bes_backend=remote.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
