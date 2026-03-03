@@ -52,7 +52,7 @@ build](https://app.buildbuddy.io/invocation/695b24ca-b8ea-4781-9594-6b621474455c
 
 #### Build your project with BES and Remote Cache enabled
 ```shell
-  reninja --bes_backend=remote.buildbuddy.io --remote_cache=remote.buildbuddy.io
+  reninja --bes_backend=remote.buildbuddy.io --results_url=https://app.buildbuddy.io --remote_cache=remote.buildbuddy.io
 ```
 
 This will show more information about the build (including the timing
@@ -78,6 +78,7 @@ Profile](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-2992
 		-DCMAKE_SUPPRESS_REGENERATION=ON \
 		"$SRC"
   reninja --bes_backend=remote.buildbuddy.io \
+	  --results_url=https://app.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
 	  --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE \
@@ -224,6 +225,7 @@ Run the build using remote execution:
 ```shell
   cd ~/duckdb/build-rbe
   reninja --bes_backend=remote.buildbuddy.io \
+	  --results_url=https://app.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
 	  --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE \
