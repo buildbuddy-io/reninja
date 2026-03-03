@@ -180,14 +180,45 @@ build --config=cache
 This config defines three different modes `bes`, `cache`, and `remote`
 and selects `cache` by default for ninja builds.
 
+## Two-stage Cache Lookups
+Remote caching with Reninja is more challenging than with Bazel
+because build actions (edges, in ninja parlance) do not always fully
+declare *all* of their inputs. That's because not all inputs are known
+at build time -- headers may pull in other headers implicitly.
+
+When a command runs for the first time, the compiler will often
+generate a Dependency File (depfile) that contains information about
+the source file's dependencies. After the command finishes, Reninja
+will read these depfiles and use this information to update the build
+graph for subsequent builds, avoiding recompilation of objects with no
+changed dependencies.
+
+Typically, in a remote cache, compiled object files are looked up
+using a hash of all of their inputs. If any input changes, the hash
+will change and the object will be a cache-miss and be recompiled.
+Extending this mechanism to Reninja is tricky though: if you only look
+at an actions explicit inputs, you may not recompile the object when
+you should. But implicit inputs are not known until the compilation
+has already run once, so if you lookup actions this way, you'll have
+cache misses for partial builds or across users.
+
+Reninja does a two-stage lookup: the hashes of an edge's explicit
+inputs are looked up to find the list of implicit deps. The hashes of
+those implicit deps are looked up to find the actual compiled
+object. This way if either explicit or implicit inputs change, the
+object will be recompiled.
+
+This means you can run two clean builds in a row, and get 100% cache
+hit rate on the second build.
+
 ## Remote Execution
 
-Remote execution with Reninja is more challenging than with Bazel
-because build actions (edges, in ninja parlance) do not always fully
-declare *all* of their inputs.  Additionally, CMake defaults to
-configuring against the installed system libraries rather than
-specifying everything at the project level (cmake toolchains are kind
-of an option here, but not often used).
+Remote execution with Reninja is similarly challenging. Edges do not
+always fully declare *all* of their inputs, so remote actions may not
+have all the files needed for compilation. Additionally, CMake
+defaults to configuring against the installed system libraries rather
+than specifying everything at the project level (cmake toolchains are
+kind of an option here, but not often used).
 
 To sidestep these issues, remote execution with Reninja generally
 requires two things:
