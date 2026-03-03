@@ -78,7 +78,6 @@ Profile](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-2992
 		-DCMAKE_SUPPRESS_REGENERATION=ON \
 		"$SRC"
   reninja --bes_backend=remote.buildbuddy.io \
-      --remote_cache=remote.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
 	  --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE \
@@ -130,10 +129,9 @@ Because Reninja is a golang application, you can install it with `go install`:
 
 We also offer prebuilt binaries for Linux and Mac attached to the github release:
 ```shell
-  curl -fSL "https://github.com/buildbuddy-io/reninja/releases/latest/download/ninja-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed
-  's/x86_64/amd64/;s/aarch64/arm64/').zip" -o ninja.zip
-  unzip ninja.zip
-  mv ninja /usr/local/bin/ninja
+  curl -fSL "https://github.com/buildbuddy-io/reninja/releases/latest/download/reninja-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed
+  's/x86_64/amd64/;s/aarch64/arm64/')" -o reninja
+  mv reninja /usr/local/bin/ninja
 ```
 
 ## NinjaRC (Config file configuration)
@@ -206,7 +204,7 @@ Here's an example of using ninja with remote execution to build duckdb
 
 Clone the repo:
 ```shell
-  cd /home/tylerw
+  cd ~/
   git clone https://github.com/duckdb/duckdb.git
 ```
 
@@ -214,17 +212,16 @@ Configure it with cmake (against a docker image):
 ```shell
   docker run --rm \
       --user "$(id -u):$(id -g)" \
-	  -v "/home/tylerw/duckdb:/home/tylerw/duckdb" \
-	  -v "/home/tylerw/bin/ninja:/usr/local/bin/ninja:ro" \
-	  -w "/home/tylerw/duckdb/build-rbe" \
+	  -v "$HOME/duckdb:$HOME/duckdb" \
+	  -v "$(which ninja):/usr/local/bin/ninja:ro" \
+	  -w "$HOME/duckdb/build-rbe" \
 	  gcr.io/flame-public/rbe-ubuntu22-04:ninja \
-	  cmake -G Ninja -DCMAKE_SUPPRESS_REGENERATION=ON /home/tylerw/duckdb
+	  cmake -G Ninja -DCMAKE_SUPPRESS_REGENERATION=ON $HOME/duckdb
 ```
 
 Run the build using remote execution:
 ```shell
   reninja --bes_backend=remote.buildbuddy.io \
-      --remote_cache=remote.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
 	  --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE \
