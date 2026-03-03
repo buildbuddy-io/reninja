@@ -76,7 +76,7 @@ actions:
           mkdir -p /tmp/reninja-bins
           for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             export GOOS=${pair%/*} GOARCH=${pair#*/}
-           go build -ldflags="-s -w" cmd/reninja/reninja.go reninja-$GOOS-$GOARCH
+            go build -ldflags="-s -w" cmd/reninja/reninja.go reninja-$GOOS-$GOARCH
           done
       - run: GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release create "$GIT_TAG" --generate-notes --draft --title="Version $GIT_TAG" --verify-tag
       - run: GH_TOKEN=$RENINJA_RELEASE_TOKEN gh release upload "$GIT_TAG" /tmp/reninja-bins/reninja-*
