@@ -12,22 +12,37 @@ Reninja is a complete reimplementation of the Ninja build system
 focused on correctness, remote caching, remote execution, and build
 telemetry.
 
+## Features
+ - **Drop in replacement for Ninja** - If it works in Ninja, Reninja
+ will build it too. By default, all flags and options are honored,
+ even the hidden 🐢 ones.
+ - **Build visibility** - use the timing profile (flame graph) to
+ visualize the slow parts of the build and fix them.
+ - **Remote caching** - allows for massive reductions in CPU usage and
+ drastically reduces build times by not building the same thing twice.
+ - **Remote execution** - run builds with massive parallelization (`-j
+   2000`) to speed them up. Build LLVM, from scratch, in 3 minutes!
+ - **Extensive unit and integration tests** - all Ninja tests were
+ ported over, and new ones added for Reninja-only
+ functionality. Additional parity tests ensure that Reninja and Ninja
+ produce the same outputs.
+
 ## Quick Start
 
 #### Install the Reninja binary:
-```bash
-  $ go install github.com/buildbuddy-io/reninja/cmd/reninja@latest
+```shell
+  go install github.com/buildbuddy-io/reninja/cmd/reninja@latest
 ```
 
 #### Build locally 
   This does the exact same thing as ninja.
-```bash
-  $ reninja
+```shell
+  reninja
 ```
 
 #### Build with Build Event Stream (BES) enabled
-```bash
-  $ reninja --bes_backend=remote.buildbuddy.io --results_url=https://app.buildbuddy.io
+```shell
+  reninja --bes_backend=remote.buildbuddy.io --results_url=https://app.buildbuddy.io
 ```
 
 This will show basic information about the build and allow for later
@@ -36,8 +51,8 @@ build](https://app.buildbuddy.io/invocation/695b24ca-b8ea-4781-9594-6b621474455c
 
 
 #### Build your project with BES and Remote Cache enabled
-```bash
-  $ reninja --bes_backend=remote.buildbuddy.io --remote_cache=remote.buildbuddy.io
+```shell
+  reninja --bes_backend=remote.buildbuddy.io --remote_cache=remote.buildbuddy.io
 ```
 
 This will show more information about the build (including the timing
@@ -49,11 +64,11 @@ build](https://app.buildbuddy.io/invocation/93289e2d-595e-4452-8cb5-61874935fe98
 Profile](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-299222afd754)
 
 #### Build with remote execution (see [Remote Execution](#remote-execution) below for details)
-```bash
-  $ SRC=$PWD
-  $ BUILD_DIR=$SRC/build-rbe
-  $ mkdir -p "$BUILD_DIR" \
-  $ docker run --rm \
+```shell
+  SRC=$PWD
+  BUILD_DIR=$SRC/build-rbe
+  mkdir -p "$BUILD_DIR" \
+  docker run --rm \
 	  --user "$(id -u):$(id -g)" \
 	  -v "$SRC:$SRC" \
 	  -v "$(which ninja):/usr/local/bin/ninja:ro" \
@@ -62,7 +77,7 @@ Profile](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-2992
 	  cmake -G Ninja \
 		-DCMAKE_SUPPRESS_REGENERATION=ON \
 		"$SRC"
-  $ reninja --bes_backend=remote.buildbuddy.io \
+  reninja --bes_backend=remote.buildbuddy.io \
       --remote_cache=remote.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
@@ -106,34 +121,19 @@ building. There's nothing BuildBuddy specific here -- Reninja is just
 a normal [remote-apis](https://github.com/bazelbuild/remote-apis/)
 client.
 
-## Features
- - **Drop in replacement for Ninja** - If it works in Ninja, Reninja
- will build it too. By default, all flags and options are honored,
- even the hidden 🐢 ones.
- - **Build visibility** - use the timing profile (flame graph) to
- visualize the slow parts of the build and fix them.
- - **Remote caching** - allows for massive reductions in CPU usage and
- drastically reduces build times by not building the same thing twice.
- - **Remote execution** - run builds with massive parallelization (`-j
-   2000`) to speed them up. Build LLVM from scratch in 3 minutes!
- - **Extensive unit and integration tests** - all Ninja tests were
- ported over, and new ones added for Reninja-only
- functionality. Additional parity tests ensure that Reninja and Ninja
- produce the same outputs.
-
 ## Installation
 
 Because Reninja is a golang application, you can install it with `go install`:
-```bash
-  $ go install github.com/buildbuddy-io/reninja/cmd/reninja@latest
+```shell
+  go install github.com/buildbuddy-io/reninja/cmd/reninja@latest
 ```
 
 We also offer prebuilt binaries for Linux and Mac attached to the github release:
-```bash
-  $ curl -fSL "https://github.com/buildbuddy-io/reninja/releases/latest/download/ninja-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed
+```shell
+  curl -fSL "https://github.com/buildbuddy-io/reninja/releases/latest/download/ninja-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed
   's/x86_64/amd64/;s/aarch64/arm64/').zip" -o ninja.zip
-  $ unzip ninja.zip
-  $ mv ninja /usr/local/bin/ninja
+  unzip ninja.zip
+  mv ninja /usr/local/bin/ninja
 ```
 
 ## NinjaRC (Config file configuration)
@@ -205,13 +205,14 @@ Here's an example of using ninja with remote execution to build duckdb
 (a small to mid-size c++ project configured with cmake):
 
 Clone the repo:
-```bash
-  $ git clone https://github.com/duckdb/duckdb.git
+```shell
+  cd /home/tylerw
+  git clone https://github.com/duckdb/duckdb.git
 ```
 
 Configure it with cmake (against a docker image):
-```bash
-  $ docker run --rm \
+```shell
+  docker run --rm \
       --user "$(id -u):$(id -g)" \
 	  -v "/home/tylerw/duckdb:/home/tylerw/duckdb" \
 	  -v "/home/tylerw/bin/ninja:/usr/local/bin/ninja:ro" \
@@ -221,13 +222,13 @@ Configure it with cmake (against a docker image):
 ```
 
 Run the build using remote execution:
-```bash
-  $ reninja --bes_backend=remote.buildbuddy.io \
+```shell
+  reninja --bes_backend=remote.buildbuddy.io \
       --remote_cache=remote.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
 	  --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE \
-	  -j 1000
+	  -j 2000
 ```
 
 ## Usage of AI
