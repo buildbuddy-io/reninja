@@ -232,6 +232,16 @@ Run the build using remote execution:
 	  -j 2000
 ```
 
+Run the unit tests inside the container:
+```shell
+  docker run --rm \
+      --user "$(id -u):$(id -g)" \
+      -v "$HOME/duckdb:$HOME/duckdb" \
+      -w "$HOME/duckdb/build-rbe" \
+      gcr.io/flame-public/rbe-ubuntu22-04:ninja \
+      $HOME/duckdb/build-rbe/test/unittest
+```
+
 ## Usage of AI
 
 Is this just another AI slop project? **No!**
