@@ -25,15 +25,15 @@ var (
 )
 
 func EnableBES() bool {
-	return *besBackend != ""
+	return BESBackend() != ""
 }
 
 func EnableCache() bool {
-	return *remoteCache != ""
+	return RemoteCache() != ""
 }
 
 func EnableExec() bool {
-	return *remoteExecutor != ""
+	return RemoteExecutor() != ""
 }
 
 func BESBackend() string {
@@ -41,7 +41,12 @@ func BESBackend() string {
 }
 
 func RemoteCache() string {
-	return *remoteCache
+	if *remoteCache != "" {
+		return *remoteCache
+	} else if *remoteExecutor != "" {
+		return *remoteExecutor
+	}
+	return ""
 }
 
 func RemoteExecutor() string {
