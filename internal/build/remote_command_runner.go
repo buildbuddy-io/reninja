@@ -293,6 +293,9 @@ func (r *RemoteCommandRunner) computeInputs(ctx context.Context, edge *graph.Edg
 		inputs := edge.NonOrderOnlyInputs()
 		files = make([]string, 0, len(inputs))
 		for _, input := range inputs {
+			if e := input.InEdge(); e != nil && e.IsPhony() {
+				continue
+			}
 			files = append(files, input.Path())
 		}
 
@@ -323,6 +326,9 @@ func (r *RemoteCommandRunner) computeInputs(ctx context.Context, edge *graph.Edg
 		inputs := edge.NonOrderOnlyInputs()
 		files = make([]string, 0, len(inputs))
 		for _, input := range inputs {
+			if e := input.InEdge(); e != nil && e.IsPhony() {
+				continue
+			}
 			files = append(files, input.Path())
 		}
 
