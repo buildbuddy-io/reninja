@@ -320,16 +320,17 @@ func extractSearchPaths(args []string) []string {
 	var paths []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch {
-		case arg == "-I" || arg == "-iquote" || arg == "-isystem" || arg == "-L":
-			if i+1 < len(args) {
-				i++
-				paths = append(paths, args[i])
+		for _, flag := range []string{"-I", "-iquote", "-isystem", "-L", "-F"} {
+			if arg == flag {
+				if i+1 < len(args) {
+					i++
+					paths = append(paths, args[i])
+				}
+				break
+			} else if strings.HasPrefix(arg, flag) {
+				paths = append(paths, strings.TrimPrefix(arg, flag))
+				break
 			}
-		case strings.HasPrefix(arg, "-I"):
-			paths = append(paths, strings.TrimPrefix(arg, "-I"))
-		case strings.HasPrefix(arg, "-L"):
-			paths = append(paths, strings.TrimPrefix(arg, "-L"))
 		}
 	}
 	return paths
