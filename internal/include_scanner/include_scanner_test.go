@@ -99,9 +99,15 @@ func TestScanEdgeAngleBracketResolution(t *testing.T) {
 	// With search path, it should resolve.
 	os.WriteFile(filepath.Join(incDir, "lib.h"), []byte(""), 0644)
 	s2 := include_scanner.New()
-	extra, err = s2.ScanEdge([]string{src}, "gcc -I"+incDir+" "+src)
-	require.NoError(t, err)
-	assert.Contains(t, absPaths(t, extra), filepath.Join(incDir, "lib.h"))
+	for _, f := range []string{"-I", "-iquote", "-isystem", "-F", "-L"} {
+		extra, err = s2.ScanEdge([]string{src}, "gcc "+f+incDir+" "+src)
+		require.NoError(t, err)
+		assert.Contains(t, absPaths(t, extra), filepath.Join(incDir, "lib.h"))
+
+		extra, err = s2.ScanEdge([]string{src}, "gcc "+f+" "+incDir+" "+src)
+		require.NoError(t, err)
+		assert.Contains(t, absPaths(t, extra), filepath.Join(incDir, "lib.h"))
+	}
 }
 
 func TestScanEdgeTransitive(t *testing.T) {
