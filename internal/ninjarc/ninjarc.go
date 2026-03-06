@@ -233,7 +233,6 @@ func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) 
 		}
 	}
 
-	expandRules("common")
 	expandRules(config)
 	expandedValues = append(expandedValues, existingArgs...)
 	flagSet.Parse(expandedValues)

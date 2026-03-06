@@ -178,9 +178,8 @@ build --config=cache
 ```
 
 This config defines three different modes `bes`, `cache`, and `remote`
-and selects `cache` by default for ninja builds. The `build:common`
-section is *always* expanded for build commands (the default in
-Reninja).
+and selects `cache` by default for ninja builds. The special `common`
+section is *always* expanded.
 
 ## Two-stage Cache Lookups
 Remote caching with Reninja is more challenging than with Bazel

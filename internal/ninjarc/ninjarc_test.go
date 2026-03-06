@@ -287,42 +287,43 @@ func TestDuplicateConfigExpansion(t *testing.T) {
 	assert.Equal(t, "4", *jobs)
 }
 
-func TestCommonNamedConfig(t *testing.T) {
-	// build:common is a special named config that should be applied to all
-	// build invocations, similar to Bazel's behavior.
+func TestChainedConfigExpansion(t *testing.T) {
+	// Tests a realistic config where named configs chain via --config= flags,
+	// and a default build rule applies unconditionally.
 	fsys := fstest.MapFS{
 		"rc": &fstest.MapFile{
 			Data: []byte(
-				"build:common --remote_header=x-buildbuddy-api-key=placeholder\n" +
-					"build:remote --remote_executor=remote.buildbuddy.io\n" +
-					"build:remote --remote_cache=remote.buildbuddy.io\n",
+				"build --remote_header=x-buildbuddy-api-key=placeholder\n" +
+					"build:bes --bes_backend=remote.buildbuddy.io\n" +
+					"build:bes --results_url=https://app.buildbuddy.io/invocation/\n" +
+					"build:cache --config=bes --remote_cache=remote.buildbuddy.io\n" +
+					"build:remote --config=cache --remote_executor=remote.buildbuddy.io\n" +
+					"build:remote --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja\n" +
+					"build:remote -j 2000\n",
 			),
 		},
 	}
 	rc, err := ninjarc.ParseRCFiles(fsys, "/workspace", "rc")
 	require.NoError(t, err)
 
-	// Applying with config=remote should pick up build:common rules.
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	header := fs.String("remote_header", "", "")
-	remoteExec := fs.String("remote_executor", "", "")
+	besBackend := fs.String("bes_backend", "", "")
+	resultsURL := fs.String("results_url", "", "")
 	remoteCache := fs.String("remote_cache", "", "")
+	remoteExec := fs.String("remote_executor", "", "")
+	image := fs.String("container_image", "", "")
+	j := fs.String("j", "", "")
+	fs.String("config", "", "")
 	rc.Apply("build", "remote", fs)
+
 	assert.Equal(t, "x-buildbuddy-api-key=placeholder", *header)
-	assert.Equal(t, "remote.buildbuddy.io", *remoteExec)
+	assert.Equal(t, "remote.buildbuddy.io", *besBackend)
+	assert.Equal(t, "https://app.buildbuddy.io/invocation/", *resultsURL)
 	assert.Equal(t, "remote.buildbuddy.io", *remoteCache)
-
-	// Applying with no explicit config should also pick up build:common rules.
-	fs2 := flag.NewFlagSet("test", flag.ContinueOnError)
-	header2 := fs2.String("remote_header", "", "")
-	rc.Apply("build", "", fs2)
-	assert.Equal(t, "x-buildbuddy-api-key=placeholder", *header2)
-
-	// build:common should NOT apply when the tool is not "build".
-	fs3 := flag.NewFlagSet("test", flag.ContinueOnError)
-	header3 := fs3.String("remote_header", "", "")
-	rc.Apply("clean", "", fs3)
-	assert.Empty(t, *header3)
+	assert.Equal(t, "remote.buildbuddy.io", *remoteExec)
+	assert.Equal(t, "gcr.io/flame-public/rbe-ubuntu22-04:ninja", *image)
+	assert.Equal(t, "2000", *j)
 }
 
 func TestApplyPreservesPositionalArgs(t *testing.T) {
