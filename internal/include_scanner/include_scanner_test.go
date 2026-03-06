@@ -39,6 +39,7 @@ func TestScanEdgeIncludePatterns(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "bar", "baz.h"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(dir, "spaced.h"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(dir, "nospace.h"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "foo.txt"), []byte(""), 0644)
 	// This file exists but should NOT be found (it's behind a // comment).
 	os.WriteFile(filepath.Join(dir, "commented.h"), []byte(""), 0644)
 
@@ -54,6 +55,7 @@ func TestScanEdgeIncludePatterns(t *testing.T) {
 // #include "commented.h"
 int x = 0; // not an include
 #include"nospace.h"
+#embed "foo.txt"
 `
 	os.WriteFile(src, []byte(content), 0644)
 
@@ -68,6 +70,7 @@ int x = 0; // not an include
 		filepath.Join(dir, "bar", "baz.h"),
 		filepath.Join(dir, "spaced.h"),
 		filepath.Join(dir, "nospace.h"),
+		filepath.Join(dir, "foo.txt"),
 	} {
 		assert.Contains(t, absExtra, h)
 	}

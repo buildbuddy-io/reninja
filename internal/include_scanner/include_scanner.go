@@ -39,7 +39,7 @@ func IsScannable(filePath string) bool {
 	return scannableExtensions[fileExtension]
 }
 
-var includeRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import)\s*(["<])([^">]+)[">]`)
+var includeRegex = regexp.MustCompile(`^\s*#\s*(?:include|include_next|import|embed)\s*(["<])([^">]+)[">]`)
 
 // Inclusion represents a single #include directive.
 type Inclusion struct {
