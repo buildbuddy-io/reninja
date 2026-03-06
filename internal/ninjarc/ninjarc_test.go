@@ -287,6 +287,45 @@ func TestDuplicateConfigExpansion(t *testing.T) {
 	assert.Equal(t, "4", *jobs)
 }
 
+func TestChainedConfigExpansion(t *testing.T) {
+	// Tests a realistic config where named configs chain via --config= flags,
+	// and a default build rule applies unconditionally.
+	fsys := fstest.MapFS{
+		"rc": &fstest.MapFile{
+			Data: []byte(
+				"build --remote_header=x-buildbuddy-api-key=placeholder\n" +
+					"build:bes --bes_backend=remote.buildbuddy.io\n" +
+					"build:bes --results_url=https://app.buildbuddy.io/invocation/\n" +
+					"build:cache --config=bes --remote_cache=remote.buildbuddy.io\n" +
+					"build:remote --config=cache --remote_executor=remote.buildbuddy.io\n" +
+					"build:remote --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja\n" +
+					"build:remote -j 2000\n",
+			),
+		},
+	}
+	rc, err := ninjarc.ParseRCFiles(fsys, "/workspace", "rc")
+	require.NoError(t, err)
+
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	header := fs.String("remote_header", "", "")
+	besBackend := fs.String("bes_backend", "", "")
+	resultsURL := fs.String("results_url", "", "")
+	remoteCache := fs.String("remote_cache", "", "")
+	remoteExec := fs.String("remote_executor", "", "")
+	image := fs.String("container_image", "", "")
+	j := fs.String("j", "", "")
+	fs.String("config", "", "")
+	rc.Apply("build", "remote", fs)
+
+	assert.Equal(t, "x-buildbuddy-api-key=placeholder", *header)
+	assert.Equal(t, "remote.buildbuddy.io", *besBackend)
+	assert.Equal(t, "https://app.buildbuddy.io/invocation/", *resultsURL)
+	assert.Equal(t, "remote.buildbuddy.io", *remoteCache)
+	assert.Equal(t, "remote.buildbuddy.io", *remoteExec)
+	assert.Equal(t, "gcr.io/flame-public/rbe-ubuntu22-04:ninja", *image)
+	assert.Equal(t, "2000", *j)
+}
+
 func TestApplyPreservesPositionalArgs(t *testing.T) {
 	fsys := fstest.MapFS{
 		"rc": &fstest.MapFile{

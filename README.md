@@ -164,7 +164,7 @@ flag value is "local", the `--bes_backend`, `--remote_cache` and
 
 A more useful example might look like this:
 ```
-build:common --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE
+common --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE
 
 build:bes --bes_backend=remote.buildbuddy.io 
 build:bes --results_url=https://app.buildbuddy.io/invocation
@@ -178,7 +178,8 @@ build --config=cache
 ```
 
 This config defines three different modes `bes`, `cache`, and `remote`
-and selects `cache` by default for ninja builds.
+and selects `cache` by default for ninja builds. The special `common`
+section is *always* expanded.
 
 ## Two-stage Cache Lookups
 Remote caching with Reninja is more challenging than with Bazel
