@@ -70,7 +70,11 @@ func ProjectRoot() string {
 }
 
 func BytestreamURIPrefix() string {
-	backendURL, err := url.Parse(RemoteCache())
+	cacheTarget := RemoteCache()
+	if !strings.Contains(cacheTarget, "://") {
+		cacheTarget = "grpcs://" + cacheTarget
+	}
+	backendURL, err := url.Parse(cacheTarget)
 	if err != nil {
 		return ""
 	}

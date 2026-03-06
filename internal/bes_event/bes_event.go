@@ -251,7 +251,7 @@ func BuildToolLogsEvent(bytestreamURIPrefix string, commandProfileGz, execLogBin
 		toolLogs.Log = append(toolLogs.Log, &bespb.File{
 			Name: "command.profile.gz",
 			File: &bespb.File_Uri{
-				Uri: fmt.Sprintf("%s%s", bytestreamURIPrefix, commandProfileGz.DownloadString()),
+				Uri: fmt.Sprintf("%s/%s", bytestreamURIPrefix, commandProfileGz.DownloadString()),
 			},
 		})
 	}
@@ -259,7 +259,7 @@ func BuildToolLogsEvent(bytestreamURIPrefix string, commandProfileGz, execLogBin
 		toolLogs.Log = append(toolLogs.Log, &bespb.File{
 			Name: "execution_log.binpb.zst",
 			File: &bespb.File_Uri{
-				Uri: fmt.Sprintf("%s%s", bytestreamURIPrefix, execLogBinpbZstd.DownloadString()),
+				Uri: fmt.Sprintf("%s/%s", bytestreamURIPrefix, execLogBinpbZstd.DownloadString()),
 			},
 		})
 	}
