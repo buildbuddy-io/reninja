@@ -287,6 +287,44 @@ func TestDuplicateConfigExpansion(t *testing.T) {
 	assert.Equal(t, "4", *jobs)
 }
 
+func TestCommonNamedConfig(t *testing.T) {
+	// build:common is a special named config that should be applied to all
+	// build invocations, similar to Bazel's behavior.
+	fsys := fstest.MapFS{
+		"rc": &fstest.MapFile{
+			Data: []byte(
+				"build:common --remote_header=x-buildbuddy-api-key=placeholder\n" +
+					"build:remote --remote_executor=remote.buildbuddy.io\n" +
+					"build:remote --remote_cache=remote.buildbuddy.io\n",
+			),
+		},
+	}
+	rc, err := ninjarc.ParseRCFiles(fsys, "/workspace", "rc")
+	require.NoError(t, err)
+
+	// Applying with config=remote should pick up build:common rules.
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	header := fs.String("remote_header", "", "")
+	remoteExec := fs.String("remote_executor", "", "")
+	remoteCache := fs.String("remote_cache", "", "")
+	rc.Apply("build", "remote", fs)
+	assert.Equal(t, "x-buildbuddy-api-key=placeholder", *header)
+	assert.Equal(t, "remote.buildbuddy.io", *remoteExec)
+	assert.Equal(t, "remote.buildbuddy.io", *remoteCache)
+
+	// Applying with no explicit config should also pick up build:common rules.
+	fs2 := flag.NewFlagSet("test", flag.ContinueOnError)
+	header2 := fs2.String("remote_header", "", "")
+	rc.Apply("build", "", fs2)
+	assert.Equal(t, "x-buildbuddy-api-key=placeholder", *header2)
+
+	// build:common should NOT apply when the tool is not "build".
+	fs3 := flag.NewFlagSet("test", flag.ContinueOnError)
+	header3 := fs3.String("remote_header", "", "")
+	rc.Apply("clean", "", fs3)
+	assert.Empty(t, *header3)
+}
+
 func TestApplyPreservesPositionalArgs(t *testing.T) {
 	fsys := fstest.MapFS{
 		"rc": &fstest.MapFile{
