@@ -195,8 +195,7 @@ type RCConfig struct {
 	defaultRcRules map[string][]string
 }
 
-func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) {
-	existingArgs := flagSet.Args()
+func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet, args []string) {
 	expandedValues := make([]string, 0)
 	seenConfigs := make(map[string]struct{}, 0)
 	tools := []string{"common", toolName}
@@ -234,7 +233,7 @@ func (c *RCConfig) Apply(toolName string, config string, flagSet *flag.FlagSet) 
 	}
 
 	expandRules(config)
-	expandedValues = append(expandedValues, existingArgs...)
+	expandedValues = append(expandedValues, args...)
 	flagSet.Parse(expandedValues)
 }
 
@@ -287,6 +286,6 @@ func ParseAndApplyRCFilesToFlags(toolName string) error {
 		return err
 	}
 
-	rcConfig.Apply(toolName, *configFlag, flag.CommandLine)
+	rcConfig.Apply(toolName, *configFlag, flag.CommandLine, os.Args[1:])
 	return nil
 }

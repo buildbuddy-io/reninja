@@ -20,7 +20,7 @@ func TestBasicDefaultRule(t *testing.T) {
 	require.NoError(t, err)
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "8", *jobs)
 }
 
@@ -36,13 +36,13 @@ func TestNamedConfig(t *testing.T) {
 	// Without config, the flag should not be set.
 	fs1 := flag.NewFlagSet("test", flag.ContinueOnError)
 	cache1 := fs1.String("remote_cache", "", "")
-	rc.Apply("build", "", fs1)
+	rc.Apply("build", "", fs1, nil)
 	assert.Empty(t, *cache1)
 
 	// With config=local, the flag should be set.
 	fs2 := flag.NewFlagSet("test", flag.ContinueOnError)
 	cache2 := fs2.String("remote_cache", "", "")
-	rc.Apply("build", "local", fs2)
+	rc.Apply("build", "local", fs2, nil)
 	assert.Equal(t, "grpc://localhost:1985", *cache2)
 }
 
@@ -59,7 +59,7 @@ func TestMultiplePhases(t *testing.T) {
 	fsBuild := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fsBuild.String("jobs", "", "")
 	keepGoing := fsBuild.Bool("keep_going", false, "")
-	rc.Apply("build", "", fsBuild)
+	rc.Apply("build", "", fsBuild, nil)
 	assert.Equal(t, "8", *jobs)
 	assert.False(t, *keepGoing)
 
@@ -67,7 +67,7 @@ func TestMultiplePhases(t *testing.T) {
 	fsClean := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs2 := fsClean.String("jobs", "", "")
 	keepGoing2 := fsClean.Bool("keep_going", false, "")
-	rc.Apply("clean", "", fsClean)
+	rc.Apply("clean", "", fsClean, nil)
 	assert.Empty(t, *jobs2)
 	assert.True(t, *keepGoing2)
 }
@@ -85,7 +85,7 @@ func TestCommonPhase(t *testing.T) {
 	for _, tool := range []string{"build", "clean", "anything"} {
 		fs := flag.NewFlagSet("test", flag.ContinueOnError)
 		verbose := fs.Bool("verbose", false, "")
-		rc.Apply(tool, "", fs)
+		rc.Apply(tool, "", fs, nil)
 		assert.True(t, *verbose, "tool=%s", tool)
 	}
 }
@@ -100,7 +100,7 @@ func TestLineContinuation(t *testing.T) {
 	require.NoError(t, err)
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "8", *jobs)
 }
 
@@ -118,7 +118,7 @@ func TestImportDirective(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
 	verbose := fs.Bool("verbose", false, "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "4", *jobs)
 	assert.True(t, *verbose)
 }
@@ -133,7 +133,7 @@ func TestTryImportMissingFile(t *testing.T) {
 	require.NoError(t, err)
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "4", *jobs)
 }
 
@@ -162,7 +162,7 @@ func TestConfigExpansion(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
 	cache := fs.String("remote_cache", "", "")
-	rc.Apply("build", "dev", fs)
+	rc.Apply("build", "dev", fs, nil)
 	assert.Equal(t, "4", *jobs)
 	assert.Equal(t, "grpc://dev:1985", *cache)
 }
@@ -181,7 +181,7 @@ func TestMultipleRCFiles(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
 	verbose := fs.Bool("verbose", false, "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "4", *jobs)
 	assert.True(t, *verbose)
 }
@@ -196,7 +196,7 @@ func TestEmptyAndCommentLines(t *testing.T) {
 	require.NoError(t, err)
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "8", *jobs)
 }
 
@@ -210,7 +210,7 @@ func TestWorkspacePathExpansion(t *testing.T) {
 	require.NoError(t, err)
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "16", *jobs)
 }
 
@@ -227,7 +227,7 @@ func TestConfigExpansionViaFlag(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	config := fs.String("config", "", "")
 	cache := fs.String("remote_cache", "", "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "dev", *config)
 	assert.Equal(t, "grpc://dev:1985", *cache)
 }
@@ -245,7 +245,7 @@ func TestSelfReferentialConfigExpansion(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	config := fs.String("config", "", "")
 	jobs := fs.String("jobs", "", "")
-	rc.Apply("build", "loop", fs)
+	rc.Apply("build", "loop", fs, nil)
 	assert.Equal(t, "loop", *config)
 	assert.Equal(t, "4", *jobs)
 }
@@ -263,7 +263,7 @@ func TestMutuallyRecursiveConfigExpansion(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
 	config := fs.String("config", "", "")
-	rc.Apply("build", "a", fs)
+	rc.Apply("build", "a", fs, nil)
 	// Should complete without hanging. The last --jobs write wins.
 	assert.NotEmpty(t, *config)
 	assert.NotEmpty(t, *jobs)
@@ -282,7 +282,7 @@ func TestDuplicateConfigExpansion(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
 	config := fs.String("config", "", "")
-	rc.Apply("build", "", fs)
+	rc.Apply("build", "", fs, nil)
 	assert.Equal(t, "dev", *config)
 	assert.Equal(t, "4", *jobs)
 }
@@ -315,7 +315,7 @@ func TestChainedConfigExpansion(t *testing.T) {
 	image := fs.String("container_image", "", "")
 	j := fs.String("j", "", "")
 	fs.String("config", "", "")
-	rc.Apply("build", "remote", fs)
+	rc.Apply("build", "remote", fs, nil)
 
 	assert.Equal(t, "x-buildbuddy-api-key=placeholder", *header)
 	assert.Equal(t, "remote.buildbuddy.io", *besBackend)
@@ -336,11 +336,8 @@ func TestApplyPreservesPositionalArgs(t *testing.T) {
 	require.NoError(t, err)
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jobs := fs.String("jobs", "", "")
-	// Simulate a prior parse that left positional args behind.
-	fs.Parse([]string{"--jobs=8", "target1", "target2"})
-	assert.Equal(t, []string{"target1", "target2"}, fs.Args())
-
-	rc.Apply("build", "", fs)
-	assert.Equal(t, "4", *jobs)
+	// CLI args are passed to Apply directly; --jobs=8 should win over RC's --jobs=4.
+	rc.Apply("build", "", fs, []string{"--jobs=8", "target1", "target2"})
+	assert.Equal(t, "8", *jobs)
 	assert.Equal(t, []string{"target1", "target2"}, fs.Args())
 }
