@@ -132,7 +132,7 @@ func (s *Scanner) ScanEdge(inputFiles []string, command string) ([]string, error
 	}
 
 	for _, f := range inputFiles {
-		if !isScannable(f) {
+		if !IsScannable(f) {
 			continue
 		}
 		abs, err := filepath.Abs(f)
@@ -346,11 +346,6 @@ func extractForceIncludes(args []string) []string {
 		}
 	}
 	return paths
-}
-
-func isScannable(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return scannableExtensions[ext]
 }
 
 // expandPaths stats each candidate path and expands it:
