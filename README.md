@@ -164,7 +164,7 @@ flag value is "local", the `--bes_backend`, `--remote_cache` and
 
 A more useful example might look like this:
 ```
-build:common --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE
+common --remote_header=x-buildbuddy-api-key=YOUR_API_KEY_HERE
 
 build:bes --bes_backend=remote.buildbuddy.io 
 build:bes --results_url=https://app.buildbuddy.io/invocation
