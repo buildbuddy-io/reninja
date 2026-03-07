@@ -126,7 +126,7 @@ type Tool struct {
 }
 
 func GuessParallelism() int {
-	processors := runtime.NumCPU()
+	processors := runtime.GOMAXPROCS(-1) // Use this instead of runtime.NumCPU() to be cgroups aware.
 	switch processors {
 	case 0:
 		fallthrough
