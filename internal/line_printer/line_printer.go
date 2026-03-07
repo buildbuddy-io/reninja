@@ -171,3 +171,25 @@ func (p *LinePrinter) SetConsoleLocked(locked bool) {
 		p.lineBuffer = ""
 	}
 }
+
+// PrintNextLine moves to the next line and prints line there, elided to
+// terminal width. Must only be called on smart terminals.
+func (p *LinePrinter) PrintNextLine(line string) {
+	width, _, err := term.GetSize(int(os.Stdin.Fd()))
+	if err == nil && width > 0 {
+		line = elide_middle.ElideMiddle(line, width)
+	}
+	fmt.Fprintf(p.out, "\n%s\x1B[K", line)
+}
+
+// ClearNextLine moves down one line and erases it completely.
+// Must only be called on smart terminals.
+func (p *LinePrinter) ClearNextLine() {
+	p.out.Write([]byte("\x1B[1B\x1B[2K"))
+}
+
+// MoveUp moves the cursor up n lines.
+// Must only be called on smart terminals.
+func (p *LinePrinter) MoveUp(n int) {
+	fmt.Fprintf(p.out, "\x1B[%dA", n)
+}
