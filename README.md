@@ -67,7 +67,7 @@ Profile](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-2992
 ```shell
   SRC=$PWD
   BUILD_DIR=$SRC/build-rbe
-  mkdir -p "$BUILD_DIR" \
+  mkdir -p "$BUILD_DIR"
   docker run --rm \
 	  --user "$(id -u):$(id -g)" \
 	  -v "$SRC:$SRC" \
@@ -77,7 +77,7 @@ Profile](https://github.com/user-attachments/assets/905ac68b-7588-47c4-8cd0-2992
 	  cmake -G Ninja \
 		-DCMAKE_SUPPRESS_REGENERATION=ON \
 		"$SRC"
-  reninja --bes_backend=remote.buildbuddy.io \
+  reninja -C $BUILD_DIR --bes_backend=remote.buildbuddy.io \
 	  --results_url=https://app.buildbuddy.io \
 	  --remote_executor=remote.buildbuddy.io \
 	  --container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
