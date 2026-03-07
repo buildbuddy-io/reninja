@@ -64,7 +64,11 @@ func getStructuredCommandLine() *clpb.CommandLine {
 		if val == "" {
 			return
 		}
-		if val == f.DefValue {
+		// HACK always send digest function flag in the CommandLine event
+		// because SOME UIs use this to decide how to fetch blobs and it
+		// can lead to very confusing missing data when they use the wrong
+		// digest function.
+		if val == f.DefValue && f.Name != "digest_function" {
 			return
 		}
 		options = append(options, &clpb.Option{
