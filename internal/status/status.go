@@ -533,8 +533,20 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 		} else {
 			// Within the refresh interval: just overwrite the status line.
 			// The command rows below are left unchanged — no flicker.
+			// Cursor is at the blank line (lastTableHeight+1 below status line),
+			// so navigate up, update, then return to the blank line.
 			p.lastStatus = toPrint
+			if p.lastTableHeight > 0 {
+				p.printer.MoveUp(p.lastTableHeight + 1)
+			}
 			p.printer.Print(toPrint, elideMode)
+			if p.lastTableHeight > 0 {
+				// MoveDown(N) reaches the last table row; ClearNextLine then
+				// steps to row N+1, erases it, and resets to column 0 — the
+				// same invariant that printTable establishes.
+				p.printer.MoveDown(p.lastTableHeight)
+				p.printer.ClearNextLine()
+			}
 		}
 		p.mu.Unlock()
 	} else {
@@ -701,10 +713,6 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 	p.recordSystemMetrics(buildStart)
 	p.initializeLogs()
 
-	if p.maxCommands > 0 && p.printer.SmartTerminal() {
-		p.printer.HideCursor()
-	}
-
 	// Periodically update system metrics and refresh the status table.
 	go func() {
 		for {
@@ -734,7 +742,6 @@ func (p *StatusPrinter) BuildFinished() {
 		p.mu.Lock()
 		p.clearTable()
 		p.mu.Unlock()
-		p.printer.ShowCursor()
 	}
 	p.printer.SetConsoleLocked(false)
 	p.printer.PrintOnNewline("")
@@ -1054,10 +1061,12 @@ const tableRefreshInterval = 100 * time.Millisecond
 // It also resets lastTableRefreshTime so the next printTable call does a full
 // redraw immediately rather than treating the cleared state as up-to-date.
 func (p *StatusPrinter) clearTable() {
-	for i := 0; i < p.lastTableHeight; i++ {
-		p.printer.ClearNextLine()
-	}
 	if p.lastTableHeight > 0 {
+		// Cursor is on the blank line N+1 rows below the status line.
+		p.printer.MoveUp(p.lastTableHeight + 1)
+		for i := 0; i < p.lastTableHeight; i++ {
+			p.printer.ClearNextLine()
+		}
 		p.printer.MoveUp(p.lastTableHeight)
 	}
 	p.lastTableHeight = 0
@@ -1102,9 +1111,12 @@ func (p *StatusPrinter) printTable(buildTimeMs int64, statusLine string) {
 		p.printer.PrintNextLine(line)
 	}
 
+	// Park cursor on a blank line below the table (Bazel-style). The cursor
+	// is never visible on content — it sits on an empty line below all rows.
+	// ClearNextLine (= \x1B[1B\x1B[2K) is used instead of PrintNextLine("") so
+	// that the entire line is erased regardless of cursor column.
 	if len(entries) > 0 {
-		p.printer.MoveUp(len(entries))
-		p.printer.Print(statusLine, line_printer.Elide)
+		p.printer.ClearNextLine()
 	}
 
 	p.lastTableHeight = len(entries)

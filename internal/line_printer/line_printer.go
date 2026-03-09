@@ -182,10 +182,10 @@ func (p *LinePrinter) PrintNextLine(line string) {
 	fmt.Fprintf(p.out, "\n%s\x1B[K", line)
 }
 
-// ClearNextLine moves down one line and erases it completely.
-// Must only be called on smart terminals.
+// ClearNextLine moves down one line, erases it completely, and returns the
+// cursor to column 0. Must only be called on smart terminals.
 func (p *LinePrinter) ClearNextLine() {
-	p.out.Write([]byte("\x1B[1B\x1B[2K"))
+	p.out.Write([]byte("\x1B[1B\x1B[2K\r"))
 }
 
 // MoveUp moves the cursor up n lines.
@@ -194,16 +194,8 @@ func (p *LinePrinter) MoveUp(n int) {
 	fmt.Fprintf(p.out, "\x1B[%dA", n)
 }
 
-// HideCursor hides the terminal cursor.
-func (p *LinePrinter) HideCursor() {
-	if p.smartTerminal {
-		p.out.Write([]byte("\x1B[?25l"))
-	}
-}
-
-// ShowCursor restores the terminal cursor.
-func (p *LinePrinter) ShowCursor() {
-	if p.smartTerminal {
-		p.out.Write([]byte("\x1B[?25h"))
-	}
+// MoveDown moves the cursor down n lines.
+// Must only be called on smart terminals.
+func (p *LinePrinter) MoveDown(n int) {
+	fmt.Fprintf(p.out, "\x1B[%dB", n)
 }
