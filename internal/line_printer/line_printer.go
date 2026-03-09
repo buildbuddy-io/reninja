@@ -193,3 +193,17 @@ func (p *LinePrinter) ClearNextLine() {
 func (p *LinePrinter) MoveUp(n int) {
 	fmt.Fprintf(p.out, "\x1B[%dA", n)
 }
+
+// HideCursor hides the terminal cursor.
+func (p *LinePrinter) HideCursor() {
+	if p.smartTerminal {
+		p.out.Write([]byte("\x1B[?25l"))
+	}
+}
+
+// ShowCursor restores the terminal cursor.
+func (p *LinePrinter) ShowCursor() {
+	if p.smartTerminal {
+		p.out.Write([]byte("\x1B[?25h"))
+	}
+}

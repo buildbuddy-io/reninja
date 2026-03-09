@@ -3,13 +3,13 @@ package status
 import (
 	"compress/gzip"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -341,7 +341,7 @@ func (p *StatusPrinter) printStreamURL() {
 	invocationURL := path.Join(remote_flags.ResultsURL(), p.invocationID)
 	streamingTo := fmt.Sprintf("Streaming results to: %s", p.printer.Esc(4, 34)+invocationURL+p.printer.Esc())
 	streamingLog := p.printer.Esc(32) + "INFO: " + p.printer.Esc() + streamingTo
-	fmt.Fprintln(os.Stderr, streamingLog)
+	p.printer.PrintOnNewline(streamingLog + "\n")
 }
 
 func (p *StatusPrinter) EdgeAddedToPlan(edge *graph.Edge) {
@@ -506,7 +506,15 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 		toPrint = edge.GetBinding("command")
 	}
 
-	toPrint = p.FormatProgressStatus(p.progressStatusFormat, timeMillis) + toPrint
+	progressPrefix := p.FormatProgressStatus(p.progressStatusFormat, timeMillis)
+	if p.maxCommands > 0 && !forceFullCommand {
+		if p.runningEdges > 1 {
+			toPrint = fmt.Sprintf("%d actions running", p.runningEdges)
+		}
+		toPrint = p.printer.Esc(32) + progressPrefix + p.printer.Esc() + toPrint
+	} else {
+		toPrint = progressPrefix + toPrint
+	}
 
 	elideMode := line_printer.Elide
 	if forceFullCommand {
@@ -693,6 +701,10 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 	p.recordSystemMetrics(buildStart)
 	p.initializeLogs()
 
+	if p.maxCommands > 0 && p.printer.SmartTerminal() {
+		p.printer.HideCursor()
+	}
+
 	// Periodically update system metrics and refresh the status table.
 	go func() {
 		for {
@@ -722,6 +734,7 @@ func (p *StatusPrinter) BuildFinished() {
 		p.mu.Lock()
 		p.clearTable()
 		p.mu.Unlock()
+		p.printer.ShowCursor()
 	}
 	p.printer.SetConsoleLocked(false)
 	p.printer.PrintOnNewline("")
@@ -1009,36 +1022,26 @@ func (p *StatusPrinter) FormatProgressStatus(format string, timeMillis int64) st
 	return out.String()
 }
 
-// StatusMaxCommands reads NINJA_STATUS_MAX_COMMANDS from the environment.
-// Returns 0 (disabled) if unset, empty, negative, or non-numeric.
+var uiActionsShown = flag.Int("ui_actions_shown", 8, "Number of concurrent actions to show progress for")
+
+// StatusMaxCommands returns the number of in-flight commands to show in the
+// status table, as set by --ui_actions_shown. Returns 0 if the value is
+// negative.
 func StatusMaxCommands() int {
-	s, ok := os.LookupEnv("NINJA_STATUS_MAX_COMMANDS")
-	if !ok {
+	if *uiActionsShown < 0 {
 		return 0
 	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
-		return 0
-	}
-	return n
+	return *uiActionsShown
 }
 
 // FormatTableElapsed formats an elapsed duration in milliseconds as a
-// right-justified 6-character string, e.g. "  6.7s" or " 1m30s".
+// time suffix for in-flight command rows, e.g. "; 6s" or "; 1m30s".
 func FormatTableElapsed(ms int64) string {
-	if ms < 0 {
-		return "??????"
+	sec := ms / 1000
+	if sec < 60 {
+		return fmt.Sprintf("; %ds", sec)
 	}
-	var raw string
-	if ms < 60000 {
-		raw = fmt.Sprintf("%d.%ds", ms/1000, (ms%1000)/100)
-	} else {
-		raw = fmt.Sprintf("%dm%ds", ms/60000, (ms%60000)/1000)
-	}
-	if len(raw) < 6 {
-		return strings.Repeat(" ", 6-len(raw)) + raw
-	}
-	return raw
+	return fmt.Sprintf("; %dm%ds", sec/60, sec%60)
 }
 
 // tableRefreshInterval is the minimum time between full table redraws.
@@ -1085,13 +1088,18 @@ func (p *StatusPrinter) printTable(buildTimeMs int64, statusLine string) {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].startMs < entries[j].startMs
 	})
+	totalPending := len(entries)
 	if len(entries) > p.maxCommands {
 		entries = entries[:p.maxCommands]
 	}
 
-	for _, e := range entries {
+	for i, e := range entries {
 		elapsed := buildTimeMs - e.startMs
-		p.printer.PrintNextLine(FormatTableElapsed(elapsed) + " | " + e.description)
+		line := "    " + e.description + FormatTableElapsed(elapsed)
+		if i == len(entries)-1 && totalPending > p.maxCommands {
+			line += " ..."
+		}
+		p.printer.PrintNextLine(line)
 	}
 
 	if len(entries) > 0 {

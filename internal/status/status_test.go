@@ -34,23 +34,15 @@ func TestFormatTableElapsed(t *testing.T) {
 		ms   int64
 		want string
 	}{
-		// Negative → sentinel
-		{-1, "??????"},
-		// Zero
-		{0, "  0.0s"},
-		// Sub-second
-		{500, "  0.5s"},
-		// Seconds, one digit
-		{1000, "  1.0s"},
-		{6700, "  6.7s"},
-		// Seconds, two digits — still right-justified to width 6
-		{10000, " 10.0s"},
-		{59999, " 59.9s"},
-		// Exactly 60s transitions to minutes format
-		{60000, "  1m0s"},
-		{90000, " 1m30s"},
-		// Large value, no truncation needed
-		{600000, " 10m0s"},
+		{0, "; 0s"},
+		{500, "; 0s"},
+		{1000, "; 1s"},
+		{6700, "; 6s"},
+		{10000, "; 10s"},
+		{59999, "; 59s"},
+		{60000, "; 1m0s"},
+		{90000, "; 1m30s"},
+		{600000, "; 10m0s"},
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("%dms", c.ms), func(t *testing.T) {
@@ -60,26 +52,9 @@ func TestFormatTableElapsed(t *testing.T) {
 	}
 }
 
-func TestStatusMaxCommandsDefault(t *testing.T) {
-	t.Setenv("NINJA_STATUS_MAX_COMMANDS", "")
-	// Empty string is not a valid integer → returns 0.
-	assert.Equal(t, 0, status.StatusMaxCommands())
-}
-
-func TestStatusMaxCommandsPositive(t *testing.T) {
-	t.Setenv("NINJA_STATUS_MAX_COMMANDS", "8")
-	assert.Equal(t, 8, status.StatusMaxCommands())
-}
-
-func TestStatusMaxCommandsNegative(t *testing.T) {
-	t.Setenv("NINJA_STATUS_MAX_COMMANDS", "-5")
-	assert.Equal(t, 0, status.StatusMaxCommands())
-}
-
 func TestStatusTableDisabledOnDumbTerminal(t *testing.T) {
 	// With maxCommands > 0 but a non-smart terminal (test environment),
 	// BuildEdgeStarted / BuildEdgeFinished should not panic.
-	t.Setenv("NINJA_STATUS_MAX_COMMANDS", "4")
 	config := &build_config.Config{Parallelism: 2}
 	p := status.NewPrinter(config)
 	p.BuildStarted(time.Now())
