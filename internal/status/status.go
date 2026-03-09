@@ -734,12 +734,14 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 				p.recordSystemMetrics(t)
 				if p.maxCommands > 0 && p.printer.SmartTerminal() {
 					p.mu.Lock()
-					p.clearTable()
-					if p.lastStatus != "" {
-						p.printer.Print(p.lastStatus, line_printer.Elide)
+					if t.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {
+						p.clearTable()
+						if p.lastStatus != "" {
+							p.printer.Print(p.lastStatus, line_printer.Elide)
+						}
+						p.printTable(t, p.lastStatus)
+						p.lastTableRefreshTime = t
 					}
-					p.printTable(t, p.lastStatus)
-					p.lastTableRefreshTime = time.Now()
 					p.mu.Unlock()
 				}
 			}
