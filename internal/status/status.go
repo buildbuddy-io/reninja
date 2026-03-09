@@ -40,6 +40,17 @@ import (
 	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
+var (
+	uiActionsShown = flag.Int("ui_actions_shown", 8, "Number of concurrent actions to show progress for")
+)
+
+const (
+	// Require at least this much time to pass between each
+	// full table redraw. Between full redraws the status line is
+	// updated in place.
+	minTableRefreshInterval = 100 * time.Millisecond
+)
+
 type Status interface {
 	EdgeAddedToPlan(edge *graph.Edge)
 	EdgeRemovedFromPlan(edge *graph.Edge)
@@ -152,9 +163,9 @@ type StatusPrinter struct {
 	done   chan bool
 	mu     sync.Mutex
 
-	// pendingCommands maps edges currently running to their start time in
-	// milliseconds relative to buildStart. Used to render the status table.
-	pendingCommands map[*graph.Edge]int64
+	// pendingCommands maps edges currently running to their absolute start
+	// time. Used to render the status table.
+	pendingCommands map[*graph.Edge]time.Time
 
 	// lastTableHeight is the number of command rows currently printed below
 	// the status line.
@@ -204,7 +215,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		done:                 make(chan bool),
 		logsInitialized:      &sync.Once{},
 		maxCommands:          StatusMaxCommands(),
-		pendingCommands:      make(map[*graph.Edge]int64),
+		pendingCommands:      make(map[*graph.Edge]time.Time),
 	}
 
 	if remote_flags.EnableBES() {
@@ -379,7 +390,7 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, absoluteStart time.Ti
 	p.timeMillis = startTimeMillis
 
 	p.mu.Lock()
-	p.pendingCommands[edge] = startTimeMillis
+	p.pendingCommands[edge] = absoluteStart
 	p.mu.Unlock()
 
 	// In verbose mode, the status line ends with a newline and can't be
@@ -524,11 +535,11 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 	if p.maxCommands > 0 && p.printer.SmartTerminal() && !forceFullCommand {
 		p.mu.Lock()
 		now := time.Now()
-		if p.lastTableRefreshTime.IsZero() || now.Sub(p.lastTableRefreshTime) >= tableRefreshInterval {
+		if p.lastTableRefreshTime.IsZero() || now.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {
 			// Full redraw: erase old rows, print status, draw new rows.
 			p.clearTable()
 			p.printer.Print(toPrint, elideMode)
-			p.printTable(timeMillis, toPrint)
+			p.printTable(now, toPrint)
 			p.lastTableRefreshTime = now
 		} else {
 			// Within the refresh interval: just overwrite the status line.
@@ -707,7 +718,7 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 	p.lastStatus = ""
 
 	p.mu.Lock()
-	p.pendingCommands = make(map[*graph.Edge]int64)
+	p.pendingCommands = make(map[*graph.Edge]time.Time)
 	p.mu.Unlock()
 
 	p.recordSystemMetrics(buildStart)
@@ -722,13 +733,12 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 			case t := <-p.ticker.C:
 				p.recordSystemMetrics(t)
 				if p.maxCommands > 0 && p.printer.SmartTerminal() {
-					currentMs := t.Sub(p.buildStart).Milliseconds()
 					p.mu.Lock()
 					p.clearTable()
 					if p.lastStatus != "" {
 						p.printer.Print(p.lastStatus, line_printer.Elide)
 					}
-					p.printTable(currentMs, p.lastStatus)
+					p.printTable(t, p.lastStatus)
 					p.lastTableRefreshTime = time.Now()
 					p.mu.Unlock()
 				}
@@ -1029,32 +1039,22 @@ func (p *StatusPrinter) FormatProgressStatus(format string, timeMillis int64) st
 	return out.String()
 }
 
-var uiActionsShown = flag.Int("ui_actions_shown", 8, "Number of concurrent actions to show progress for")
-
 // StatusMaxCommands returns the number of in-flight commands to show in the
 // status table, as set by --ui_actions_shown. Returns 0 if the value is
 // negative.
 func StatusMaxCommands() int {
-	if *uiActionsShown < 0 {
-		return 0
-	}
-	return *uiActionsShown
+	return max(0, *uiActionsShown)
 }
 
-// FormatTableElapsed formats an elapsed duration in milliseconds as a
-// time suffix for in-flight command rows, e.g. "; 6s" or "; 1m30s".
-func FormatTableElapsed(ms int64) string {
-	sec := ms / 1000
+// FormatTableElapsed formats an elapsed duration as a time suffix for
+// in-flight command rows, e.g. "; 6s" or "; 1m30s".
+func FormatTableElapsed(d time.Duration) string {
+	sec := int64(d.Seconds())
 	if sec < 60 {
 		return fmt.Sprintf("; %ds", sec)
 	}
 	return fmt.Sprintf("; %dm%ds", sec/60, sec%60)
 }
-
-// tableRefreshInterval is the minimum time between full table redraws.
-// Between redraws the status line is updated in-place but the command rows
-// are left unchanged, which eliminates flicker on fast (e.g. cached) builds.
-const tableRefreshInterval = 100 * time.Millisecond
 
 // clearTable erases the command rows printed below the status line and moves
 // the cursor back to the status line. Must be called with p.mu held.
@@ -1076,26 +1076,26 @@ func (p *StatusPrinter) clearTable() {
 // printTable prints up to maxCommands oldest running commands below the status
 // line and moves the cursor back up to the status line.
 // Must be called with p.mu held. statusLine is stored for ticker reprinting.
-func (p *StatusPrinter) printTable(buildTimeMs int64, statusLine string) {
+func (p *StatusPrinter) printTable(now time.Time, statusLine string) {
 	if p.maxCommands == 0 || !p.printer.SmartTerminal() {
 		return
 	}
 	p.lastStatus = statusLine
 
 	type entry struct {
-		startMs     int64
+		startTime   time.Time
 		description string
 	}
 	entries := make([]entry, 0, len(p.pendingCommands))
-	for edge, startMs := range p.pendingCommands {
+	for edge, startTime := range p.pendingCommands {
 		desc := edge.GetBinding("description")
 		if desc == "" {
 			desc = edge.GetBinding("command")
 		}
-		entries = append(entries, entry{startMs, desc})
+		entries = append(entries, entry{startTime, desc})
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].startMs < entries[j].startMs
+		return entries[i].startTime.Before(entries[j].startTime)
 	})
 	totalPending := len(entries)
 	if len(entries) > p.maxCommands {
@@ -1103,7 +1103,7 @@ func (p *StatusPrinter) printTable(buildTimeMs int64, statusLine string) {
 	}
 
 	for i, e := range entries {
-		elapsed := buildTimeMs - e.startMs
+		elapsed := now.Sub(e.startTime)
 		line := "    " + e.description + FormatTableElapsed(elapsed)
 		if i == len(entries)-1 && totalPending > p.maxCommands {
 			line += " ..."

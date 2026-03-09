@@ -31,22 +31,22 @@ func TestStatusFormatReplacePlaceholder(t *testing.T) {
 
 func TestFormatTableElapsed(t *testing.T) {
 	cases := []struct {
-		ms   int64
+		d    time.Duration
 		want string
 	}{
 		{0, "; 0s"},
-		{500, "; 0s"},
-		{1000, "; 1s"},
-		{6700, "; 6s"},
-		{10000, "; 10s"},
-		{59999, "; 59s"},
-		{60000, "; 1m0s"},
-		{90000, "; 1m30s"},
-		{600000, "; 10m0s"},
+		{500 * time.Millisecond, "; 0s"},
+		{1000 * time.Millisecond, "; 1s"},
+		{6700 * time.Millisecond, "; 6s"},
+		{10 * time.Second, "; 10s"},
+		{59999 * time.Millisecond, "; 59s"},
+		{60 * time.Second, "; 1m0s"},
+		{90 * time.Second, "; 1m30s"},
+		{600 * time.Second, "; 10m0s"},
 	}
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("%dms", c.ms), func(t *testing.T) {
-			got := status.FormatTableElapsed(c.ms)
+		t.Run(fmt.Sprintf("%v", c.d), func(t *testing.T) {
+			got := status.FormatTableElapsed(c.d)
 			assert.Equal(t, c.want, got)
 		})
 	}
