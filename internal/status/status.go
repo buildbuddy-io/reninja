@@ -47,8 +47,8 @@ var (
 const (
 	// Require at least this much time to pass between each
 	// full table redraw. Between full redraws the status line is
-	// updated in place.
-	minTableRefreshInterval = 100 * time.Millisecond
+	// updated in place. Matches Bazel's --show_progress_rate_limit default.
+	minTableRefreshInterval = 200 * time.Millisecond
 )
 
 type Status interface {
@@ -211,7 +211,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		config:               config,
 		currentRate:          NewSlidingRateInfo(config.Parallelism),
 		progressStatusFormat: progressStatusFormat,
-		ticker:               time.NewTicker(500 * time.Millisecond),
+		ticker:               time.NewTicker(minTableRefreshInterval),
 		done:                 make(chan bool),
 		logsInitialized:      &sync.Once{},
 		maxCommands:          StatusMaxCommands(),
