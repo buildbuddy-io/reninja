@@ -1,17 +1,17 @@
 x_templates:
   - &install_go |
-    if ! [ -x "$(command -v go)" ] || true; then
-      curl -LO https://go.dev/dl/go1.25.6.linux-amd64.tar.gz
-      sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.6.linux-amd64.tar.gz
+    if ! go version 2>/dev/null | grep -q "go1.26.1"; then
+      curl -LO https://go.dev/dl/go1.26.1.linux-amd64.tar.gz
+      sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz
       echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
     fi
   - &install_gh_cli |
-    if ! [ -x "$(command -v gh)" ]; then
+    if ! gh --version 2>/dev/null | grep -q "2.67.0"; then
       curl -LO https://github.com/cli/cli/releases/download/v2.67.0/gh_2.67.0_linux_amd64.tar.gz
       sudo tar -C /usr/local -xzf gh_2.67.0_linux_amd64.tar.gz --strip-components=1
     fi
   - &install_cmake |
-    if ! [ -x "$(command -v cmake)" ]; then
+    if ! cmake --version 2>/dev/null | grep -q "4.3.0-rc1"; then
       curl -LO https://github.com/Kitware/CMake/releases/download/v4.3.0-rc1/cmake-4.3.0-rc1-linux-x86_64.sh
       sudo sh cmake-4.3.0-rc1-linux-x86_64.sh --skip-license --prefix=/usr/local
     fi
