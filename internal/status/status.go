@@ -42,12 +42,14 @@ import (
 )
 
 var (
-	uiActionsShown = flag.Int("ui_actions_shown", 8, "Number of concurrent actions to show progress for")
+	uiActionsShown = flag.Int("ui_actions_shown", 0, "Number of concurrent actions to show progress for (0 for old ninja style output)")
 )
 
 const (
 	// Require at least this much time to pass between each table redraw.
 	minTableRefreshInterval = 100 * time.Millisecond
+	// How often to sample system metrics (CPU, memory, network).
+	metricsRefreshInterval = 500 * time.Millisecond
 )
 
 type Status interface {
@@ -601,6 +603,7 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 	p.mu.Lock()
 	delete(p.pendingCommands, edge)
 	p.mu.Unlock()
+	p.runningEdges -= 1
 
 	if edge.UseConsole() {
 		p.printer.SetConsoleLocked(false)
@@ -613,8 +616,6 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 	if !edge.UseConsole() {
 		p.PrintStatus(edge, endOffset.Milliseconds())
 	}
-
-	p.runningEdges -= 1
 
 	if p.bes != nil {
 		targetLabel := ""
@@ -719,12 +720,16 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 
 	// Periodically update system metrics and refresh the status table.
 	go func() {
+		lastMetricsRecord := buildStart
 		for {
 			select {
 			case <-p.done:
 				return
 			case t := <-p.ticker.C:
-				p.recordSystemMetrics(t)
+				if t.Sub(lastMetricsRecord) >= metricsRefreshInterval {
+					p.recordSystemMetrics(t)
+					lastMetricsRecord = t
+				}
 				if p.maxCommands > 0 && p.printer.SmartTerminal() {
 					p.mu.Lock()
 					if t.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {

@@ -112,9 +112,9 @@ class BuildDir:
         # HACK: ensure ninja ignores config rc files when run in this
         # test harness.
         if flags:
-          flags = "--norc --ui_actions_shown=0 " + flags
+          flags = "--norc " + flags
         else:
-          flags = "--norc --ui_actions_shown=0"
+          flags = "--norc"
 
         ninja_cmd = '{} {}'.format(NINJA_PATH, flags)
         try:

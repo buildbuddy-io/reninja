@@ -175,7 +175,7 @@ func (p *LinePrinter) SetConsoleLocked(locked bool) {
 // PrintNextLine moves to the next line and prints line there, elided to
 // terminal width. Must only be called on smart terminals!
 func (p *LinePrinter) PrintNextLine(line string) {
-	width, _, err := term.GetSize(int(os.Stdin.Fd()))
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err == nil && width > 0 {
 		line = elide_middle.ElideMiddle(line, width)
 	}
@@ -192,10 +192,4 @@ func (p *LinePrinter) ClearNextLine() {
 // terminals!
 func (p *LinePrinter) MoveUp(n int) {
 	fmt.Fprintf(p.out, "\x1B[%dA", n)
-}
-
-// MoveDown moves the cursor down n lines. Must only be called on smart
-// terminals!
-func (p *LinePrinter) MoveDown(n int) {
-	fmt.Fprintf(p.out, "\x1B[%dB", n)
 }
