@@ -48,7 +48,7 @@ const (
 	// Require at least this much time to pass between each
 	// full table redraw. Between full redraws the status line is
 	// updated in place. Matches Bazel's --show_progress_rate_limit default.
-	minTableRefreshInterval = 200 * time.Millisecond
+	minTableRefreshInterval = 100 * time.Millisecond
 )
 
 type Status interface {
@@ -536,28 +536,10 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 		p.mu.Lock()
 		now := time.Now()
 		if p.lastTableRefreshTime.IsZero() || now.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {
-			// Full redraw: erase old rows, print status, draw new rows.
 			p.clearTable()
 			p.printer.Print(toPrint, elideMode)
 			p.printTable(now, toPrint)
 			p.lastTableRefreshTime = now
-		} else {
-			// Within the refresh interval: just overwrite the status line.
-			// The command rows below are left unchanged — no flicker.
-			// Cursor is at the blank line (lastTableHeight+1 below status line),
-			// so navigate up, update, then return to the blank line.
-			p.lastStatus = toPrint
-			if p.lastTableHeight > 0 {
-				p.printer.MoveUp(p.lastTableHeight + 1)
-			}
-			p.printer.Print(toPrint, elideMode)
-			if p.lastTableHeight > 0 {
-				// MoveDown(N) reaches the last table row; ClearNextLine then
-				// steps to row N+1, erases it, and resets to column 0 — the
-				// same invariant that printTable establishes.
-				p.printer.MoveDown(p.lastTableHeight)
-				p.printer.ClearNextLine()
-			}
 		}
 		p.mu.Unlock()
 	} else {
