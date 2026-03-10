@@ -127,7 +127,7 @@ func (p *LinePrinter) Print(toPrint string, lineType LineType) {
 	}
 
 	if p.smartTerminal && lineType == Elide {
-		width, _, err := term.GetSize(int(os.Stdin.Fd()))
+		width, _, err := term.GetSize(int(os.Stdout.Fd()))
 		if err == nil && width > 0 {
 			toPrint = elide_middle.ElideMiddle(toPrint, width)
 		}

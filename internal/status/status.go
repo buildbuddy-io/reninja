@@ -175,10 +175,6 @@ type StatusPrinter struct {
 	// maxCommands is the value of NINJA_STATUS_MAX_COMMANDS (0 = disabled).
 	maxCommands int
 
-	// lastStatus is the most recently printed status line, used by the ticker
-	// to reprint after clearing the table.
-	lastStatus string
-
 	// lastTableRefreshTime is when the table rows were last fully redrawn.
 	// A zero value means a full redraw is required on the next PrintStatus.
 	lastTableRefreshTime time.Time
@@ -529,16 +525,7 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 	}
 
 	progressPrefix := p.FormatProgressStatus(p.progressStatusFormat, timeMillis)
-	if p.maxCommands > 0 && !forceFullCommand {
-		if p.runningEdges == 1 {
-			toPrint = fmt.Sprintf("%d action running", p.runningEdges)
-		} else if p.runningEdges > 1 {
-			toPrint = fmt.Sprintf("%d actions running", p.runningEdges)
-		}
-		toPrint = p.printer.Esc(32) + progressPrefix + p.printer.Esc() + toPrint
-	} else {
-		toPrint = progressPrefix + toPrint
-	}
+	toPrint = progressPrefix + toPrint
 
 	elideMode := line_printer.Elide
 	if forceFullCommand {
@@ -546,12 +533,20 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 	}
 
 	if p.maxCommands > 0 && p.printer.SmartTerminal() && !forceFullCommand {
+		coloredPrefix := p.printer.Esc(32) + progressPrefix + p.printer.Esc()
 		p.mu.Lock()
 		now := time.Now()
 		if p.lastTableRefreshTime.IsZero() || now.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {
+			count := len(p.pendingCommands)
+			var statusLine string
+			if count == 1 {
+				statusLine = coloredPrefix + "1 action running"
+			} else {
+				statusLine = coloredPrefix + fmt.Sprintf("%d actions running", count)
+			}
 			p.clearTable()
-			p.printer.Print(toPrint, elideMode)
-			p.printTable(now, toPrint)
+			p.printer.Print(statusLine, elideMode)
+			p.printTable(now)
 			p.lastTableRefreshTime = now
 		}
 		p.mu.Unlock()
@@ -709,7 +704,6 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 	p.runningEdges = 0
 	p.buildStart = buildStart
 	p.lastTableHeight = 0
-	p.lastStatus = ""
 
 	p.mu.Lock()
 	p.pendingCommands = make(map[*graph.Edge]time.Time)
@@ -734,10 +728,7 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 					p.mu.Lock()
 					if t.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {
 						p.clearTable()
-						if p.lastStatus != "" {
-							p.printer.Print(p.lastStatus, line_printer.Elide)
-						}
-						p.printTable(t, p.lastStatus)
+						p.printTable(t)
 						p.lastTableRefreshTime = t
 					}
 					p.mu.Unlock()
@@ -1068,12 +1059,11 @@ func (p *StatusPrinter) clearTable() {
 
 // printTable prints up to maxCommands oldest running commands below the status
 // line and moves the cursor back up to the status line.
-// Must be called with p.mu held. statusLine is stored for ticker reprinting.
-func (p *StatusPrinter) printTable(now time.Time, statusLine string) {
+// Must be called with p.mu held.
+func (p *StatusPrinter) printTable(now time.Time) {
 	if p.maxCommands == 0 || !p.printer.SmartTerminal() {
 		return
 	}
-	p.lastStatus = statusLine
 
 	type entry struct {
 		startTime   time.Time
