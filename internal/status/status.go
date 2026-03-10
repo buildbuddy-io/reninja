@@ -48,8 +48,10 @@ var (
 const (
 	// Require at least this much time to pass between each table redraw.
 	minTableRefreshInterval = 100 * time.Millisecond
+
 	// How often to sample system metrics (CPU, memory, network).
-	metricsRefreshInterval = 500 * time.Millisecond
+	// This should be a multiple of minTableRefreshInterval.
+	metricsRefreshInterval = 5 * minTableRefreshInterval
 )
 
 type Status interface {
