@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -205,6 +206,16 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 	if progressFormatOverride, ok := os.LookupEnv("NINJA_STATUS"); ok {
 		progressStatusFormat = progressFormatOverride
 	}
+
+	maxCommands := max(0, *uiActionsShown)
+	if maxCommandsOverrideStr, ok := os.LookupEnv("NINJA_STATUS_MAX_COMMANDS"); ok {
+		if maxCommandsOverride, err := strconv.ParseInt(maxCommandsOverrideStr, 10, 64); err == nil {
+			maxCommands = int(maxCommandsOverride)
+		} else {
+			util.Fatalf("Error parsing NINJA_STATUS_MAX_COMMANDS (%q) to int", maxCommandsOverrideStr)
+		}
+	}
+
 	sp := &StatusPrinter{
 		config:               config,
 		currentRate:          NewSlidingRateInfo(config.Parallelism),
@@ -212,7 +223,7 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 		ticker:               time.NewTicker(minTableRefreshInterval),
 		done:                 make(chan bool),
 		logsInitialized:      &sync.Once{},
-		maxCommands:          StatusMaxCommands(),
+		maxCommands:          maxCommands,
 		pendingCommands:      make(map[*graph.Edge]time.Time),
 	}
 
@@ -1019,13 +1030,6 @@ func (p *StatusPrinter) FormatProgressStatus(format string, timeMillis int64) st
 	}
 
 	return out.String()
-}
-
-// StatusMaxCommands returns the number of in-flight commands to show in the
-// status table, as set by --ui_actions_shown. Returns 0 if the value is
-// negative.
-func StatusMaxCommands() int {
-	return max(0, *uiActionsShown)
 }
 
 // FormatTableElapsed formats an elapsed duration as a time suffix for
