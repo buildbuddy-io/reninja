@@ -528,7 +528,9 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 
 	progressPrefix := p.FormatProgressStatus(p.progressStatusFormat, timeMillis)
 	if p.maxCommands > 0 && !forceFullCommand {
-		if p.runningEdges > 1 {
+		if p.runningEdges == 1 {
+			toPrint = fmt.Sprintf("%d action running", p.runningEdges)
+		} else if p.runningEdges > 1 {
 			toPrint = fmt.Sprintf("%d actions running", p.runningEdges)
 		}
 		toPrint = p.printer.Esc(32) + progressPrefix + p.printer.Esc() + toPrint
