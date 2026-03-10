@@ -45,9 +45,7 @@ var (
 )
 
 const (
-	// Require at least this much time to pass between each
-	// full table redraw. Between full redraws the status line is
-	// updated in place. Matches Bazel's --show_progress_rate_limit default.
+	// Require at least this much time to pass between each table redraw.
 	minTableRefreshInterval = 100 * time.Millisecond
 )
 
