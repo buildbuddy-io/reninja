@@ -1,4 +1,8 @@
-if ! reninja --version 2>/dev/null | grep -qF "0.1.4"; then
+#!/bin/bash
+
+: ${BUILDBUDDY_API_KEY:?}
+
+if ! reninja --version 2>/dev/null | grep -qF "1.14.0.git"; then
     curl -fSL "https://github.com/buildbuddy-io/reninja/releases/download/v0.1.4/reninja-linux-amd64" -o reninja
     chmod +x reninja
     sudo mv reninja /usr/local/bin/reninja
