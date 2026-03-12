@@ -33,12 +33,13 @@ docker run --rm \
        cmake -G Ninja \
        -DCMAKE_SUPPRESS_REGENERATION=ON \
        "$SRC"
-
-reninja -C $BUILD_DIR --bes_backend=remote.buildbuddy.io \
-	--results_url=https://app.buildbuddy.io/invocation \
-	--remote_executor=remote.buildbuddy.io \
+reninja -C $BUILD_DIR -t clean
+reninja -C $BUILD_DIR --bes_backend=reninja.buildbuddy.io \
+	--results_url=https://reninja.buildbuddy.io/invocation \
+	--remote_executor=reninja.buildbuddy.io \
 	--container_image=gcr.io/flame-public/rbe-ubuntu22-04:ninja \
 	--remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY \
+	--remote_instance_name=$(date +%s) \
 	-j 500
 popd
 popd
