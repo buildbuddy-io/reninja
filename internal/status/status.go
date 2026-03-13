@@ -3,13 +3,10 @@ package status
 import (
 	"compress/gzip"
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,19 +35,6 @@ import (
 	bespb "github.com/buildbuddy-io/reninja/genproto/build_event_stream"
 	bepb "github.com/buildbuddy-io/reninja/genproto/build_events"
 	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
-)
-
-var (
-	uiActionsShown = flag.Int("ui_actions_shown", 0, "Number of concurrent actions to show progress for (0 for old ninja style output)")
-)
-
-const (
-	// Require at least this much time to pass between each table redraw.
-	minTableRefreshInterval = 100 * time.Millisecond
-
-	// How often to sample system metrics (CPU, memory, network).
-	// This should be a multiple of minTableRefreshInterval.
-	metricsRefreshInterval = 5 * minTableRefreshInterval
 )
 
 type Status interface {
@@ -163,22 +147,7 @@ type StatusPrinter struct {
 
 	ticker *time.Ticker
 	done   chan bool
-	mu     sync.Mutex
-
-	// pendingCommands maps edges currently running to their absolute start
-	// time. Used to render the status table.
-	pendingCommands map[*graph.Edge]time.Time
-
-	// lastTableHeight is the number of command rows currently printed below
-	// the status line.
-	lastTableHeight int
-
-	// maxCommands is the value of NINJA_STATUS_MAX_COMMANDS (0 = disabled).
-	maxCommands int
-
-	// lastTableRefreshTime is when the table rows were last fully redrawn.
-	// A zero value means a full redraw is required on the next PrintStatus.
-	lastTableRefreshTime time.Time
+	mu     *sync.Mutex
 
 	// the fields below will only be set if a bes_backed is enabled.
 	// their access should be guarded on the presence of bes.
@@ -205,25 +174,13 @@ func NewPrinter(config *build_config.Config) *StatusPrinter {
 	if progressFormatOverride, ok := os.LookupEnv("NINJA_STATUS"); ok {
 		progressStatusFormat = progressFormatOverride
 	}
-
-	maxCommands := max(0, *uiActionsShown)
-	if maxCommandsOverrideStr, ok := os.LookupEnv("NINJA_STATUS_MAX_COMMANDS"); ok {
-		if maxCommandsOverride, err := strconv.ParseInt(maxCommandsOverrideStr, 10, 64); err == nil {
-			maxCommands = int(maxCommandsOverride)
-		} else {
-			util.Fatalf("Error parsing NINJA_STATUS_MAX_COMMANDS (%q) to int", maxCommandsOverrideStr)
-		}
-	}
-
 	sp := &StatusPrinter{
 		config:               config,
 		currentRate:          NewSlidingRateInfo(config.Parallelism),
 		progressStatusFormat: progressStatusFormat,
-		ticker:               time.NewTicker(minTableRefreshInterval),
+		ticker:               time.NewTicker(500 * time.Millisecond),
 		done:                 make(chan bool),
 		logsInitialized:      &sync.Once{},
-		maxCommands:          maxCommands,
-		pendingCommands:      make(map[*graph.Edge]time.Time),
 	}
 
 	if remote_flags.EnableBES() {
@@ -360,7 +317,7 @@ func (p *StatusPrinter) printStreamURL() {
 	invocationURL := strings.TrimRight(remote_flags.ResultsURL(), "/") + "/" + p.invocationID
 	streamingTo := fmt.Sprintf("Streaming build results to: %s", p.printer.Esc(4, 34)+invocationURL+p.printer.Esc())
 	streamingLog := p.printer.Esc(32) + "INFO: " + p.printer.Esc() + streamingTo
-	p.printer.PrintOnNewline(streamingLog + "\n")
+	fmt.Fprintln(os.Stderr, streamingLog)
 }
 
 func (p *StatusPrinter) EdgeAddedToPlan(edge *graph.Edge) {
@@ -397,10 +354,6 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, absoluteStart time.Ti
 	startTimeMillis := absoluteStart.Sub(p.buildStart).Milliseconds()
 	p.timeMillis = startTimeMillis
 
-	p.mu.Lock()
-	p.pendingCommands[edge] = absoluteStart
-	p.mu.Unlock()
-
 	// In verbose mode, the status line ends with a newline and can't be
 	// overwritten, so only print status at start for non-verbose smart terminal.
 	isVerbose := p.config.Verbosity == build_config.Verbose
@@ -409,12 +362,6 @@ func (p *StatusPrinter) BuildEdgeStarted(edge *graph.Edge, absoluteStart time.Ti
 	}
 
 	if edge.UseConsole() {
-		// Clear the table before the console-locked edge takes over stdout.
-		if p.maxCommands > 0 && p.printer.SmartTerminal() {
-			p.mu.Lock()
-			p.clearTable()
-			p.mu.Unlock()
-		}
 		p.printer.SetConsoleLocked(true)
 	}
 
@@ -525,35 +472,14 @@ func (p *StatusPrinter) PrintStatus(edge *graph.Edge, timeMillis int64) {
 		toPrint = edge.GetBinding("command")
 	}
 
-	progressPrefix := p.FormatProgressStatus(p.progressStatusFormat, timeMillis)
-	toPrint = progressPrefix + toPrint
+	toPrint = p.FormatProgressStatus(p.progressStatusFormat, timeMillis) + toPrint
 
 	elideMode := line_printer.Elide
 	if forceFullCommand {
 		elideMode = line_printer.Full
 	}
 
-	if p.maxCommands > 0 && p.printer.SmartTerminal() && !forceFullCommand {
-		coloredPrefix := p.printer.Esc(32) + progressPrefix + p.printer.Esc()
-		p.mu.Lock()
-		now := time.Now()
-		if p.lastTableRefreshTime.IsZero() || now.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {
-			count := len(p.pendingCommands)
-			var statusLine string
-			if count == 1 {
-				statusLine = coloredPrefix + "1 action running"
-			} else {
-				statusLine = coloredPrefix + fmt.Sprintf("%d actions running", count)
-			}
-			p.clearTable()
-			p.printer.Print(statusLine, elideMode)
-			p.printTable(now)
-			p.lastTableRefreshTime = now
-		}
-		p.mu.Unlock()
-	} else {
-		p.printer.Print(toPrint, elideMode)
-	}
+	p.printer.Print(toPrint, elideMode)
 }
 
 func computeBESFiles(uploadedFiles []*repb.OutputFile) []*bespb.File {
@@ -596,11 +522,6 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		p.etaUnpredictableEdgesRemaining -= 1
 	}
 
-	p.mu.Lock()
-	delete(p.pendingCommands, edge)
-	p.mu.Unlock()
-	p.runningEdges -= 1
-
 	if edge.UseConsole() {
 		p.printer.SetConsoleLocked(false)
 	}
@@ -612,6 +533,8 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 	if !edge.UseConsole() {
 		p.PrintStatus(edge, endOffset.Milliseconds())
 	}
+
+	p.runningEdges -= 1
 
 	if p.bes != nil {
 		targetLabel := ""
@@ -636,14 +559,6 @@ func (p *StatusPrinter) BuildEdgeFinished(edge *graph.Edge, result *spawn.Result
 		if p.compactExecutionLog != nil {
 			p.compactExecutionLog.RecordEdge(edge, result)
 		}
-	}
-
-	// Clear the table before printing any multi-line output so it doesn't
-	// interleave with the command rows.
-	if (exitCode != exit_status.ExitSuccess || output != "") && p.maxCommands > 0 && p.printer.SmartTerminal() {
-		p.mu.Lock()
-		p.clearTable()
-		p.mu.Unlock()
 	}
 
 	// Print the command that is spewing before printing its output.
@@ -704,47 +619,24 @@ func (p *StatusPrinter) BuildStarted(buildStart time.Time) {
 	p.finishedEdges = 0
 	p.runningEdges = 0
 	p.buildStart = buildStart
-	p.lastTableHeight = 0
-
-	p.mu.Lock()
-	p.pendingCommands = make(map[*graph.Edge]time.Time)
-	p.mu.Unlock()
 
 	p.recordSystemMetrics(buildStart)
 	p.initializeLogs()
 
-	// Periodically update system metrics and refresh the status table.
+	// Periodically (every 1 second) update system metrics.
 	go func() {
-		lastMetricsRecord := buildStart
 		for {
 			select {
 			case <-p.done:
 				return
 			case t := <-p.ticker.C:
-				if t.Sub(lastMetricsRecord) >= metricsRefreshInterval {
-					p.recordSystemMetrics(t)
-					lastMetricsRecord = t
-				}
-				if p.maxCommands > 0 && p.printer.SmartTerminal() {
-					p.mu.Lock()
-					if t.Sub(p.lastTableRefreshTime) >= minTableRefreshInterval {
-						p.clearTable()
-						p.printTable(t)
-						p.lastTableRefreshTime = t
-					}
-					p.mu.Unlock()
-				}
+				p.recordSystemMetrics(t)
 			}
 		}
 	}()
 }
 
 func (p *StatusPrinter) BuildFinished() {
-	if p.maxCommands > 0 && p.printer.SmartTerminal() {
-		p.mu.Lock()
-		p.clearTable()
-		p.mu.Unlock()
-	}
 	p.printer.SetConsoleLocked(false)
 	p.printer.PrintOnNewline("")
 
@@ -1029,81 +921,6 @@ func (p *StatusPrinter) FormatProgressStatus(format string, timeMillis int64) st
 	}
 
 	return out.String()
-}
-
-// FormatTableElapsed formats an elapsed duration as a time suffix for
-// in-flight command rows, e.g. "; 6s" or "; 1m30s".
-func FormatTableElapsed(d time.Duration) string {
-	sec := int64(d.Seconds())
-	if sec < 60 {
-		return fmt.Sprintf("; %ds", sec)
-	}
-	return fmt.Sprintf("; %dm%ds", sec/60, sec%60)
-}
-
-// clearTable erases the command rows printed below the status line and moves
-// the cursor back to the status line. Must be called with p.mu held.
-// It also resets lastTableRefreshTime so the next printTable call does a full
-// redraw immediately rather than treating the cleared state as up-to-date.
-func (p *StatusPrinter) clearTable() {
-	if p.lastTableHeight > 0 {
-		// Cursor is on the blank line N+1 rows below the status line.
-		p.printer.MoveUp(p.lastTableHeight + 1)
-		for i := 0; i < p.lastTableHeight; i++ {
-			p.printer.ClearNextLine()
-		}
-		p.printer.MoveUp(p.lastTableHeight)
-	}
-	p.lastTableHeight = 0
-	p.lastTableRefreshTime = time.Time{}
-}
-
-// printTable prints up to maxCommands oldest running commands below the status
-// line and moves the cursor back up to the status line.
-// Must be called with p.mu held.
-func (p *StatusPrinter) printTable(now time.Time) {
-	if p.maxCommands == 0 || !p.printer.SmartTerminal() {
-		return
-	}
-
-	type entry struct {
-		startTime   time.Time
-		description string
-	}
-	entries := make([]entry, 0, len(p.pendingCommands))
-	for edge, startTime := range p.pendingCommands {
-		desc := edge.GetBinding("description")
-		if desc == "" {
-			desc = edge.GetBinding("command")
-		}
-		entries = append(entries, entry{startTime, desc})
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].startTime.Before(entries[j].startTime)
-	})
-	totalPending := len(entries)
-	if len(entries) > p.maxCommands {
-		entries = entries[:p.maxCommands]
-	}
-
-	for i, e := range entries {
-		elapsed := now.Sub(e.startTime)
-		line := "    " + e.description + FormatTableElapsed(elapsed)
-		if i == len(entries)-1 && totalPending > p.maxCommands {
-			line += " ..."
-		}
-		p.printer.PrintNextLine(line)
-	}
-
-	// Park cursor on a blank line below the table (Bazel-style). The cursor
-	// is never visible on content — it sits on an empty line below all rows.
-	// ClearNextLine (= \x1B[1B\x1B[2K) is used instead of PrintNextLine("") so
-	// that the entire line is erased regardless of cursor column.
-	if len(entries) > 0 {
-		p.printer.ClearNextLine()
-	}
-
-	p.lastTableHeight = len(entries)
 }
 
 func (p *StatusPrinter) Info(format string, args ...interface{}) {
