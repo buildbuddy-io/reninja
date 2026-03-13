@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 )
 
 var isGitRepo bool
@@ -72,6 +74,11 @@ func GetMetadata() map[string]string {
 		if repoURL != "" {
 			r["REPO_URL"] = repoURL
 		}
+	}
+
+	// --build_metadata flag values override auto-detected values.
+	for k, v := range remote_flags.BuildMetadata() {
+		r[k] = v
 	}
 	return r
 }
