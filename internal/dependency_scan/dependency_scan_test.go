@@ -370,6 +370,24 @@ build n2: phony n1
 	assert.NotNil(t, s.GetNode("n2"))
 }
 
+func TestPhonyOutputWithValidation(t *testing.T) {
+	s := state.New()
+	fs := disk.NewMockDiskInterface()
+	test.AssertParse(t, "build valid: phony\nbuild out: phony |@ valid\n", s)
+
+	require.NoError(t, fs.Create("valid", nil))
+
+	opts := depfile_parser.DepfileParserOptions{}
+	scan := dependency_scan.New(s, nil, nil, fs, opts, nil /*=exp*/)
+	validationNodes, err := scan.RecomputeDirty(s.GetNode("out"), []*graph.Node{})
+	require.NoError(t, err)
+
+	// Phony output with validation should not be dirty even if output is missing.
+	assert.False(t, s.GetNode("out").Dirty())
+	require.Equal(t, 1, len(validationNodes))
+	assert.Equal(t, "valid", validationNodes[0].Path())
+}
+
 func TestPhonySelfReferenceError(t *testing.T) {
 	s := state.New()
 	fs := disk.NewMockDiskInterface()

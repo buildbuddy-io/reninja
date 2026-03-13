@@ -314,7 +314,7 @@ func (s *DependencyScan) RecomputeOutputDirty(edge *graph.Edge, mostRecentInput 
 	if edge.IsPhony() {
 		// Phony edges don't write any output.  Outputs are only dirty if
 		// there are no inputs and we're missing the output.
-		if len(edge.Inputs()) == 0 && !output.Exists() {
+		if len(edge.Inputs()) == 0 && len(edge.Validations()) == 0 && !output.Exists() {
 			s.explanations.Record(output, "output %s of phony edge with no inputs doesn't exist", output.Path())
 			return true
 		}
