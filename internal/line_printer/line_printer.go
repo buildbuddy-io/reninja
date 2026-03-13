@@ -127,7 +127,7 @@ func (p *LinePrinter) Print(toPrint string, lineType LineType) {
 	}
 
 	if p.smartTerminal && lineType == Elide {
-		width, _, err := term.GetSize(int(os.Stdout.Fd()))
+		width, _, err := term.GetSize(int(os.Stdin.Fd()))
 		if err == nil && width > 0 {
 			toPrint = elide_middle.ElideMiddle(toPrint, width)
 		}
@@ -170,26 +170,4 @@ func (p *LinePrinter) SetConsoleLocked(locked bool) {
 		p.outputBuffer = ""
 		p.lineBuffer = ""
 	}
-}
-
-// PrintNextLine moves to the next line and prints line there, elided to
-// terminal width. Must only be called on smart terminals!
-func (p *LinePrinter) PrintNextLine(line string) {
-	width, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err == nil && width > 0 {
-		line = elide_middle.ElideMiddle(line, width)
-	}
-	fmt.Fprintf(p.out, "\n%s\x1B[K", line)
-}
-
-// ClearNextLine moves down one line, erases it completely, and returns the
-// cursor to column 0. Must only be called on smart terminals!
-func (p *LinePrinter) ClearNextLine() {
-	p.out.Write([]byte("\x1B[1B\x1B[2K\r"))
-}
-
-// MoveUp moves the cursor up n lines. Must only be called on smart
-// terminals!
-func (p *LinePrinter) MoveUp(n int) {
-	fmt.Fprintf(p.out, "\x1B[%dA", n)
 }
