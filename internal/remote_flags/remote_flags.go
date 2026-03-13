@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
+	"github.com/buildbuddy-io/reninja/internal/util"
 )
 
 var (
@@ -18,11 +19,16 @@ var (
 	remoteInstanceName = flag.String("remote_instance_name", "", "Cache namespace. Generally should be left unset.")
 	projectRoot        = flag.String("project_root", "", "Project root directory for remote execution. Auto-detected from .gclient/.git if not set.")
 	digestFunction     = flag.String("digest_function", "BLAKE3", "If set, use this digest function for uploads.")
+	buildMetadata      util.StringList
 
 	// Path munging and stuff. Configure this if your project needs it.
 	includeScanning = flag.Bool("enable_include_scanning", true, "If true, scan header files for implicit deps and include in the input root of remotely executed actions")
 	containerImage  = flag.String("container_image", "", "Container image for remote execution, e.g. docker://gcr.io/YOUR:IMAGE")
 )
+
+func init() {
+	flag.Var(&buildMetadata, "build_metadata", "Metadata to include in the build event stream, as KEY=VALUE pairs.")
+}
 
 func EnableBES() bool {
 	return BESBackend() != ""
@@ -99,4 +105,19 @@ func IncludeScanning() bool {
 
 func ContainerImage() string {
 	return *containerImage
+}
+
+// BuildMetadata returns key-value pairs from --build_metadata flags.
+// Values override auto-detected metadata for matching keys.
+func BuildMetadata() map[string]string {
+	m := make(map[string]string, len(buildMetadata))
+	for _, kv := range buildMetadata {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			util.Warningf("Ignoring malformed --build_metadata value %q (format is 'KEY=VALUE')", kv)
+			continue
+		}
+		m[k] = v
+	}
+	return m
 }
