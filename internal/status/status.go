@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -358,7 +357,7 @@ func (p *StatusPrinter) printStreamURL() {
 	if p.bes == nil {
 		return
 	}
-	invocationURL := path.Join(remote_flags.ResultsURL(), p.invocationID)
+	invocationURL := strings.TrimRight(remote_flags.ResultsURL(), "/") + "/" + p.invocationID
 	streamingTo := fmt.Sprintf("Streaming results to: %s", p.printer.Esc(4, 34)+invocationURL+p.printer.Esc())
 	streamingLog := p.printer.Esc(32) + "INFO: " + p.printer.Esc() + streamingTo
 	p.printer.PrintOnNewline(streamingLog + "\n")
