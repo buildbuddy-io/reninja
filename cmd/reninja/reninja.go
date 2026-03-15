@@ -59,6 +59,7 @@ var (
 	maxLoad         = flag.Float64("l", -1, "do not start new jobs if the load average is greater than N")
 	dryRun          = flag.Bool("n", false, "dry run (don't run commands but act like they succeeded)")
 	tool            = flag.String("t", "", "run a subtool (use '-t list' to list subtools)")
+	compat          = flag.String("compat", "", "maintain compatability with tool (eg. ninja)")
 )
 
 func registerFlags() {
@@ -1495,7 +1496,7 @@ func ReadFlags(args []string, options *Options, config *build_config.Config) int
 }
 
 func Usage(config *build_config.Config) {
-	fmt.Fprintf(os.Stderr, `usage: ninja [options] [targets...]
+	usageText := fmt.Sprintf(`usage: ninja [options] [targets...]
 
 if targets are unspecified, builds the 'default' target (see manual).
 
@@ -1517,6 +1518,39 @@ options:
     terminates toplevel options; further flags are passed to the tool
   -w FLAG  adjust warnings (use '-w list' to list warnings)
 `, version.NinjaVersion, config.Parallelism)
+
+	if *compat == "ninja" {
+		fmt.Fprint(os.Stderr, usageText)
+		return
+	}
+
+	usageText += `
+rc config options
+  --config           configuration (from the ninjarc) to apply
+  --ninjarc          path to a ninjarc format file to parse
+  --norc             ignore all ninjarc files (including ones in default locations)
+
+bes options:
+  --bes_backend      bes backend target, like remote.buildbuddy.io
+  --build_metadata   metadata to include in the build event stream, as KEY=VALUE pairs
+  --digest_function  digest function to use for hashing (default BLAKE3)
+  --results_url      results URL to print when BES is enabled
+
+remote cache options:
+  --ac_rpc_timeout   max duration a single Action Cache (AC) RPC can take
+  --cas_rpc_timeout  max duration a single Content Addressable Storage (CAS) RPC can take
+  --enable_compression   enable compression of transfers to/from remote cache
+  --remote_cache     remote cache target, like remote.buildbuddy.io
+  --remote_header    remote headers to append to outgoing RPC requests
+  --remote_instance_name value to pass as instance_name in the REAPI
+
+remote execution options:
+  --container_image  image for remote execution, e.g. docker://gcr.io/YOUR:IMAGE
+  --enable_include_scanning  scan header files for implicit deps to upload as inputs
+  --project_root     auto-detected from .gclient/.git if not set
+  --remote_executor  remote cache target, like remote.buildbuddy.io
+`
+	fmt.Fprint(os.Stderr, usageText)
 }
 
 // from https://stackoverflow.com/questions/74678438/go-flags-ignore-unknown-input
