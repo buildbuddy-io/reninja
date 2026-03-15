@@ -58,8 +58,7 @@ var (
 )
 
 func retryOptions(name string) *retry.Options {
-	opts := retry.DefaultOptions()
-	opts.MaxRetries = 3
+	opts := retry.RemoteOptions()
 	opts.Name = name
 	return opts
 }
