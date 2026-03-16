@@ -20,6 +20,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/include_scanner"
 	"github.com/buildbuddy-io/reninja/internal/jobserver"
+	"github.com/buildbuddy-io/reninja/internal/localcache"
 	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_exec"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
@@ -625,15 +626,22 @@ func (r *RemoteCommandRunner) StartCommand(edge *graph.Edge) error {
 		}
 		return ul.Wait()
 	}
+	maybeDropLocalCache := func(err error) {
+		if statuserr.IsFailedPreconditionError(err) {
+			localcache.Clear()
+		}
+	}
 
 	runActionRemotely := func() (*remote_exec.Response, error) {
 		defer span.Record(ctx, "remote action execution")()
 		stream, err := r.executor.Start(ctx, arn)
 		if err != nil {
+			maybeDropLocalCache(err)
 			return nil, err
 		}
 		rsp, err := remote_exec.Wait(stream)
 		if err != nil {
+			maybeDropLocalCache(err)
 		}
 		return rsp, err
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/compression"
 	"github.com/buildbuddy-io/reninja/internal/digest"
 	"github.com/buildbuddy-io/reninja/internal/ioutil"
+	"github.com/buildbuddy-io/reninja/internal/localcache"
 	"github.com/buildbuddy-io/reninja/internal/retry"
 	"github.com/buildbuddy-io/reninja/internal/rpcutil"
 	"github.com/buildbuddy-io/reninja/internal/statuserr"
@@ -140,13 +141,38 @@ func FindMissingBlobs(ctx context.Context, casClient repb.ContentAddressableStor
 }
 
 func findMissingBlobs(ctx context.Context, casClient repb.ContentAddressableStorageClient, req *repb.FindMissingBlobsRequest) ([]*digest.CASResourceName, error) {
-	rsp, err := casClient.FindMissingBlobs(ctx, req)
+	// Check our local cache, if these digests were written or checked
+	// recently, don't bother asking the remote.
+	filteredDigests := slices.Clone(req.GetBlobDigests())
+	filteredDigests = slices.DeleteFunc(filteredDigests, func(d *repb.Digest) bool {
+		return localcache.Contains(d)
+	})
+	if len(filteredDigests) == 0 {
+		return nil, nil
+	}
+
+	filteredReq := &repb.FindMissingBlobsRequest{
+		InstanceName:   req.GetInstanceName(),
+		BlobDigests:    filteredDigests,
+		DigestFunction: req.GetDigestFunction(),
+	}
+
+	rsp, err := casClient.FindMissingBlobs(ctx, filteredReq)
 	if err != nil {
 		return nil, err
 	}
-	missing := make([]*digest.CASResourceName, len(rsp.GetMissingBlobDigests()))
-	for i, d := range rsp.GetMissingBlobDigests() {
-		missing[i] = digest.NewCASResourceName(d, req.GetInstanceName(), req.GetDigestFunction())
+	missingSet := make(map[digest.Key]struct{}, len(rsp.GetMissingBlobDigests()))
+	for _, d := range rsp.GetMissingBlobDigests() {
+		missingSet[digest.NewKey(d)] = struct{}{}
+	}
+
+	missing := make([]*digest.CASResourceName, 0, len(missingSet))
+	for _, d := range filteredDigests {
+		if _, ok := missingSet[digest.NewKey(d)]; ok {
+			missing = append(missing, digest.NewCASResourceName(d, req.GetInstanceName(), req.GetDigestFunction()))
+		} else {
+			localcache.MarkFound(d)
+		}
 	}
 	return missing, nil
 }
@@ -353,6 +379,7 @@ func uploadFromReader(ctx context.Context, bsClient bspb.ByteStreamClient, r *di
 		}
 	}
 
+	localcache.MarkFound(r.GetDigest())
 	return r.GetDigest(), bytesUploaded, nil
 }
 
@@ -733,6 +760,7 @@ func (ul *BatchCASUploader) flushCurrentBatch() error {
 				err := gstatus.ErrorProto(fileResponse.GetStatus())
 				return statuserr.WrapError(err, fmt.Sprintf("Error uploading file: %v", fileResponse.GetDigest()))
 			}
+			localcache.MarkFound(req.GetRequests()[i].GetDigest())
 		}
 		return nil
 	})
