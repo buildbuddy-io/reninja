@@ -760,7 +760,7 @@ func (ul *BatchCASUploader) flushCurrentBatch() error {
 				err := gstatus.ErrorProto(fileResponse.GetStatus())
 				return statuserr.WrapError(err, fmt.Sprintf("Error uploading file: %v", fileResponse.GetDigest()))
 			}
-			localcache.MarkFound(req.GetRequests()[i].GetDigest())
+			localcache.MarkFound(fileResponse.GetDigest())
 		}
 		return nil
 	})
