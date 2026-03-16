@@ -1,35 +1,24 @@
 package file_hasher
 
 import (
-	"io/fs"
 	"os"
 	"sync"
 
-	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 	"github.com/buildbuddy-io/reninja/internal/digest"
+	"github.com/djherbis/times"
+
+	repb "github.com/buildbuddy-io/reninja/genproto/remote_execution"
 )
 
 var (
-	mu         sync.Mutex // PROTECTS(fileHashes)
-	fileHashes map[hashKey]digest.Key
+	fileHashes sync.Map //map[hashKey]digest.Key
 )
-
-func init() {
-	fileHashes = make(map[hashKey]digest.Key, 0)
-}
 
 type hashKey struct {
 	fileName   string
 	mtimeNano  int64
+	ctimeNano  int64
 	digestType repb.DigestFunction_Value
-}
-
-func makeKey(fileInfo fs.FileInfo, digestType repb.DigestFunction_Value) hashKey {
-	return hashKey{
-		fileName:   fileInfo.Name(),
-		mtimeNano:  fileInfo.ModTime().UnixNano(),
-		digestType: digestType,
-	}
 }
 
 func HashFile(path string, digestType repb.DigestFunction_Value) (*repb.Digest, error) {
@@ -39,27 +28,25 @@ func HashFile(path string, digestType repb.DigestFunction_Value) (*repb.Digest, 
 	}
 	defer f.Close()
 
-	fileInfo, err := f.Stat()
+	t, err := times.StatFile(f)
 	if err != nil {
 		return nil, err
 	}
 
-	key := makeKey(fileInfo, digestType)
-	mu.Lock()
-	digestKey, ok := fileHashes[key]
-	mu.Unlock()
+	key := hashKey{
+		fileName:   path,
+		mtimeNano:  t.ModTime().UnixNano(),
+		ctimeNano:  t.ChangeTime().UnixNano(),
+		digestType: digestType,
+	}
 
-	if ok {
-		return digestKey.ToDigest(), nil
+	if digestKey, ok := fileHashes.Load(key); ok {
+		return digestKey.(digest.Key).ToDigest(), nil
 	}
 
 	d, err := digest.Compute(f, digestType)
 	if err == nil {
-		mu.Lock()
-		if _, ok := fileHashes[key]; !ok {
-			fileHashes[key] = digest.NewKey(d)
-		}
-		mu.Unlock()
+		fileHashes.Store(key, digest.NewKey(d))
 	}
 	return d, err
 }
