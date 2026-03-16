@@ -13,6 +13,7 @@ import (
 
 	"github.com/buildbuddy-io/reninja/internal/cachetools"
 	"github.com/buildbuddy-io/reninja/internal/digest"
+	"github.com/buildbuddy-io/reninja/internal/file_hasher"
 	"github.com/buildbuddy-io/reninja/internal/grpc_client"
 	"github.com/buildbuddy-io/reninja/internal/project_root"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
@@ -300,7 +301,7 @@ func computeDirTree(pathsToUpload []string, visited []*UploadableNode) ([]*Uploa
 		} else if entry.Mode().IsRegular() {
 			info := entry
 			diskPath := diskPath
-			d, err := digest.ComputeForFile(diskPath, digestFunction)
+			d, err := file_hasher.HashFile(diskPath, digestFunction)
 			if err != nil {
 				return nil, nil, err
 			}

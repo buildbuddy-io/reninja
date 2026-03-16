@@ -4,7 +4,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/buildbuddy-io/reninja/internal/digest"
+	"github.com/buildbuddy-io/reninja/internal/file_hasher"
 	"github.com/buildbuddy-io/reninja/internal/graph"
 	"github.com/buildbuddy-io/reninja/internal/remote_flags"
 	"github.com/buildbuddy-io/reninja/internal/spawn"
@@ -84,7 +84,7 @@ func (l *Log) getOrCreateFileEntry(path string) (uint32, error) {
 	}
 
 	l.mu.Unlock() // Unlock while computing file digest.
-	d, err := digest.ComputeForFile(path, remote_flags.DigestFunction())
+	d, err := file_hasher.HashFile(path, remote_flags.DigestFunction())
 	if err != nil {
 		return 0, err
 	}
