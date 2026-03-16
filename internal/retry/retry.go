@@ -3,6 +3,7 @@ package retry
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"math"
 	"time"
@@ -10,6 +11,20 @@ import (
 	"github.com/buildbuddy-io/reninja/internal/util"
 	"github.com/jonboulle/clockwork"
 )
+
+var (
+	remoteRetries = flag.Int("remote_retries", 4, "Maximum number of times to retry cache/remote exec RPCs.")
+)
+
+func RemoteOptions() *Options {
+	opts := &Options{
+		InitialBackoff: 100 * time.Millisecond,
+		MaxBackoff:     5 * time.Second,
+		Multiplier:     2,
+		MaxRetries:     *remoteRetries,
+	}
+	return opts
+}
 
 // This code was inspired by cocroach's retry util.
 type Options struct {
