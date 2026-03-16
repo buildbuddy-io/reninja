@@ -3,6 +3,7 @@ package file_hasher
 import (
 	"os"
 	"sync"
+	"syscall"
 
 	"github.com/buildbuddy-io/reninja/internal/digest"
 	"github.com/djherbis/times"
@@ -15,10 +16,10 @@ var (
 )
 
 type hashKey struct {
-	fileName   string
-	mtimeNano  int64
+	dev        uint64
+	inode      uint64
 	ctimeNano  int64
-	digestType repb.DigestFunction_Value
+	digestType int32
 }
 
 func HashFile(path string, digestType repb.DigestFunction_Value) (*repb.Digest, error) {
@@ -28,24 +29,29 @@ func HashFile(path string, digestType repb.DigestFunction_Value) (*repb.Digest, 
 	}
 	defer f.Close()
 
-	t, err := times.StatFile(f)
+	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
+	t := times.Get(fi)
 
-	key := hashKey{
-		fileName:   path,
-		mtimeNano:  t.ModTime().UnixNano(),
-		ctimeNano:  t.ChangeTime().UnixNano(),
-		digestType: digestType,
-	}
+	var key hashKey
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if ok {
+		key = hashKey{
+			dev:        stat.Dev,
+			inode:      stat.Ino,
+			ctimeNano:  t.ChangeTime().UnixNano(),
+			digestType: int32(digestType),
+		}
 
-	if digestKey, ok := fileHashes.Load(key); ok {
-		return digestKey.(digest.Key).ToDigest(), nil
+		if digestKey, ok := fileHashes.Load(key); ok {
+			return digestKey.(digest.Key).ToDigest(), nil
+		}
 	}
 
 	d, err := digest.Compute(f, digestType)
-	if err == nil {
+	if ok && err == nil {
 		fileHashes.Store(key, digest.NewKey(d))
 	}
 	return d, err
