@@ -24,6 +24,12 @@ var (
 	defaultExecutor *Executor
 )
 
+func retryOptions(name string) *retry.Options {
+	opts := retry.RemoteOptions()
+	opts.Name = name
+	return opts
+}
+
 func InitializeClients(maxJobs int) {
 	once.Do(func() {
 		if remote_flags.RemoteCache() == "" {
@@ -69,7 +75,10 @@ func (e *Executor) Start(ctx context.Context, r *digest.CASResourceName) (*Retry
 		DigestFunction:  r.GetDigestFunction(),
 		SkipCacheLookup: true,
 	}
-	stream, err := e.ExecutionClient.Execute(ctx, req)
+
+	stream, err := retry.Do(ctx, retryOptions("Execute"), func(ctx context.Context) (repb.Execution_ExecuteClient, error) {
+		return e.ExecutionClient.Execute(ctx, req)
+	})
 	if err != nil {
 		return nil, err
 	}
