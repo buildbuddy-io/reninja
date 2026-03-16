@@ -25,7 +25,7 @@ func Contains(d *repb.Digest) bool {
 		if time.Since(lastFoundTime) < *localExistenceCacheTTL {
 			return true
 		}
-		lastSeen.Delete(key)
+		lastSeen.CompareAndDelete(key, lastFound)
 	}
 	return false
 }
@@ -33,4 +33,8 @@ func Contains(d *repb.Digest) bool {
 func MarkFound(d *repb.Digest) {
 	key := digest.NewKey(d)
 	lastSeen.Store(key, time.Now().UnixMilli())
+}
+
+func Clear() {
+	lastSeen.Clear()
 }

@@ -161,23 +161,18 @@ func findMissingBlobs(ctx context.Context, casClient repb.ContentAddressableStor
 	if err != nil {
 		return nil, err
 	}
-	missingMap := make(map[digest.Key]struct{}, len(rsp.GetMissingBlobDigests()))
-	missing := make([]*digest.CASResourceName, len(rsp.GetMissingBlobDigests()))
-	for i, d := range rsp.GetMissingBlobDigests() {
-		missingMap[digest.NewKey(d)] = struct{}{}
-		missing[i] = digest.NewCASResourceName(d, req.GetInstanceName(), req.GetDigestFunction())
+	missingSet := make(map[digest.Key]struct{}, len(rsp.GetMissingBlobDigests()))
+	for _, d := range rsp.GetMissingBlobDigests() {
+		missingSet[digest.NewKey(d)] = struct{}{}
 	}
 
-	// Remove anything returned as "missing" from the request
-	found := filteredDigests
-	found = slices.DeleteFunc(found, func(d *repb.Digest) bool {
-		_, ok := missingMap[digest.NewKey(d)]
-		return ok
-	})
-
-	// ... and mark everything else as found in the local cache.
-	for _, d := range found {
-		localcache.MarkFound(d)
+	missing := make([]*digest.CASResourceName, 0, len(missingSet))
+	for _, d := range filteredDigests {
+		if _, ok := missingSet[digest.NewKey(d)]; ok {
+			missing = append(missing, digest.NewCASResourceName(d, req.GetInstanceName(), req.GetDigestFunction()))
+		} else {
+			localcache.MarkFound(d)
+		}
 	}
 	return missing, nil
 }
