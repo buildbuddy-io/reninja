@@ -392,13 +392,13 @@ func (r *RemoteCachingCommandRunner) StartCommand(edge *graph.Edge) error {
 		var stdoutDigest *repb.Digest
 		if exitCode == exit_status.ExitSuccess {
 			// Upload the outputs (no action result) of this action.
-			outputFiles, stdoutDigest, err := r.uploadEdgeOutputs(ctx, edge, output)
+			outputFiles, outputDigest, err := r.uploadEdgeOutputs(ctx, edge, output)
 			if err != nil {
 				r.resultCh <- makeFailureResult(err)
 				return
 			}
 			uploadedOutputs = outputFiles
-			stdoutDigest = stdoutDigest
+			stdoutDigest = outputDigest
 		}
 
 		r.resultCh <- &spawn.Result{
@@ -562,6 +562,12 @@ func (r *RemoteCachingCommandRunner) uploadActionResult(ctx context.Context, res
 		ar := &repb.ActionResult{
 			ExitCode:    int32(result.Status),
 			OutputFiles: result.Outputs,
+		}
+		// Keep stdout (e.g. compiler warnings) so cache hits can replay it.
+		// Skipped when there are no output files, because a result with only
+		// a stdout digest is read back as a dyndep pointer (isDepsFileResult).
+		if len(result.Outputs) > 0 {
+			ar.StdoutDigest = result.StdoutDigest
 		}
 		return setActionResult(inputs, ar)
 	}
